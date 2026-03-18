@@ -1,0 +1,50 @@
+{
+  "name": "@bgx4k3p/huly-mcp-server",
+  "version": "2.0.1",
+  "description": "MCP and HTTP REST server for Huly issue tracking with multi-workspace support",
+  "type": "module",
+  "license": "MIT",
+  "author": "bgx4k3p",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bgx4k3p/huly-mcp-server.git"
+  },
+  "homepage": "https://github.com/bgx4k3p/huly-mcp-server",
+  "keywords": [
+    "mcp",
+    "huly",
+    "model-context-protocol",
+    "issue-tracker",
+    "rest-api",
+    "claude",
+    "ai-agent"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "bin": {
+    "huly-mcp-server": "src/index.mjs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "start:mcp": "node src/mcp.mjs",
+    "start:server": "node src/server.mjs",
+    "test": "node --test test/integration.test.mjs",
+    "postinstall": "node scripts/patch-sdk.mjs"
+  },
+  "dependencies": {
+    "@hcengineering/api-client": "^0.7.3",
+    "@hcengineering/chunter": "^0.7.0",
+    "@hcengineering/core": "^0.7.4",
+    "@hcengineering/tags": "^0.7.0",
+    "@hcengineering/task": "^0.7.0",
+    "@hcengineering/tracker": "^0.7.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "jsdom": "^29.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      hulyUrl:
+        type: string
+        description: Huly instance URL
+        default: http://localhost:8087
+      hulyToken:
+        type: string
+        description: Authentication token (alternative to email/password)
+      hulyEmail:
+        type: string
+        description: Huly login email (required if no token)
+      hulyPassword:
+        type: string
+        description: Huly login password (required if no token)
+      hulyWorkspace:
+        type: string
+        description: Default workspace slug
+    required:
+      - hulyWorkspace
+  commandFunction:
+    |-
+    (config) => ({
+      command: 'node',
+      args: ['src/index.mjs'],
+      env: {
+        HULY_URL: config.hulyUrl || 'http://localhost:8087',
+        ...(config.hulyToken ? { HULY_TOKEN: config.hulyToken } : {}),
+        ...(config.hulyEmail ? { HULY_EMAIL: config.hulyEmail } : {}),
+        ...(config.hulyPassword ? { HULY_PASSWORD: config.hulyPassword } : {}),
+        HULY_WORKSPACE: config.hulyWorkspace
+      }
+    })

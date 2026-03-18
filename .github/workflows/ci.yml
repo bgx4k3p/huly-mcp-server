@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Syntax check
+        run: |
+          node --check src/client.mjs
+          node --check src/mcp.mjs
+          node --check src/server.mjs
+          node --check src/index.mjs
+
+      - name: Markdown lint
+        run: npx markdownlint-cli README.md
+
+      - name: Unit tests
+        run: node --test --test-name-pattern="Unit Tests" test/integration.test.mjs
+
+      - name: Mock tests
+        run: node --test --test-name-pattern="Mock Tests" test/integration.test.mjs
