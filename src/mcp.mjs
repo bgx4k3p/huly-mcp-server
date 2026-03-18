@@ -373,7 +373,7 @@ const TOOLS = [
   },
   {
     name: 'list_issues',
-    description: 'List issues in a project with optional filtering. Returns id (e.g., "PROJ-42"), title, status, priority, labels, and milestone for each issue. Supports filtering by status (Backlog/Todo/In Progress/Done/Canceled), priority (urgent/high/medium/low/none), label name, and milestone name. Default limit is 500, auto-paginates for large projects. Use search_issues instead for full-text search across projects.',
+    description: 'List issues in a project with optional filtering. Returns id, title, status, priority, type (Task/Epic/Bug), assignee, component, labels, milestone, parent issue, childCount, dueDate, estimation, reportedTime, createdOn, modifiedOn, and completedAt for each issue. Supports filtering by status, priority, label, and milestone. Default limit 500, auto-paginates. Use search_issues for full-text search across projects.',
     inputSchema: {
       type: 'object',
       properties: {

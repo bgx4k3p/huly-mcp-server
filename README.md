@@ -334,6 +334,41 @@ n8n / curl  -> HTTP  -> server.mjs -> pool.mjs -> client.mjs -> REST -> Huly
 
 ---
 
+## Response Format
+
+All read operations return **known fields** at the top level with
+resolved, human-readable values (e.g., status names instead of IDs,
+formatted dates). Any additional fields from the Huly SDK that aren't
+explicitly mapped appear in an `extra` object — this future-proofs
+the API so new SDK fields are visible without a code update.
+
+```json
+{
+  "id": "PROJ-42",
+  "title": "Fix the bug",
+  "status": "In Progress",
+  "priority": "High",
+  "type": "Task",
+  "parent": "PROJ-10",
+  "childCount": 3,
+  "createdOn": 1719700000000,
+  "completedAt": null,
+  "extra": {
+    "_id": "69bab168...",
+    "_class": "tracker:class:Issue",
+    "space": "69b819b7...",
+    "kind": "tracker:taskTypes:Issue"
+  }
+}
+```
+
+Text fields (`description`, `comment`) support three input formats
+via `descriptionFormat` / `format` parameter:
+
+- **markdown** (default) — rendered as rich text in the Huly UI
+- **html** — raw HTML, converted to rich text
+- **plain** — stored as unformatted text
+
 ## API Reference
 
 Full list of all MCP tools and HTTP endpoints available through this server.

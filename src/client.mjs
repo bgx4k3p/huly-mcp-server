@@ -136,6 +136,27 @@ function fromMarkup(value) {
 }
 function nameMatch(a, b) { return (a || '').toLowerCase() === (b || '').toLowerCase(); }
 
+/**
+ * Build a response object with known fields + raw extras.
+ * Known fields are at the top level with resolved/formatted values.
+ * Any raw SDK fields not in the known set go into an `extra` object.
+ * This future-proofs the API — new SDK fields appear automatically in `extra`.
+ *
+ * @param {Object} raw - Raw SDK document
+ * @param {Object} known - Resolved/formatted known fields
+ * @returns {Object} { ...known, extra: { ...unknownFields } }
+ */
+function withExtra(raw, known) {
+  const knownKeys = new Set(Object.keys(known));
+  const extra = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!knownKeys.has(key)) {
+      extra[key] = value;
+    }
+  }
+  return Object.keys(extra).length > 0 ? { ...known, extra } : known;
+}
+
 const tracker = require('@hcengineering/tracker').default;
 const tags = require('@hcengineering/tags').default;
 const contactPlugin = require('@hcengineering/contact').default;
@@ -922,21 +943,18 @@ export class HulyClient {
     const projects = await client.findAll(tracker.class.Project, {});
 
     // Count issues per project efficiently using the project's own sequence counter
-    const result = [];
-    for (const project of projects) {
-      result.push({
-        id: project._id,
-        identifier: project.identifier,
-        name: project.name || project.identifier,
-        description: fromMarkup(project.description),
-        archived: project.archived || false,
-        private: project.private || false,
-        members: project.members?.length || 0,
-        issueCount: project.sequence || 0
-      });
-    }
-
-    return result;
+    return projects.map(project => withExtra(project, {
+      id: project._id,
+      identifier: project.identifier,
+      name: project.name || project.identifier,
+      description: fromMarkup(project.description),
+      archived: project.archived || false,
+      private: project.private || false,
+      members: project.members?.length || 0,
+      issueCount: project.sequence || 0,
+      createdOn: project.createdOn,
+      modifiedOn: project.modifiedOn
+    }));
   }
 
   /**
@@ -954,7 +972,7 @@ export class HulyClient {
       throw new Error(`Project not found: ${identifier}`);
     }
 
-    return {
+    return withExtra(project, {
       id: project._id,
       identifier: project.identifier,
       name: project.name || project.identifier,
@@ -966,7 +984,7 @@ export class HulyClient {
       issueCount: project.sequence || 0,
       createdOn: project.createdOn,
       modifiedOn: project.modifiedOn
-    };
+    });
   }
 
   /**
@@ -1038,7 +1056,7 @@ export class HulyClient {
       }
     }
 
-    // Batch fetch all labels for efficiency (avoids N+1)
+    // Batch fetch lookup maps for efficiency (avoids N+1)
     const issueIds = issues.map(i => i._id);
     const allLabels = issueIds.length > 0
       ? await client.findAll(tags.class.TagReference, {})
@@ -1050,6 +1068,28 @@ export class HulyClient {
       }
       labelsByIssue.get(label.attachedTo).push(label);
     }
+
+    // Task type map (kind ID → type name)
+    const taskTypes = await client.findAll(task.class.TaskType, {});
+    const taskTypeMap = new Map(taskTypes.map(t => [t._id, t.name]));
+
+    // Component map (ID → name)
+    const components = await client.findAll(tracker.class.Component, { space: proj._id });
+    const componentMap = new Map(components.map(c => [c._id, c.label]));
+
+    // Parent issue map for hierarchy (batch lookup)
+    const parentIds = [...new Set(issues
+      .filter(i => i.attachedTo && i.attachedToClass === tracker.class.Issue)
+      .map(i => i.attachedTo))];
+    const parentIssues = parentIds.length > 0
+      ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
+      : [];
+    const parentMap = new Map(parentIssues.map(p => [p._id, `${proj.identifier}-${p.number}`]));
+
+    // Done status IDs for completedAt detection
+    const doneStatuses = new Set(statuses
+      .filter(s => s.category === 'task:statusCategory:Won')
+      .map(s => s._id));
 
     const result = [];
     for (const issue of issues) {
@@ -1064,19 +1104,25 @@ export class HulyClient {
       const priorityName = PRIORITY_NAMES[issue.priority];
       if (!priorityName) console.warn(`Priority lookup failed for value: ${issue.priority}`);
 
-      result.push({
+      result.push(withExtra(issue, {
         id: `${proj.identifier}-${issue.number}`,
         title: issue.title,
         status: statusName || 'Unknown',
         priority: priorityName || 'Unknown',
+        type: taskTypeMap.get(issue.kind) || null,
         assignee: issue.assignee || null,
-        component: issue.component || null,
+        component: issue.component ? componentMap.get(issue.component) || null : null,
         labels: issueLabels.map(l => l.title),
+        parent: issue.attachedTo ? parentMap.get(issue.attachedTo) || null : null,
+        childCount: issue.subIssues || 0,
         milestone: issue.milestone ? milestoneMap.get(issue.milestone) || null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
         estimation: issue.estimation || 0,
-        modifiedOn: issue.modifiedOn
-      });
+        reportedTime: issue.reportedTime || 0,
+        createdOn: issue.createdOn,
+        modifiedOn: issue.modifiedOn,
+        completedAt: doneStatuses.has(issue.status) ? issue.modifiedOn : null
+      }));
     }
 
     return result;
@@ -1118,8 +1164,6 @@ export class HulyClient {
       }
     }
 
-    const childCount = issue.subIssues || 0;
-
     let milestoneInfo = null;
     if (issue.milestone) {
       const ms = await client.findOne(tracker.class.Milestone, { _id: issue.milestone });
@@ -1132,27 +1176,25 @@ export class HulyClient {
       }
     }
 
-    return {
+    return withExtra(issue, {
       id: `${project.identifier}-${issue.number}`,
-      internalId: issue._id,
       title: issue.title,
       description: descriptionContent,
       status: status?.name || 'Unknown',
-      statusId: issue.status,
       priority: PRIORITY_NAMES[issue.priority] || 'Unknown',
-      kind: issue.kind,
+      type: issue.kind,
       assignee: issue.assignee || null,
       component: issue.component || null,
       labels: issueLabels.map(l => l.title),
       parent: parentId,
-      childCount: childCount,
+      childCount: issue.subIssues || 0,
       milestone: milestoneInfo,
       dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
       estimation: issue.estimation || 0,
       reportedTime: issue.reportedTime || 0,
       createdOn: issue.createdOn,
       modifiedOn: issue.modifiedOn
-    };
+    });
   }
 
   /**
@@ -1726,7 +1768,7 @@ export class HulyClient {
       sort: { targetDate: 1 }
     });
 
-    return milestones.map(m => ({
+    return milestones.map(m => withExtra(m, {
       id: m._id,
       name: m.label,
       description: fromMarkup(m.description),
@@ -1768,7 +1810,7 @@ export class HulyClient {
       milestone: milestone._id
     });
 
-    return {
+    return withExtra(milestone, {
       id: milestone._id,
       name: milestone.label,
       description: fromMarkup(milestone.description),
@@ -1776,7 +1818,7 @@ export class HulyClient {
       targetDate: milestone.targetDate ? new Date(milestone.targetDate).toISOString().split('T')[0] : null,
       comments: milestone.comments || 0,
       issueCount: issues.length
-    };
+    });
   }
 
   /**
@@ -1901,7 +1943,7 @@ export class HulyClient {
   async listMembers() {
     const client = await this._getClient();
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
-    return employees.map(e => ({
+    return employees.map(e => withExtra(e, {
       id: e._id,
       name: e.name,
       email: e.channels?.[0]?.value || null,
@@ -1981,7 +2023,7 @@ export class HulyClient {
       attachedTo: issue._id
     }, { sort: { createdOn: 1 } });
 
-    return comments.map(c => ({
+    return comments.map(c => withExtra(c, {
       id: c._id,
       text: fromMarkup(c.message),
       createdBy: c.createdBy || null,
@@ -2106,11 +2148,34 @@ export class HulyClient {
     const projects = await client.findAll(tracker.class.Project, {});
     const projMap = new Map(projects.map(p => [p._id, p.identifier]));
 
-    return issues.map(i => ({
+    const taskTypes = await client.findAll(task.class.TaskType, {});
+    const taskTypeMap = new Map(taskTypes.map(t => [t._id, t.name]));
+
+    const doneStatuses = new Set(statuses
+      .filter(s => s.category === 'task:statusCategory:Won')
+      .map(s => s._id));
+
+    const parentIds = [...new Set(issues
+      .filter(i => i.attachedTo && i.attachedToClass === tracker.class.Issue)
+      .map(i => i.attachedTo))];
+    const parentIssues = parentIds.length > 0
+      ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
+      : [];
+    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) || '?'}-${p.number}`]));
+
+    return issues.map(i => withExtra(i, {
       id: `${projMap.get(i.space) || '?'}-${i.number}`,
       title: i.title,
       status: statusMap.get(i.status) || 'Unknown',
-      priority: PRIORITY_NAMES[i.priority] || 'Unknown'
+      priority: PRIORITY_NAMES[i.priority] || 'Unknown',
+      type: taskTypeMap.get(i.kind) || null,
+      assignee: i.assignee || null,
+      parent: i.attachedTo ? parentMap.get(i.attachedTo) || null : null,
+      childCount: i.subIssues || 0,
+      dueDate: i.dueDate ? new Date(i.dueDate).toISOString().split('T')[0] : null,
+      createdOn: i.createdOn,
+      modifiedOn: i.modifiedOn,
+      completedAt: doneStatuses.has(i.status) ? i.modifiedOn : null
     }));
   }
 
@@ -2204,6 +2269,21 @@ export class HulyClient {
       labelsByIssue.get(label.attachedTo).push(label);
     }
 
+    const taskTypes = await client.findAll(task.class.TaskType, {});
+    const taskTypeMap = new Map(taskTypes.map(t => [t._id, t.name]));
+
+    const doneStatuses = new Set(statuses
+      .filter(s => s.category === 'task:statusCategory:Won')
+      .map(s => s._id));
+
+    const parentIds = [...new Set(issues
+      .filter(i => i.attachedTo && i.attachedToClass === tracker.class.Issue)
+      .map(i => i.attachedTo))];
+    const parentIssues = parentIds.length > 0
+      ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
+      : [];
+    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) || '?'}-${p.number}`]));
+
     const result = [];
     for (const issue of issues) {
       const issueLabels = labelsByIssue.get(issue._id) || [];
@@ -2212,18 +2292,25 @@ export class HulyClient {
       const priorityName = PRIORITY_NAMES[issue.priority];
       if (!priorityName) console.warn(`Priority lookup failed for value: ${issue.priority}`);
 
-      result.push({
+      result.push(withExtra(issue, {
         id: `${projMap.get(issue.space) || '?'}-${issue.number}`,
         title: issue.title,
         status: statusName || 'Unknown',
         priority: priorityName || 'Unknown',
+        type: taskTypeMap.get(issue.kind) || null,
         assignee: issue.assignee || null,
         component: issue.component || null,
         labels: issueLabels.map(l => l.title),
+        parent: issue.attachedTo ? parentMap.get(issue.attachedTo) || null : null,
+        childCount: issue.subIssues || 0,
+        milestone: issue.milestone || null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
         estimation: issue.estimation || 0,
-        modifiedOn: issue.modifiedOn
-      });
+        reportedTime: issue.reportedTime || 0,
+        createdOn: issue.createdOn,
+        modifiedOn: issue.modifiedOn,
+        completedAt: doneStatuses.has(issue.status) ? issue.modifiedOn : null
+      }));
     }
 
     return result;
@@ -2840,7 +2927,7 @@ export class HulyClient {
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
 
-    return components.map(c => ({
+    return components.map(c => withExtra(c, {
       id: c._id,
       name: c.label,
       description: fromMarkup(c.description),
@@ -2958,7 +3045,7 @@ export class HulyClient {
       attachedTo: issue._id
     }, { sort: { date: -1 } });
 
-    return reports.map(r => ({
+    return reports.map(r => withExtra(r, {
       id: r._id,
       hours: r.value,
       description: fromMarkup(r.description),
