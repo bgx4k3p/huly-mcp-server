@@ -320,11 +320,13 @@ bypass Application for `/_*` or these individual paths:
 
 ```text
 src/
-  client.mjs    # HulyClient class - all business logic
-  pool.mjs      # Connection pool - caches clients by workspace with TTL
-  mcp.mjs       # MCP stdio entry point - MCP tools + resources
-  server.mjs    # HTTP REST entry point - auth, rate limiting, SSE, OpenAPI
-  index.mjs     # Backwards compat - re-exports mcp.mjs
+  client.mjs    # HulyClient — all business logic and SDK calls
+  helpers.mjs   # Shared constants, markup conversion, utilities
+  dispatch.mjs  # Tool-to-method dispatch table (used by mcp + server)
+  pool.mjs      # Connection pool — caches clients by workspace with TTL
+  mcp.mjs       # MCP stdio entry point — tool definitions + resources
+  server.mjs    # HTTP REST entry point — auth, rate limiting, SSE, OpenAPI
+  index.mjs     # CLI entry point — --get-token mode + MCP re-export
 ```
 
 ```text
