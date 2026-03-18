@@ -19,6 +19,7 @@ import {
 
 import { pool } from './pool.mjs';
 import { HulyClient } from './client.mjs';
+import { accountTools, workspaceTools } from './dispatch.mjs';
 
 const HULY_URL = process.env.HULY_URL || 'http://localhost:8087';
 const HULY_TOKEN = process.env.HULY_TOKEN;
@@ -1036,301 +1037,23 @@ const TOOLS = [
   }
 ];
 
+
 /**
  * Route a tool call to the appropriate HulyClient method.
- * @param {string} name - Tool name
- * @param {Object} args - Tool arguments
- * @returns {Promise<Object>}
+ * Uses shared dispatch table from dispatch.mjs.
  */
 async function handleToolCall(name, args) {
-  // Account-level tools (no workspace needed)
-  switch (name) {
-    case 'list_workspaces':
-      return await HulyClient.listWorkspaces(HULY_URL, HULY_CREDS);
-
-    case 'get_workspace_info':
-      return await HulyClient.getWorkspaceInfo(HULY_URL, HULY_CREDS, args.workspace);
-
-    case 'create_workspace':
-      return await HulyClient.createWorkspace(HULY_URL, HULY_CREDS, args.name);
-
-    case 'update_workspace_name':
-      return await HulyClient.updateWorkspaceName(HULY_URL, HULY_CREDS, args.workspace, args.name);
-
-    case 'delete_workspace':
-      return await HulyClient.deleteWorkspace(HULY_URL, HULY_CREDS, args.workspace);
-
-    case 'get_workspace_members':
-      return await HulyClient.getWorkspaceMembers(HULY_URL, HULY_CREDS, args.workspace);
-
-    case 'update_workspace_role':
-      return await HulyClient.updateWorkspaceRole(HULY_URL, HULY_CREDS, args.workspace, args.email, args.role);
-
-    case 'get_account_info':
-      return await HulyClient.getAccountInfo(HULY_URL, HULY_CREDS);
-
-    case 'get_user_profile':
-      return await HulyClient.getUserProfile(HULY_URL, HULY_CREDS);
-
-    case 'set_my_profile':
-      return await HulyClient.setMyProfile(HULY_URL, HULY_CREDS, args.name, args.city, args.country);
-
-    case 'change_password':
-      return await HulyClient.changePassword(HULY_URL, HULY_CREDS, args.newPassword);
-
-    case 'change_username':
-      return await HulyClient.changeUsername(HULY_URL, HULY_CREDS, args.newUsername);
-
-    // ── Invites ──────────────────────────────────────────────
-    case 'send_invite':
-      return await HulyClient.sendInvite(HULY_URL, HULY_CREDS, args.workspace, args.email, args.role);
-
-    case 'resend_invite':
-      return await HulyClient.resendInvite(HULY_URL, HULY_CREDS, args.workspace, args.email);
-
-    case 'create_invite_link':
-      return await HulyClient.createInviteLink(HULY_URL, HULY_CREDS, args.workspace, args.role, args.expireHours);
-
-    // ── Integrations ─────────────────────────────────────────
-    case 'list_integrations':
-      return await HulyClient.listIntegrations(HULY_URL, HULY_CREDS);
-
-    case 'get_integration':
-      return await HulyClient.getIntegration(HULY_URL, HULY_CREDS, args.integrationId);
-
-    case 'create_integration':
-      return await HulyClient.createIntegration(HULY_URL, HULY_CREDS, args.data);
-
-    case 'update_integration':
-      return await HulyClient.updateIntegration(HULY_URL, HULY_CREDS, args.integrationId, args.data);
-
-    case 'delete_integration':
-      return await HulyClient.deleteIntegration(HULY_URL, HULY_CREDS, args.integrationId);
-
-    // ── Mailboxes ────────────────────────────────────────────
-    case 'list_mailboxes':
-      return await HulyClient.getMailboxes(HULY_URL, HULY_CREDS);
-
-    case 'create_mailbox':
-      return await HulyClient.createMailbox(HULY_URL, HULY_CREDS, args.data);
-
-    case 'delete_mailbox':
-      return await HulyClient.deleteMailbox(HULY_URL, HULY_CREDS, args.mailboxId);
-
-    // ── Person / Social ID ──────────────────────────────────
-    case 'find_person_by_social_key':
-      return await HulyClient.findPersonBySocialKey(HULY_URL, HULY_CREDS, args.socialKey);
-
-    case 'get_social_ids':
-      return await HulyClient.getSocialIds(HULY_URL, HULY_CREDS);
-
-    case 'add_email_social_id':
-      return await HulyClient.addEmailSocialId(HULY_URL, HULY_CREDS, args.targetEmail);
-
-    // ── Subscriptions ────────────────────────────────────────
-    case 'list_subscriptions':
-      return await HulyClient.getSubscriptions(HULY_URL, HULY_CREDS);
+  if (accountTools[name]) {
+    return await accountTools[name](args, HULY_URL, HULY_CREDS);
   }
 
-  // Workspace-level tools
-  const client = await pool.getClient(args.workspace);
+  if (workspaceTools[name]) {
+    const workspace = args.workspace || process.env.HULY_WORKSPACE;
+    const client = await pool.getClient(workspace);
+    return await client.withReconnect(() => workspaceTools[name](args, client));
+  }
 
-  const wsHandler = async () => {
-    switch (name) {
-    case 'list_projects':
-      return await client.listProjects();
-
-    case 'get_project':
-      return await client.getProject(args.identifier);
-
-    case 'list_issues':
-      return await client.listIssues(
-        args.project, args.status, args.priority,
-        args.label, args.milestone, args.limit
-      );
-
-    case 'get_issue':
-      return await client.getIssue(args.issueId);
-
-    case 'create_issue':
-      return await client.createIssue(
-        args.project, args.title, args.description,
-        args.priority, args.status, args.labels, args.type,
-        { assignee: args.assignee, component: args.component,
-          milestone: args.milestone, dueDate: args.dueDate,
-          estimation: args.estimation,
-          descriptionFormat: args.descriptionFormat }
-      );
-
-    case 'update_issue':
-      return await client.updateIssue(
-        args.issueId, args.title, args.description,
-        args.priority, args.status, args.type,
-        { assignee: args.assignee, component: args.component,
-          milestone: args.milestone, dueDate: args.dueDate,
-          estimation: args.estimation,
-          descriptionFormat: args.descriptionFormat }
-      );
-
-    case 'add_label':
-      return await client.addLabel(args.issueId, args.label);
-
-    case 'remove_label':
-      return await client.removeLabel(args.issueId, args.label);
-
-    case 'list_labels':
-      return await client.listLabels();
-
-    case 'create_label':
-      return await client.createLabel(args.name, args.color);
-
-    case 'add_relation':
-      return await client.addRelation(args.issueId, args.relatedToIssueId);
-
-    case 'add_blocked_by':
-      return await client.addBlockedBy(args.issueId, args.blockedByIssueId);
-
-    case 'set_parent':
-      return await client.setParent(args.issueId, args.parentIssueId);
-
-    case 'list_task_types':
-      return await client.listTaskTypes(args.project);
-
-    case 'list_statuses':
-      return await client.listStatuses(args.project, args.taskType);
-
-    case 'list_milestones':
-      return await client.listMilestones(args.project, args.status);
-
-    case 'get_milestone':
-      return await client.getMilestone(args.project, args.name);
-
-    case 'create_milestone':
-      return await client.createMilestone(
-        args.project, args.name, args.description,
-        args.targetDate, args.status, args.descriptionFormat
-      );
-
-    case 'set_milestone':
-      return await client.setMilestone(args.issueId, args.milestone);
-
-    case 'assign_issue':
-      return await client.assignIssue(args.issueId, args.assignee);
-
-    case 'list_members':
-      return await client.listMembers();
-
-    case 'add_comment':
-      return await client.addComment(args.issueId, args.text, args.format);
-
-    case 'list_comments':
-      return await client.listComments(args.issueId);
-
-    case 'set_due_date':
-      return await client.setDueDate(args.issueId, args.dueDate);
-
-    case 'set_estimation':
-      return await client.setEstimation(args.issueId, args.hours);
-
-    case 'log_time':
-      return await client.logTime(args.issueId, args.hours, args.description, args.descriptionFormat);
-
-    case 'search_issues':
-      return await client.searchIssues(args.query, args.project, args.limit);
-
-    // ── New tools ──────────────────────────────────────────
-
-    case 'get_my_issues':
-      return await client.getMyIssues(args.project, args.status, args.limit);
-
-    case 'batch_create_issues':
-      return await client.batchCreateIssues(args.project, args.issues);
-
-    case 'move_issue':
-      return await client.moveIssue(args.issueId, args.targetProject);
-
-    case 'summarize_project':
-      return await client.summarizeProject(args.project);
-
-    case 'get_issue_history':
-      return await client.getIssueHistory(args.issueId);
-
-    case 'create_issues_from_template':
-      return await client.createIssuesFromTemplate(
-        args.project, args.template, { title: args.title, version: args.version }
-      );
-
-    // ── Project Management ────────────────────────────────────
-
-    case 'create_project':
-      return await client.createProject(args.identifier, args.name, args.description, args.private, args.descriptionFormat);
-
-    case 'archive_project':
-      return await client.archiveProject(args.identifier, args.archived);
-
-    case 'delete_project':
-      return await client.deleteProject(args.identifier);
-
-    // ── Issue Deletion ────────────────────────────────────────
-
-    case 'delete_issue':
-      return await client.deleteIssue(args.issueId);
-
-    // ── Milestone Management ──────────────────────────────────
-
-    case 'update_milestone':
-      return await client.updateMilestone(args.project, args.name, {
-        name: args.newName,
-        description: args.description,
-        descriptionFormat: args.descriptionFormat,
-        status: args.status,
-        targetDate: args.targetDate
-      });
-
-    case 'delete_milestone':
-      return await client.deleteMilestone(args.project, args.name);
-
-    // ── Components ────────────────────────────────────────────
-
-    case 'list_components':
-      return await client.listComponents(args.project);
-
-    case 'create_component':
-      return await client.createComponent(args.project, args.name, args.description, args.lead, args.descriptionFormat);
-
-    case 'update_component':
-      return await client.updateComponent(args.project, args.name, {
-        name: args.newName,
-        description: args.description,
-        descriptionFormat: args.descriptionFormat,
-        lead: args.lead
-      });
-
-    case 'delete_component':
-      return await client.deleteComponent(args.project, args.name);
-
-    // ── Time Reports ──────────────────────────────────────────
-
-    case 'list_time_reports':
-      return await client.listTimeReports(args.issueId);
-
-    case 'delete_time_report':
-      return await client.deleteTimeReport(args.issueId, args.reportId);
-
-    // ── Comment Management ────────────────────────────────────
-
-    case 'update_comment':
-      return await client.updateComment(args.issueId, args.commentId, args.text, args.format);
-
-    case 'delete_comment':
-      return await client.deleteComment(args.issueId, args.commentId);
-
-    default:
-      throw new Error(`Unknown tool: ${name}`);
-    }
-  };
-
-  return await client.withReconnect(wsHandler);
+  throw new Error(`Unknown tool: ${name}`);
 }
 
 // Create and run the MCP server

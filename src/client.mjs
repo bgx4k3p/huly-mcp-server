@@ -1,27 +1,18 @@
 /**
  * HulyClient - All business logic for interacting with Huly issue tracking.
  *
- * JSDOM polyfills MUST be at the very top before any Huly SDK imports.
+ * Helpers, constants, and markup utilities are in helpers.mjs.
+ * JSDOM polyfills are initialized there before any SDK imports.
  */
+import {
+  PRIORITY_MAP, PRIORITY_NAMES,
+  MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES,
+  nameMatch, withExtra,
+  toCollaboratorMarkup, fromCollaboratorMarkup,
+  toMarkup, fromMarkup
+} from './helpers.mjs';
 
-// Provide full browser DOM via jsdom for @hcengineering/api-client and prosemirror
-import { JSDOM } from 'jsdom';
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'http://localhost' });
-Object.defineProperty(globalThis, 'window', { value: dom.window, writable: true });
-Object.defineProperty(globalThis, 'document', { value: dom.window.document, writable: true });
-Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, writable: true });
-globalThis.HTMLElement = dom.window.HTMLElement;
-globalThis.Node = dom.window.Node;
-globalThis.MutationObserver = dom.window.MutationObserver;
-globalThis.getComputedStyle = dom.window.getComputedStyle;
-globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 0);
-globalThis.cancelAnimationFrame = clearTimeout;
-globalThis.CustomEvent = dom.window.CustomEvent;
-
-// Stub indexedDB (Huly SDK checks for it but doesn't require it for API operations)
-if (typeof globalThis.indexedDB === 'undefined') {
-  globalThis.indexedDB = { open: () => ({ result: null, onerror: null, onsuccess: null }) };
-}
+export { PRIORITY_MAP, PRIORITY_NAMES, MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES };
 
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
@@ -32,159 +23,13 @@ const { createRestTxOperations } = require(require.resolve('@hcengineering/api-c
 const { getClient: getAccountClient } = require('@hcengineering/account-client');
 const { loadServerConfig: loadConfig } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/config.js'));
 const { generateId } = require('@hcengineering/core');
-const { markdown: markdownMarkup, html: htmlMarkup, MarkupContent } = require('@hcengineering/api-client');
 const { getClient: getCollaboratorClient } = require('@hcengineering/collaborator-client');
-const { markdownToMarkup, markupToMarkdown } = require('@hcengineering/text-markdown');
-const { htmlToMarkup, markupToHtml } = require('@hcengineering/text-html');
-const { jsonToMarkup, markupToJSON, isEmptyMarkup } = require('@hcengineering/text-core');
-
-/**
- * Convert text to ProseMirror JSON markup string for the collaborator service.
- *
- * Huly stores rich text as ProseMirror JSON documents in a collaborator service
- * (Yjs-backed). The issue/milestone/comment document holds a reference ID;
- * the actual content lives in the collaborator. All text writes must go through
- * the collaborator client to be visible in the Huly UI.
- *
- * Flow: user text → ProseMirror JSON → jsonToMarkup() → collaborator.updateMarkup()
- *
- * @param {string} text - User-provided text
- * @param {string} [format='markdown'] - Input format: markdown, html, or plain
- * @returns {string} ProseMirror JSON markup string
- */
-function toCollaboratorMarkup(text, format = 'markdown') {
-  if (!text) return jsonToMarkup({ type: 'doc', content: [] });
-  let pmJson;
-  switch (format) {
-    case 'html':
-      pmJson = htmlToMarkup(text);
-      break;
-    case 'plain':
-      pmJson = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] };
-      break;
-    case 'markdown':
-    default:
-      pmJson = markdownToMarkup(text);
-      break;
-  }
-  return jsonToMarkup(pmJson);
-}
-
-/**
- * Convert ProseMirror JSON markup string back to user-readable text.
- *
- * @param {string} markup - ProseMirror JSON markup string from collaborator
- * @param {string} [format='markdown'] - Output format: markdown, html, or plain
- * @returns {string} Human-readable text
- */
-function fromCollaboratorMarkup(markup, format = 'markdown') {
-  if (!markup || isEmptyMarkup(markup)) return '';
-  try {
-    const pmJson = markupToJSON(markup);
-    switch (format) {
-      case 'html':
-        return markupToHtml(pmJson);
-      case 'markdown':
-      default:
-        return markupToMarkdown(pmJson);
-    }
-  } catch {
-    // If it's not valid ProseMirror JSON, return as-is
-    return typeof markup === 'string' ? markup : String(markup);
-  }
-}
-
-/**
- * Legacy toMarkup for fields that don't use collaborator (e.g. new issues
- * before they have a collaborator document).
- */
-function toMarkup(text, format = 'markdown') {
-  if (!text) return new MarkupContent('');
-  switch (format) {
-    case 'html': return htmlMarkup(text);
-    case 'plain': return new MarkupContent(text);
-    case 'markdown':
-    default: return markdownMarkup(text);
-  }
-}
-
-/**
- * Extract text from a Huly description/message field.
- * Handles: MarkupContent objects, ProseMirror JSON strings, plain strings,
- * and collaborator reference strings.
- */
-function fromMarkup(value) {
-  if (!value) return '';
-  if (typeof value === 'object' && value.content !== undefined) {
-    return value.content;
-  }
-  if (typeof value === 'string') {
-    // Collaborator document references look like "hex-description-timestamp"
-    if (/^[a-f0-9]+-\w+-\d+$/.test(value)) {
-      return value; // Resolved via collaborator in getIssue/getProject etc.
-    }
-    // Try to parse as ProseMirror JSON
-    try {
-      const parsed = JSON.parse(value);
-      if (parsed && parsed.type === 'doc') {
-        return fromCollaboratorMarkup(value);
-      }
-    } catch { /* not JSON, return as-is */ }
-    return value;
-  }
-  return String(value);
-}
-function nameMatch(a, b) { return (a || '').toLowerCase() === (b || '').toLowerCase(); }
-
-/**
- * Build a response object with known fields + raw extras.
- * Known fields are at the top level with resolved/formatted values.
- * Any raw SDK fields not in the known set go into an `extra` object.
- * This future-proofs the API — new SDK fields appear automatically in `extra`.
- *
- * @param {Object} raw - Raw SDK document
- * @param {Object} known - Resolved/formatted known fields
- * @returns {Object} { ...known, extra: { ...unknownFields } }
- */
-function withExtra(raw, known) {
-  const knownKeys = new Set(Object.keys(known));
-  const extra = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (!knownKeys.has(key)) {
-      extra[key] = value;
-    }
-  }
-  return Object.keys(extra).length > 0 ? { ...known, extra } : known;
-}
 
 const tracker = require('@hcengineering/tracker').default;
 const tags = require('@hcengineering/tags').default;
 const contactPlugin = require('@hcengineering/contact').default;
 const chunter = require('@hcengineering/chunter').default;
 const task = require('@hcengineering/task').default;
-
-// Priority mapping
-export const PRIORITY_MAP = {
-  'urgent': 1,
-  'high': 2,
-  'medium': 3,
-  'low': 4,
-  'none': 0
-};
-
-export const PRIORITY_NAMES = ['No Priority', 'Urgent', 'High', 'Medium', 'Low'];
-
-// Milestone status mapping
-export const MILESTONE_STATUS_MAP = {
-  'planned': 0,
-  'in progress': 1,
-  'inprogress': 1,
-  'completed': 2,
-  'canceled': 3,
-  'cancelled': 3
-};
-
-export const MILESTONE_STATUS_NAMES = ['Planned', 'In Progress', 'Completed', 'Canceled'];
 
 /**
  * HulyClient encapsulates all business logic for a single workspace connection.
