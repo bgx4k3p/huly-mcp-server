@@ -416,7 +416,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | Tool | Description | Text Format |
 | --- | --- | --- |
 | `list_projects` / `get_project` | Browse projects | — |
-| `create_project` | Create project | `descriptionFormat`: md/html/plain |
+| `create_project` / `update_project` | Create or update project | `descriptionFormat`: md/html/plain |
 | `archive_project` / `delete_project` | Archive or delete | — |
 | `create_issue` / `update_issue` | Create or update issue | `descriptionFormat`: md/html/plain |
 | `list_issues` / `get_issue` / `delete_issue` | Read/delete issues | — |
@@ -432,7 +432,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_labels` / `create_label` / `add_label` / `remove_label` | Label management | — |
+| `list_labels` / `create_label` / `update_label` / `add_label` / `remove_label` | Label management | — |
 | `add_relation` / `add_blocked_by` / `set_parent` | Issue relationships | — |
 | `create_component` / `update_component` | Create or update component | `descriptionFormat`: md/html/plain |
 | `list_components` / `delete_component` | Read/delete components | — |
@@ -455,6 +455,17 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 > Set `descriptionFormat` (or `format` for comments) to
 > `"markdown"`, `"html"`, or `"plain"`. Content is passed
 > through unmodified — the format tells Huly how to render it.
+
+#### CRUD Coverage
+
+| Entity | Create | Read/List | Update | Delete |
+| --- | --- | --- | --- | --- |
+| Project | `create_project` | `list_projects` / `get_project` | `update_project` | `delete_project` |
+| Issue | `create_issue` | `list_issues` / `get_issue` | `update_issue` | `delete_issue` |
+| Label | `create_label` | `list_labels` | `update_label` | `remove_label` |
+| Component | `create_component` | `list_components` | `update_component` | `delete_component` |
+| Milestone | `create_milestone` | `list_milestones` / `get_milestone` | `update_milestone` | `delete_milestone` |
+| Comment | `add_comment` | `list_comments` | `update_comment` | `delete_comment` |
 
 ### HTTP REST Endpoints
 
