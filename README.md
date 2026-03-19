@@ -411,61 +411,145 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `find_person_by_social_key` / `get_social_ids` / `add_email_social_id` | Person/social ID management |
 | `list_subscriptions` | List account subscriptions |
 
-#### Projects & Issues
+#### Projects
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_projects` / `get_project` | Browse projects | — |
-| `create_project` / `update_project` | Create or update project | `descriptionFormat`: md/html/plain |
-| `archive_project` / `delete_project` | Archive or delete | — |
-| `create_issue` / `update_issue` | Create or update issue | `descriptionFormat`: md/html/plain |
-| `list_issues` / `get_issue` / `delete_issue` | Read/delete issues | — |
-| `search_issues` | Full-text search | — |
-| `get_my_issues` | Issues assigned to current user | — |
-| `batch_create_issues` | Create multiple issues | `descriptionFormat` per item: md/html/plain |
-| `move_issue` | Move issue between projects | — |
-| `summarize_project` | Aggregated project metrics | — |
-| `get_issue_history` | Activity timeline | — |
-| `create_issues_from_template` | Create from templates | — |
+| `list_projects` | List all projects (supports `include_details`) | -- |
+| `get_project` | Get project by identifier (supports `include_details`) | -- |
+| `create_project` | Create a new project | `descriptionFormat`: md/html/plain |
+| `update_project` | Update project name, description, privacy, default assignee | `descriptionFormat`: md/html/plain |
+| `archive_project` | Archive or unarchive a project | -- |
+| `delete_project` | Permanently delete a project | -- |
+| `summarize_project` | Aggregated project metrics and health | -- |
 
-#### Labels, Relations, Components, Milestones
+#### Issues
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_labels` / `create_label` / `update_label` / `add_label` / `remove_label` | Label management | — |
-| `add_relation` / `add_blocked_by` / `set_parent` | Issue relationships | — |
-| `create_component` / `update_component` | Create or update component | `descriptionFormat`: md/html/plain |
-| `list_components` / `delete_component` | Read/delete components | — |
-| `create_milestone` / `update_milestone` | Create or update milestone | `descriptionFormat`: md/html/plain |
-| `list_milestones` / `get_milestone` / `delete_milestone` / `set_milestone` | Read/delete milestones | — |
+| `list_issues` | List issues with filters (supports `include_details`) | -- |
+| `get_issue` | Get full issue details (supports `include_details`) | -- |
+| `create_issue` | Create a new issue | `descriptionFormat`: md/html/plain |
+| `update_issue` | Update issue fields | `descriptionFormat`: md/html/plain |
+| `delete_issue` | Permanently delete an issue | -- |
+| `search_issues` | Full-text search across projects | -- |
+| `get_my_issues` | Issues assigned to current user | -- |
+| `batch_create_issues` | Create multiple issues at once | `descriptionFormat` per item |
+| `move_issue` | Move issue between projects | -- |
+| `get_issue_history` | Activity timeline for an issue | -- |
+| `create_issues_from_template` | Create from predefined templates | -- |
 
-#### Members, Comments, Time Tracking, Metadata
+#### Labels
+
+| Tool | Description |
+| --- | --- |
+| `list_labels` | List all labels in the workspace |
+| `get_label` | Find a label by name |
+| `create_label` | Create a new label with optional color |
+| `update_label` | Update label name, color, or description |
+| `add_label` | Add a label to an issue |
+| `remove_label` | Remove a label from an issue |
+
+#### Relations
+
+| Tool | Description |
+| --- | --- |
+| `add_relation` | Add bidirectional "related to" link |
+| `add_blocked_by` | Add "blocked by" dependency |
+| `set_parent` | Set parent issue (epic/task hierarchy) |
+
+#### Components
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_members` / `assign_issue` | Member management | — |
-| `add_comment` / `update_comment` | Add or update comment | `format`: md/html/plain |
-| `list_comments` / `delete_comment` | Read/delete comments | — |
-| `log_time` | Log time spent | `descriptionFormat`: md/html/plain |
-| `set_due_date` / `set_estimation` | Set dates/hours | — |
-| `list_time_reports` / `delete_time_report` | Time report CRUD | — |
-| `list_task_types` / `list_statuses` | Metadata | — |
+| `list_components` | List components in a project | -- |
+| `get_component` | Find a component by name | -- |
+| `create_component` | Create a new component | `descriptionFormat`: md/html/plain |
+| `update_component` | Update component fields | `descriptionFormat`: md/html/plain |
+| `delete_component` | Delete a component | -- |
+
+#### Milestones
+
+| Tool | Description | Text Format |
+| --- | --- | --- |
+| `list_milestones` | List milestones (supports `include_details`) | -- |
+| `get_milestone` | Get milestone details (supports `include_details`) | -- |
+| `create_milestone` | Create a new milestone | `descriptionFormat`: md/html/plain |
+| `update_milestone` | Update milestone fields | `descriptionFormat`: md/html/plain |
+| `delete_milestone` | Delete a milestone | -- |
+| `set_milestone` | Set or clear milestone on an issue | -- |
+
+#### Members
+
+| Tool | Description |
+| --- | --- |
+| `list_members` | List all active workspace members |
+| `get_member` | Find a member by name (fuzzy match) |
+| `assign_issue` | Assign or unassign an issue |
+
+#### Comments
+
+| Tool | Description | Text Format |
+| --- | --- | --- |
+| `list_comments` | List all comments on an issue | -- |
+| `get_comment` | Get a specific comment by ID | -- |
+| `add_comment` | Add a comment to an issue | `format`: md/html/plain |
+| `update_comment` | Update comment text | `format`: md/html/plain |
+| `delete_comment` | Delete a comment | -- |
+
+#### Time Tracking
+
+| Tool | Description | Text Format |
+| --- | --- | --- |
+| `set_due_date` | Set or clear due date | -- |
+| `set_estimation` | Set time estimation in hours | -- |
+| `log_time` | Log actual time spent | `descriptionFormat`: md/html/plain |
+| `list_time_reports` | List time reports for an issue | -- |
+| `get_time_report` | Get a specific time report by ID | -- |
+| `delete_time_report` | Delete a time report | -- |
+
+#### Metadata
+
+| Tool | Description |
+| --- | --- |
+| `list_task_types` | List task types for a project |
+| `get_task_type` | Find a task type by name |
+| `list_statuses` | List issue statuses |
+| `get_status` | Find a status by name |
 
 > **Text format**: All text fields default to `markdown`.
 > Set `descriptionFormat` (or `format` for comments) to
 > `"markdown"`, `"html"`, or `"plain"`. Content is passed
-> through unmodified — the format tells Huly how to render it.
+> through unmodified -- the format tells Huly how to render it.
+
+#### include\_details Flag
+
+Several read tools support an `include_details` boolean parameter that
+fetches related data in a single call:
+
+| Tool | Extra data when `include_details=true` |
+| --- | --- |
+| `get_issue` | Comments, time reports, relations, children |
+| `list_issues` | Descriptions, comments, time reports, relations, children (limit reduced to 50) |
+| `get_project` | Milestones, components, labels, members |
+| `list_projects` | Milestones, components, labels, members per project (limit 20) |
+| `get_milestone` | Full list of issues in the milestone |
+| `list_milestones` | Issues list per milestone |
 
 #### CRUD Coverage
 
-| Entity | Create | Read/List | Update | Delete |
-| --- | --- | --- | --- | --- |
-| Project | `create_project` | `list_projects` / `get_project` | `update_project` | `delete_project` |
-| Issue | `create_issue` | `list_issues` / `get_issue` | `update_issue` | `delete_issue` |
-| Label | `create_label` | `list_labels` | `update_label` | `remove_label` |
-| Component | `create_component` | `list_components` | `update_component` | `delete_component` |
-| Milestone | `create_milestone` | `list_milestones` / `get_milestone` | `update_milestone` | `delete_milestone` |
-| Comment | `add_comment` | `list_comments` | `update_comment` | `delete_comment` |
+| Entity | Create | Read | List | Update | Delete |
+| --- | --- | --- | --- | --- | --- |
+| Project | `create_project` | `get_project` | `list_projects` | `update_project` | `delete_project` |
+| Issue | `create_issue` | `get_issue` | `list_issues` | `update_issue` | `delete_issue` |
+| Label | `create_label` | `get_label` | `list_labels` | `update_label` | `remove_label` |
+| Component | `create_component` | `get_component` | `list_components` | `update_component` | `delete_component` |
+| Milestone | `create_milestone` | `get_milestone` | `list_milestones` | `update_milestone` | `delete_milestone` |
+| Comment | `add_comment` | `get_comment` | `list_comments` | `update_comment` | `delete_comment` |
+| Time Report | `log_time` | `get_time_report` | `list_time_reports` | -- | `delete_time_report` |
+| Member | -- | `get_member` | `list_members` | -- | -- |
+| Status | -- | `get_status` | `list_statuses` | -- | -- |
+| Task Type | -- | `get_task_type` | `list_task_types` | -- | -- |
 
 ### HTTP REST Endpoints
 
@@ -574,7 +658,7 @@ Use `create_issues_from_template` (MCP) or `POST /api/projects/:project/template
 
 `npm audit` reports moderate vulnerabilities in Svelte (SSR XSS).
 These come from Huly SDK transitive dependencies — the SDK shares packages
-with Huly's web frontend. This server never renders HTML or uses Svelte.
+with Huly's web frontend. MCP server never renders HTML or uses Svelte.
 The vulnerabilities are **not exploitable** in this context.
 
 ---

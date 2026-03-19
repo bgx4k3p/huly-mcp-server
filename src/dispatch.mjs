@@ -78,13 +78,13 @@ export const accountTools = {
  */
 export const workspaceTools = {
   list_projects: (a, c) =>
-    c.listProjects(),
+    c.listProjects({ include_details: a.include_details }),
   get_project: (a, c) =>
-    c.getProject(a.project),
+    c.getProject(a.project, { include_details: a.include_details }),
   list_issues: (a, c) =>
-    c.listIssues(a.project, a.status, a.priority, a.label, a.milestone, a.limit),
+    c.listIssues(a.project, a.status, a.priority, a.label, a.milestone, a.limit, a.include_details),
   get_issue: (a, c) =>
-    c.getIssue(a.issueId),
+    c.getIssue(a.issueId, { include_details: a.include_details }),
   create_issue: (a, c) =>
     c.createIssue(a.project, a.title, a.description, a.priority, a.status, a.labels, a.type, {
       assignee: a.assignee, component: a.component, milestone: a.milestone,
@@ -130,8 +130,8 @@ export const workspaceTools = {
   list_statuses: (a, c) => c.listStatuses(a.project, a.taskType),
 
   // Milestones
-  list_milestones: (a, c) => c.listMilestones(a.project, a.status),
-  get_milestone: (a, c) => c.getMilestone(a.project, a.name),
+  list_milestones: (a, c) => c.listMilestones(a.project, a.status, { include_details: a.include_details }),
+  get_milestone: (a, c) => c.getMilestone(a.project, a.name, { include_details: a.include_details }),
   create_milestone: (a, c) =>
     c.createMilestone(a.project, a.name, a.description, a.targetDate, a.status, a.descriptionFormat),
   set_milestone: (a, c) => c.setMilestone(a.issueId, a.milestone),
@@ -179,5 +179,14 @@ export const workspaceTools = {
       name: a.newName, description: a.description,
       descriptionFormat: a.descriptionFormat, lead: a.lead
     }),
-  delete_component: (a, c) => c.deleteComponent(a.project, a.name)
+  delete_component: (a, c) => c.deleteComponent(a.project, a.name),
+
+  // Single-item lookups
+  get_label: (a, c) => c.getLabel(a.name),
+  get_member: (a, c) => c.getMember(a.name),
+  get_status: (a, c) => c.getStatus(a.name),
+  get_component: (a, c) => c.getComponent(a.project, a.name),
+  get_task_type: (a, c) => c.getTaskType(a.project, a.name),
+  get_comment: (a, c) => c.getComment(a.issueId, a.commentId),
+  get_time_report: (a, c) => c.getTimeReport(a.issueId, a.reportId)
 };
