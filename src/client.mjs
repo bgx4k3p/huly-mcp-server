@@ -7,6 +7,7 @@
 import {
   PRIORITY_MAP, PRIORITY_NAMES,
   MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES,
+  COLOR_PALETTE, resolveColor,
   nameMatch, withExtra,
   toCollaboratorMarkup, fromCollaboratorMarkup,
   toMarkup, fromMarkup
@@ -648,10 +649,10 @@ export class HulyClient {
         title: labelName,
         targetClass: tracker.class.Issue,
         description: '',
-        color: 0x4ECDC4,
+        color: 9,
         category: 'tracker:category:Other'
       }, tagId);
-      tagElement = { _id: tagId, title: labelName, color: 0x4ECDC4 };
+      tagElement = { _id: tagId, title: labelName, color: 9 };
     }
 
     const existing = await client.findOne(tags.class.TagReference, {
@@ -1402,11 +1403,11 @@ export class HulyClient {
       title: name,
       targetClass: tracker.class.Issue,
       description: '',
-      color: color || 0x4ECDC4,
+      color: resolveColor(color),
       category: 'tracker:category:Other'
     }, tagId);
 
-    return { message: `Label "${name}" created`, id: tagId, name, color: color || 0x4ECDC4 };
+    return { message: `Label "${name}" created`, id: tagId, name, color: resolveColor(color) };
   }
 
   /**
