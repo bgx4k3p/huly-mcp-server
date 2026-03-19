@@ -942,6 +942,10 @@ export class HulyClient {
     const components = await client.findAll(tracker.class.Component, { space: proj._id });
     const componentMap = new Map(components.map(c => [c._id, c.label]));
 
+    // Employee map (ID → name)
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const employeeMap = new Map(employees.map(e => [e._id, e.name]));
+
     // Parent issue map for hierarchy (batch lookup)
     const parentIds = [...new Set(issues
       .filter(i => i.attachedTo && i.attachedToClass === tracker.class.Issue)
@@ -975,7 +979,7 @@ export class HulyClient {
         status: statusName || 'Unknown',
         priority: priorityName || 'Unknown',
         type: taskTypeMap.get(issue.kind) || null,
-        assignee: issue.assignee || null,
+        assignee: issue.assignee ? employeeMap.get(issue.assignee) || null : null,
         component: issue.component ? componentMap.get(issue.component) || null : null,
         labels: issueLabels.map(l => l.title),
         parent: issue.attachedTo ? parentMap.get(issue.attachedTo) || null : null,
@@ -1003,6 +1007,17 @@ export class HulyClient {
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
     const status = await client.findOne(tracker.class.IssueStatus, { _id: issue.status });
+
+    const taskTypes = await client.findAll(task.class.TaskType, {});
+    const taskTypeMap = new Map(taskTypes.map(t => [t._id, t.name]));
+
+    // Employee map (ID → name)
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const employeeMap = new Map(employees.map(e => [e._id, e.name]));
+
+    // Component map (ID → name)
+    const components = await client.findAll(tracker.class.Component, { space: project._id });
+    const componentMap = new Map(components.map(c => [c._id, c.label]));
 
     const issueLabels = await client.findAll(tags.class.TagReference, {
       attachedTo: issue._id
@@ -1047,9 +1062,9 @@ export class HulyClient {
       description: descriptionContent,
       status: status?.name || 'Unknown',
       priority: PRIORITY_NAMES[issue.priority] || 'Unknown',
-      type: issue.kind,
-      assignee: issue.assignee || null,
-      component: issue.component || null,
+      type: taskTypeMap.get(issue.kind) || issue.kind,
+      assignee: issue.assignee ? employeeMap.get(issue.assignee) || null : null,
+      component: issue.component ? componentMap.get(issue.component) || null : null,
       labels: issueLabels.map(l => l.title),
       parent: parentId,
       childCount: issue.subIssues || 0,
@@ -2018,6 +2033,23 @@ export class HulyClient {
     const taskTypes = await client.findAll(task.class.TaskType, {});
     const taskTypeMap = new Map(taskTypes.map(t => [t._id, t.name]));
 
+    // Employee map (ID → name)
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const employeeMap = new Map(employees.map(e => [e._id, e.name]));
+
+    // Component map (ID → name) — gather all unique spaces from results
+    const spaceIds = [...new Set(issues.map(i => i.space))];
+    const allComponents = spaceIds.length > 0
+      ? await client.findAll(tracker.class.Component, { space: { $in: spaceIds } })
+      : [];
+    const componentMap = new Map(allComponents.map(c => [c._id, c.label]));
+
+    // Milestone map (ID → name)
+    const allMilestones = spaceIds.length > 0
+      ? await client.findAll(tracker.class.Milestone, { space: { $in: spaceIds } })
+      : [];
+    const milestoneMap = new Map(allMilestones.map(m => [m._id, m.label]));
+
     const doneStatuses = new Set(statuses
       .filter(s => s.category === 'task:statusCategory:Won')
       .map(s => s._id));
@@ -2036,7 +2068,9 @@ export class HulyClient {
       status: statusMap.get(i.status) || 'Unknown',
       priority: PRIORITY_NAMES[i.priority] || 'Unknown',
       type: taskTypeMap.get(i.kind) || null,
-      assignee: i.assignee || null,
+      assignee: i.assignee ? employeeMap.get(i.assignee) || null : null,
+      component: i.component ? componentMap.get(i.component) || null : null,
+      milestone: i.milestone ? milestoneMap.get(i.milestone) || null : null,
       parent: i.attachedTo ? parentMap.get(i.attachedTo) || null : null,
       childCount: i.subIssues || 0,
       dueDate: i.dueDate ? new Date(i.dueDate).toISOString().split('T')[0] : null,
@@ -2139,6 +2173,22 @@ export class HulyClient {
     const taskTypes = await client.findAll(task.class.TaskType, {});
     const taskTypeMap = new Map(taskTypes.map(t => [t._id, t.name]));
 
+    // Employee map (ID → name) — reuse already-fetched employees list
+    const employeeMap = new Map(employees.map(e => [e._id, e.name]));
+
+    // Component map (ID → name)
+    const spaceIds = [...new Set(issues.map(i => i.space))];
+    const allComponents = spaceIds.length > 0
+      ? await client.findAll(tracker.class.Component, { space: { $in: spaceIds } })
+      : [];
+    const componentMap = new Map(allComponents.map(c => [c._id, c.label]));
+
+    // Milestone map (ID → name)
+    const allMilestones = spaceIds.length > 0
+      ? await client.findAll(tracker.class.Milestone, { space: { $in: spaceIds } })
+      : [];
+    const milestoneMap = new Map(allMilestones.map(m => [m._id, m.label]));
+
     const doneStatuses = new Set(statuses
       .filter(s => s.category === 'task:statusCategory:Won')
       .map(s => s._id));
@@ -2165,12 +2215,12 @@ export class HulyClient {
         status: statusName || 'Unknown',
         priority: priorityName || 'Unknown',
         type: taskTypeMap.get(issue.kind) || null,
-        assignee: issue.assignee || null,
-        component: issue.component || null,
+        assignee: issue.assignee ? employeeMap.get(issue.assignee) || null : null,
+        component: issue.component ? componentMap.get(issue.component) || null : null,
         labels: issueLabels.map(l => l.title),
         parent: issue.attachedTo ? parentMap.get(issue.attachedTo) || null : null,
         childCount: issue.subIssues || 0,
-        milestone: issue.milestone || null,
+        milestone: issue.milestone ? milestoneMap.get(issue.milestone) || null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
         estimation: issue.estimation || 0,
         reportedTime: issue.reportedTime || 0,
