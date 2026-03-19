@@ -472,6 +472,14 @@ export class HulyClient {
       this._workspaceId = workspaceId;
       this._wsToken = token;
 
+      // Extract authenticated account UUID from JWT for ownership
+      try {
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+        this._accountUuid = payload.account || null;
+      } catch {
+        this._accountUuid = null;
+      }
+
       this._client = await createRestTxOperations(endpoint, workspaceId, token);
 
       // Initialize collaborator client for rich text (issue descriptions)
@@ -2735,6 +2743,8 @@ export class HulyClient {
       throw new Error(`Multiple project types found: ${available}. Specify projectType explicitly.`);
     }
 
+    const owners = this._accountUuid ? [this._accountUuid] : [];
+
     const projectId = generateId();
     await client.createDoc(tracker.class.Project, projectId, {
       identifier,
@@ -2742,7 +2752,7 @@ export class HulyClient {
       description: toMarkup(description || '', format),
       private: isPrivate,
       members: [],
-      owners: [],
+      owners,
       archived: false,
       autoJoin: !isPrivate,
       sequence: 0,
