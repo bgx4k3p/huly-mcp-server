@@ -366,10 +366,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        identifier: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         ...workspaceProp
       },
-      required: ['identifier']
+      required: ['project']
     }
   },
   {
@@ -848,11 +848,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        identifier: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         archived: { type: 'boolean', description: 'true to archive, false to unarchive' },
         ...workspaceProp
       },
-      required: ['identifier', 'archived']
+      required: ['project', 'archived']
     }
   },
   {
@@ -861,10 +861,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        identifier: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         ...workspaceProp
       },
-      required: ['identifier']
+      required: ['project']
     }
   },
 
