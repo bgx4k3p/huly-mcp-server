@@ -60,7 +60,12 @@ export const MILESTONE_STATUS_NAMES = ['Planned', 'In Progress', 'Completed', 'C
  * Case-insensitive name comparison.
  */
 export function nameMatch(a, b) {
-  return (a || '').toLowerCase() === (b || '').toLowerCase();
+  const la = (a || '').toLowerCase();
+  const lb = (b || '').toLowerCase();
+  if (la === lb) return true;
+  // Handle Cancelled/Canceled spelling variants
+  if (la.replace('cancelled', 'canceled') === lb.replace('cancelled', 'canceled')) return true;
+  return false;
 }
 
 /**

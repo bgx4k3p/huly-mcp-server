@@ -731,6 +731,27 @@ export class HulyClient {
   }
 
   /**
+   * Get statuses scoped to a specific task type within a project.
+   * Falls back to all statuses if task type has no scoped list.
+   */
+  async _getScopedStatuses(client, project, taskTypeId) {
+    const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
+    if (!allStatuses.length) throw new Error('No statuses found in workspace');
+
+    // Find the task type to get its scoped status list
+    const taskTypes = await client.findAll(task.class.TaskType, {});
+    const taskType = taskTypes.find(tt => tt._id === taskTypeId);
+
+    if (taskType?.statuses?.length) {
+      const scopedIds = new Set(taskType.statuses);
+      const scoped = allStatuses.filter(s => scopedIds.has(s._id));
+      if (scoped.length) return scoped;
+    }
+
+    return allStatuses;
+  }
+
+  /**
    * Paginated findAll — fetches results in batches to avoid data loss.
    * The SDK's findAll has a server-side page limit. If limit exceeds
    * the page size, this fetches multiple pages using createdOn cursor.
@@ -1106,22 +1127,23 @@ export class HulyClient {
       sequence: nextNumber
     });
 
+    // Resolve task type first — status lookup depends on it
+    let taskTypeId;
+    if (type) {
+      taskTypeId = await this._findTaskTypeByName(client, projectIdent, type);
+    } else {
+      taskTypeId = await this._getDefaultTaskType(client, project);
+    }
+
+    // Resolve status scoped to the task type
+    const statuses = await this._getScopedStatuses(client, project, taskTypeId);
     let statusId;
-    const statuses = await client.findAll(tracker.class.IssueStatus, {});
-    if (!statuses.length) throw new Error('No statuses found for project');
     if (status) {
       const found = statuses.find(s => nameMatch(s.name, status));
       statusId = found?._id;
     }
     if (!statusId) {
       statusId = project.defaultIssueStatus || statuses[0]._id;
-    }
-
-    let taskTypeId;
-    if (type) {
-      taskTypeId = await this._findTaskTypeByName(client, projectIdent, type);
-    } else {
-      taskTypeId = await this._getDefaultTaskType(client, project);
     }
 
     // Resolve optional extra fields
@@ -1225,7 +1247,8 @@ export class HulyClient {
     }
 
     if (status !== undefined) {
-      const statuses = await client.findAll(tracker.class.IssueStatus, {});
+      const taskTypeId = issue.kind || await this._getDefaultTaskType(client, project);
+      const statuses = await this._getScopedStatuses(client, project, taskTypeId);
       const found = statuses.find(s => nameMatch(s.name, status));
       if (found) {
         updates.status = found._id;
@@ -2254,13 +2277,11 @@ export class HulyClient {
     }
     if (issues.length > 500) throw new Error('Batch size limited to 500 issues');
 
-    const statuses = await client.findAll(tracker.class.IssueStatus, {});
-    if (!statuses.length) throw new Error('No statuses found for project');
-    const defaultStatusId = project.defaultIssueStatus || statuses[0]._id;
-
     // Cache lookups to avoid N+1 queries in the loop
     const cachedTaskTypes = await client.findAll(task.class.TaskType, {});
     const defaultTaskTypeId = await this._getDefaultTaskType(client, project);
+    const scopedStatuses = await this._getScopedStatuses(client, project, defaultTaskTypeId);
+    const defaultStatusId = project.defaultIssueStatus || scopedStatuses[0]._id;
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
     const components = await client.findAll(tracker.class.Component, { space: project._id });
     const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
@@ -2278,7 +2299,7 @@ export class HulyClient {
 
       let statusId = defaultStatusId;
       if (item.status) {
-        const found = statuses.find(s => nameMatch(s.name, item.status));
+        const found = scopedStatuses.find(s => nameMatch(s.name, item.status));
         if (found) statusId = found._id;
       }
 
