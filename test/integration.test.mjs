@@ -1391,7 +1391,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     HulyClient = mod.HulyClient;
     client = new HulyClient({ url: HULY_URL, workspace: WORKSPACE, ...HULY_CREDS });
     await client.connect();
-    await client.createProject(AUDIT_PROJECT, 'Audit Test Project');
+    await client.createProject(AUDIT_PROJECT, 'Audit Test Project', 'Automated audit tests', false, undefined, 'Classic project');
   });
 
   after(async () => {
@@ -1558,6 +1558,149 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
       // Clean up
       for (const c of result.created) {
         try { await client.deleteIssue(c.id); } catch {}
+      }
+    });
+  });
+
+  // ── Orphan reference resilience ──────────────────────────
+  // Verifies list/get don't throw when referenced entities are deleted.
+  // Huly's removeDoc does NOT cascade-clean references, so orphaned
+  // attachedTo/component/milestone IDs are expected in production data.
+
+  describe('Orphan parent: delete parent, list_issues still works', () => {
+    let parentId, childId;
+
+    before(async () => {
+      const parent = await client.createIssue(AUDIT_PROJECT, 'Orphan parent', '');
+      parentId = parent.id;
+      const child = await client.createIssue(AUDIT_PROJECT, 'Orphan child', '');
+      childId = child.id;
+      await client.setParent(childId, parentId);
+      // Verify parent is set
+      const check = await client.getIssue(childId);
+      assert.equal(check.parent, parentId, 'Parent should be set before delete');
+      // Delete the parent — Huly does NOT cascade-clean attachedTo on children
+      await client.deleteIssue(parentId);
+    });
+
+    after(async () => {
+      try { await client.deleteIssue(childId); } catch {}
+    });
+
+    it('list_issues does not throw on orphaned parent', async () => {
+      const issues = await client.listIssues(AUDIT_PROJECT);
+      // Child may or may not survive parent deletion depending on Huly behavior
+      // The key assertion: listIssues itself must not throw
+      assert.ok(Array.isArray(issues), 'list_issues should return array');
+    });
+
+    it('get_issue does not throw on orphaned parent', async () => {
+      try {
+        const issue = await client.getIssue(childId);
+        // If child survived, parent should be null
+        assert.equal(issue.parent, null, 'Orphaned parent should be null');
+      } catch (err) {
+        // Child may have been cascade-deleted with parent
+        assert.ok(err.message.includes('not found'), `Unexpected error: ${err.message}`);
+      }
+    });
+
+    it('search_issues does not throw on orphaned parent', async () => {
+      const issues = await client.searchIssues('Orphan child');
+      assert.ok(Array.isArray(issues), 'Search should return array');
+    });
+  });
+
+  describe('Orphan component: delete component, list_issues still works', () => {
+    let issueId, componentName;
+
+    before(async () => {
+      componentName = `OrphanComp${Date.now().toString(36).slice(-4)}`;
+      await client.createComponent(AUDIT_PROJECT, componentName);
+      const issue = await client.createIssue(AUDIT_PROJECT, 'Issue with orphan component', '', 'medium', undefined, undefined, undefined, { component: componentName });
+      issueId = issue.id;
+      // Verify component is set
+      const check = await client.getIssue(issueId);
+      assert.ok(check.component, 'Component should be set before delete');
+      // Delete the component
+      await client.deleteComponent(AUDIT_PROJECT, componentName);
+    });
+
+    after(async () => {
+      try { await client.deleteIssue(issueId); } catch {}
+    });
+
+    it('list_issues does not throw on orphaned component', async () => {
+      const issues = await client.listIssues(AUDIT_PROJECT);
+      const issue = issues.find(i => i.id === issueId);
+      assert.ok(issue, 'Issue should be in list');
+      assert.equal(issue.component, null, 'Orphaned component should be null');
+    });
+
+    it('get_issue does not throw on orphaned component', async () => {
+      const issue = await client.getIssue(issueId);
+      assert.equal(issue.component, null, 'Orphaned component should be null');
+    });
+  });
+
+  describe('Orphan milestone: delete milestone, list_issues still works', () => {
+    let issueId, milestoneName;
+
+    before(async () => {
+      milestoneName = `OrphanMS${Date.now().toString(36).slice(-4)}`;
+      const ms = await client.createMilestone(AUDIT_PROJECT, milestoneName);
+      const issue = await client.createIssue(AUDIT_PROJECT, 'Issue with orphan milestone', '');
+      issueId = issue.id;
+      await client.setMilestone(issueId, milestoneName);
+      // Verify milestone is set
+      const before = await client.getIssue(issueId);
+      assert.ok(before.milestone, 'Milestone should be set before delete');
+      // Delete the milestone
+      await client.deleteMilestone(AUDIT_PROJECT, milestoneName);
+    });
+
+    after(async () => {
+      try { await client.deleteIssue(issueId); } catch {}
+    });
+
+    it('list_issues does not throw on orphaned milestone', async () => {
+      const issues = await client.listIssues(AUDIT_PROJECT);
+      const issue = issues.find(i => i.id === issueId);
+      assert.ok(issue, 'Issue should be in list');
+      assert.equal(issue.milestone, null, 'Orphaned milestone should be null');
+    });
+
+    it('get_issue does not throw on orphaned milestone', async () => {
+      const issue = await client.getIssue(issueId);
+      assert.equal(issue.milestone, null, 'Orphaned milestone should be null');
+    });
+  });
+
+  describe('Orphan relation: delete related issue, get_issue still works', () => {
+    let issueId, relatedId;
+
+    before(async () => {
+      const issue = await client.createIssue(AUDIT_PROJECT, 'Issue with orphan relation', '');
+      issueId = issue.id;
+      const related = await client.createIssue(AUDIT_PROJECT, 'Related issue to delete', '');
+      relatedId = related.id;
+      await client.addRelation(issueId, relatedId);
+      // Brief delay for relation to propagate
+      await new Promise(r => setTimeout(r, 1000));
+      // Delete the related issue
+      await client.deleteIssue(relatedId);
+    });
+
+    after(async () => {
+      try { await client.deleteIssue(issueId); } catch {}
+    });
+
+    it('get_issue with include_details does not throw on orphaned relation', async () => {
+      const issue = await client.getIssue(issueId, true);
+      // The key assertion: get_issue must not throw even if related issue was deleted
+      assert.ok(issue, 'get_issue should return the issue');
+      if (issue.relations) {
+        assert.ok(Array.isArray(issue.relations), 'Relations should be an array');
       }
     });
   });

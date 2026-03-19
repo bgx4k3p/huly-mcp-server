@@ -881,12 +881,12 @@ export class HulyClient {
     const relProjects = await client.findAll(tracker.class.Project, { _id: { $in: relSpaceIds } });
     const relProjectMap = new Map(relProjects.map(p => [p._id, p.identifier]));
     const relIssueMap = new Map(relIssues.map(i => [i._id, {
-      id: `${strictGet(relProjectMap, i.space, 'Related issue project')}-${i.number}`,
+      id: `${relProjectMap.get(i.space) ?? '?'}-${i.number}`,
       title: i.title
     }]));
     return {
-      relations: relationRefs.map(r => strictGet(relIssueMap, r._id, 'Related issue')),
-      blockedBy: blockedByRefs.map(r => strictGet(relIssueMap, r._id, 'Blocked-by issue'))
+      relations: relationRefs.map(r => relIssueMap.get(r._id)).filter(Boolean),
+      blockedBy: blockedByRefs.map(r => relIssueMap.get(r._id)).filter(Boolean)
     };
   }
 
@@ -950,9 +950,9 @@ export class HulyClient {
       const projComponents = (componentsByProject.get(project._id) || []).map(c => ({
         name: c.label,
         description: fromMarkup(c.description),
-        lead: c.lead ? strictGet(employeeMap, c.lead, 'Component lead') : null
+        lead: c.lead ? employeeMap.get(c.lead) ?? null : null
       }));
-      const projMembers = (project.members || []).map(mId => strictGet(employeeMap, mId, 'Project member'));
+      const projMembers = (project.members || []).map(mId => employeeMap.get(mId)).filter(Boolean);
       const projLabels = allLabels.map(t => ({
         name: t.title,
         color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null
@@ -1027,13 +1027,13 @@ export class HulyClient {
     base.components = components.map(c => ({
       name: c.label,
       description: fromMarkup(c.description),
-      lead: c.lead ? strictGet(employeeMap, c.lead, 'Component lead') : null
+      lead: c.lead ? employeeMap.get(c.lead) ?? null : null
     }));
     base.labels = allLabels.map(t => ({
       name: t.title,
       color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null
     }));
-    base.members = (project.members || []).map(mId => strictGet(employeeMap, mId, 'Project member'));
+    base.members = (project.members || []).map(mId => employeeMap.get(mId)).filter(Boolean);
 
     return withExtra(project, base);
   }
@@ -1140,7 +1140,7 @@ export class HulyClient {
     const parentProjMap = new Map(parentProjects.map(p => [p._id, p.identifier]));
     const parentMap = new Map(parentIssues.map(p => [
       p._id,
-      `${strictGet(parentProjMap, p.space, 'Parent issue project')}-${p.number}`
+      `${parentProjMap.get(p.space) ?? '?'}-${p.number}`
     ]));
 
     // Batch fetch details if include_details is requested
@@ -1188,12 +1188,12 @@ export class HulyClient {
         status: strictGet(statusMap, issue.status, 'Status'),
         priority: strictGet(PRIORITY_NAMES, issue.priority, 'Priority'),
         type: strictGet(taskTypeMap, issue.kind, 'Task type'),
-        assignee: issue.assignee ? strictGet(employeeMap, issue.assignee, 'Employee') : null,
-        component: issue.component ? strictGet(componentMap, issue.component, 'Component') : null,
+        assignee: issue.assignee ? employeeMap.get(issue.assignee) ?? null : null,
+        component: issue.component ? componentMap.get(issue.component) ?? null : null,
         labels: issueLabels.map(l => l.title),
-        parent: issue.attachedTo ? strictGet(parentMap, issue.attachedTo, 'Parent issue') : null,
+        parent: (issue.attachedTo && issue.attachedToClass === tracker.class.Issue) ? parentMap.get(issue.attachedTo) ?? null : null,
         childCount: issue.subIssues || 0,
-        milestone: issue.milestone ? strictGet(milestoneMap, issue.milestone, 'Milestone') : null,
+        milestone: issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
         estimation: issue.estimation || 0,
         reportedTime: issue.reportedTime || 0,
@@ -1312,8 +1312,8 @@ export class HulyClient {
       status: strictGet(statusMap, issue.status, 'Status'),
       priority: strictGet(PRIORITY_NAMES, issue.priority, 'Priority'),
       type: strictGet(taskTypeMap, issue.kind, 'Task type'),
-      assignee: issue.assignee ? strictGet(employeeMap, issue.assignee, 'Employee') : null,
-      component: issue.component ? strictGet(componentMap, issue.component, 'Component') : null,
+      assignee: issue.assignee ? employeeMap.get(issue.assignee) ?? null : null,
+      component: issue.component ? componentMap.get(issue.component) ?? null : null,
       labels: issueLabels.map(l => l.title),
       parent: parentId,
       childCount: issue.subIssues || 0,
@@ -2428,7 +2428,7 @@ export class HulyClient {
     const parentIssues = parentIds.length > 0
       ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
       : [];
-    const parentMap = new Map(parentIssues.map(p => [p._id, `${strictGet(projMap, p.space, 'Parent issue project')}-${p.number}`]));
+    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) ?? '?'}-${p.number}`]));
 
     return issues.map(i => withExtra(i, {
       id: `${strictGet(projMap, i.space, 'Issue project')}-${i.number}`,
@@ -2436,10 +2436,10 @@ export class HulyClient {
       status: strictGet(statusMap, i.status, 'Status'),
       priority: strictGet(PRIORITY_NAMES, i.priority, 'Priority'),
       type: strictGet(taskTypeMap, i.kind, 'Task type'),
-      assignee: i.assignee ? strictGet(employeeMap, i.assignee, 'Employee') : null,
-      component: i.component ? strictGet(componentMap, i.component, 'Component') : null,
-      milestone: i.milestone ? strictGet(milestoneMap, i.milestone, 'Milestone') : null,
-      parent: i.attachedTo ? strictGet(parentMap, i.attachedTo, 'Parent issue') : null,
+      assignee: i.assignee ? employeeMap.get(i.assignee) ?? null : null,
+      component: i.component ? componentMap.get(i.component) ?? null : null,
+      milestone: i.milestone ? milestoneMap.get(i.milestone) ?? null : null,
+      parent: (i.attachedTo && i.attachedToClass === tracker.class.Issue) ? parentMap.get(i.attachedTo) ?? null : null,
       childCount: i.subIssues || 0,
       dueDate: i.dueDate ? new Date(i.dueDate).toISOString().split('T')[0] : null,
       createdOn: i.createdOn,
@@ -2552,7 +2552,7 @@ export class HulyClient {
     const parentIssues = parentIds.length > 0
       ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
       : [];
-    const parentMap = new Map(parentIssues.map(p => [p._id, `${strictGet(projMap, p.space, 'Parent issue project')}-${p.number}`]));
+    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) ?? '?'}-${p.number}`]));
 
     const result = [];
     for (const issue of issues) {
@@ -2564,12 +2564,12 @@ export class HulyClient {
         status: strictGet(statusMap, issue.status, 'Status'),
         priority: strictGet(PRIORITY_NAMES, issue.priority, 'Priority'),
         type: strictGet(taskTypeMap, issue.kind, 'Task type'),
-        assignee: issue.assignee ? strictGet(employeeMap, issue.assignee, 'Employee') : null,
-        component: issue.component ? strictGet(componentMap, issue.component, 'Component') : null,
+        assignee: issue.assignee ? employeeMap.get(issue.assignee) ?? null : null,
+        component: issue.component ? componentMap.get(issue.component) ?? null : null,
         labels: issueLabels.map(l => l.title),
-        parent: issue.attachedTo ? strictGet(parentMap, issue.attachedTo, 'Parent issue') : null,
+        parent: (issue.attachedTo && issue.attachedToClass === tracker.class.Issue) ? parentMap.get(issue.attachedTo) ?? null : null,
         childCount: issue.subIssues || 0,
-        milestone: issue.milestone ? strictGet(milestoneMap, issue.milestone, 'Milestone') : null,
+        milestone: issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
         estimation: issue.estimation || 0,
         reportedTime: issue.reportedTime || 0,
