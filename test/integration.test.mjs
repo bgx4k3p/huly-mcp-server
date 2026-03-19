@@ -1379,6 +1379,191 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 });
 
 // ════════════════════════════════════════════════════════════════
+// 2a-2. V2.0.2 AUDIT TESTS — error paths, concurrency, workflows
+// ════════════════════════════════════════════════════════════════
+
+describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
+  let HulyClient, client;
+  const AUDIT_PROJECT = `AUD${Date.now().toString(36).slice(-4).toUpperCase()}`;
+
+  before(async () => {
+    const mod = await import('../src/client.mjs');
+    HulyClient = mod.HulyClient;
+    client = new HulyClient({ url: HULY_URL, workspace: WORKSPACE, ...HULY_CREDS });
+    await client.connect();
+    await client.createProject(AUDIT_PROJECT, 'Audit Test Project');
+  });
+
+  after(async () => {
+    try { await client.deleteProject(AUDIT_PROJECT); } catch {}
+    if (client) client.disconnect();
+  });
+
+  // ── Error path tests ──────────────────────────────────────
+
+  describe('Error paths', () => {
+    it('createIssue throws on invalid status name', async () => {
+      await assert.rejects(
+        () => client.createIssue(AUDIT_PROJECT, 'Test', '', 'medium', 'NonexistentStatus999'),
+        (err) => {
+          assert.ok(err.message.includes('not found'), `Expected "not found" in: ${err.message}`);
+          assert.ok(err.message.includes('Available'), `Expected available statuses in: ${err.message}`);
+          return true;
+        }
+      );
+    });
+
+    it('createIssue throws on invalid assignee name', async () => {
+      await assert.rejects(
+        () => client.createIssue(AUDIT_PROJECT, 'Test', '', 'medium', undefined, undefined, undefined, { assignee: 'NonexistentPerson999' }),
+        (err) => {
+          assert.ok(err.message.includes('not found'), `Expected "not found" in: ${err.message}`);
+          return true;
+        }
+      );
+    });
+
+    it('createIssue throws on invalid project', async () => {
+      await assert.rejects(
+        () => client.createIssue('NONEXISTENT999', 'Test'),
+        (err) => {
+          assert.ok(err.message.includes('not found'), `Expected "not found" in: ${err.message}`);
+          return true;
+        }
+      );
+    });
+
+    it('assignIssue does not substring-match employee names', async () => {
+      // Create an issue first
+      const issue = await client.createIssue(AUDIT_PROJECT, 'Assign test');
+      // Get actual members to construct a partial name
+      const members = await client.listMembers();
+      if (members.length > 0) {
+        const fullName = members[0].name;
+        const partial = fullName.slice(0, 2); // First 2 chars — should NOT match
+        if (partial !== fullName) {
+          await assert.rejects(
+            () => client.assignIssue(issue.id, partial),
+            (err) => {
+              assert.ok(err.message.includes('not found'), `Expected "not found" in: ${err.message}`);
+              return true;
+            }
+          );
+        }
+      }
+      await client.deleteIssue(issue.id);
+    });
+  });
+
+  // ── getIssue completedAt ──────────────────────────────────
+
+  describe('getIssue completedAt', () => {
+    it('returns completedAt when issue is in done status', async () => {
+      const issue = await client.createIssue(AUDIT_PROJECT, 'CompletedAt test');
+      // Get available statuses and find a done one
+      const statuses = await client.listStatuses(AUDIT_PROJECT);
+      const doneStatus = statuses.find(s => s.category?.includes('Won'));
+      if (doneStatus) {
+        await client.updateIssue(issue.id, { status: doneStatus.name });
+        const updated = await client.getIssue(issue.id);
+        assert.ok(updated.completedAt, 'Expected completedAt to be set for done issue');
+      }
+      await client.deleteIssue(issue.id);
+    });
+
+    it('returns null completedAt for non-done issues', async () => {
+      const issue = await client.createIssue(AUDIT_PROJECT, 'Not done test');
+      const details = await client.getIssue(issue.id);
+      assert.equal(details.completedAt, null, 'Expected completedAt to be null for non-done issue');
+      await client.deleteIssue(issue.id);
+    });
+  });
+
+  // ── include_details round-trip ────────────────────────────
+
+  describe('include_details round-trip', () => {
+    it('returns description, comments, timeReports via getIssue', async () => {
+      const desc = 'This is a **test** description with markdown';
+      const issue = await client.createIssue(AUDIT_PROJECT, 'Details test', desc);
+
+      await client.addComment(issue.id, 'Test comment body');
+      await client.logTime(issue.id, 1.5, 'Test time entry');
+
+      const details = await client.getIssue(issue.id, { include_details: true });
+
+      assert.ok(details.description, 'Expected non-empty description');
+      assert.ok(details.description.includes('test'), `Description should contain "test": ${details.description}`);
+      assert.ok(Array.isArray(details.comments), 'Expected comments array');
+      assert.ok(details.comments.length >= 1, 'Expected at least 1 comment');
+      assert.ok(details.comments[0].text.includes('Test comment'), 'Comment text should match');
+      assert.ok(Array.isArray(details.timeReports), 'Expected timeReports array');
+      assert.ok(details.timeReports.length >= 1, 'Expected at least 1 time report');
+
+      await client.deleteIssue(issue.id);
+    });
+  });
+
+  // ── Concurrent issue creation ─────────────────────────────
+
+  describe('Concurrent issue creation', () => {
+    it('creates issues with unique sequential numbers', async () => {
+      const count = 5;
+      const promises = Array(count).fill(null).map((_, i) =>
+        client.createIssue(AUDIT_PROJECT, `Concurrent ${i}`)
+      );
+      const results = await Promise.all(promises);
+
+      // All should succeed
+      assert.equal(results.length, count, `Expected ${count} results`);
+
+      // All should have unique IDs
+      const ids = results.map(r => r.id);
+      const uniqueIds = new Set(ids);
+      assert.equal(uniqueIds.size, count, `Expected ${count} unique IDs, got: ${[...ids].join(', ')}`);
+
+      // Clean up
+      for (const r of results) {
+        await client.deleteIssue(r.id);
+      }
+    });
+  });
+
+  // ── batchCreateIssues error reporting ─────────────────────
+
+  describe('batchCreateIssues error reporting', () => {
+    it('reports errors for issues with missing titles', async () => {
+      const result = await client.batchCreateIssues(AUDIT_PROJECT, [
+        { title: 'Valid issue' },
+        { title: '' },  // invalid
+        { description: 'no title' }  // missing title
+      ]);
+      assert.ok(result.created.length >= 1, 'Expected at least 1 created');
+      assert.ok(result.errors.length >= 1, 'Expected at least 1 error');
+
+      // Clean up created issues
+      for (const c of result.created) {
+        try { await client.deleteIssue(c.id); } catch {}
+      }
+    });
+  });
+
+  // ── Template graceful degradation ─────────────────────────
+
+  describe('Template graceful degradation', () => {
+    it('creates template issues even without custom task types', async () => {
+      const result = await client.createIssuesFromTemplate(AUDIT_PROJECT, 'sprint', { title: 'Test Sprint' });
+      assert.ok(result.created, 'Expected created array');
+      assert.ok(result.created.length >= 3, `Expected at least 3 sprint issues, got ${result.created.length}`);
+
+      // Clean up
+      for (const c of result.created) {
+        try { await client.deleteIssue(c.id); } catch {}
+      }
+    });
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
 // 2b. ACCOUNT-LEVEL TESTS (workspace & account management)
 // ════════════════════════════════════════════════════════════════
 

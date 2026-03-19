@@ -18,7 +18,7 @@ const CLEANUP_INTERVAL_MS = 300000; // 5 min
 
 class ConnectionPool {
   constructor() {
-    /** @type {Map<string, { client: HulyClient, lastUsed: number }>} */
+    /** @type {Map<string, { client: HulyClient|null, lastUsed: number, connecting: Promise<HulyClient>|null }>} */
     this._entries = new Map();
 
     // Periodic cleanup of stale connections
@@ -28,7 +28,7 @@ class ConnectionPool {
 
   /**
    * Get a HulyClient for the given workspace, creating and connecting if needed.
-   * Falls back to HULY_WORKSPACE env var when no workspace is specified.
+   * Concurrent calls for the same workspace share a single in-flight connection.
    *
    * @param {string} [workspace] - Workspace slug (optional, uses default if omitted)
    * @returns {Promise<HulyClient>}
@@ -43,27 +43,41 @@ class ConnectionPool {
     const entry = this._entries.get(ws);
     if (entry) {
       // Check if stale
-      if (Date.now() - entry.lastUsed > POOL_TTL_MS) {
+      if (entry.client && Date.now() - entry.lastUsed > POOL_TTL_MS) {
         console.warn(`[pool] Evicting stale connection for workspace: ${ws}`);
         entry.client.disconnect();
         this._entries.delete(ws);
-      } else {
+      } else if (entry.connecting) {
+        // Another caller is already connecting — await their promise
+        return entry.connecting;
+      } else if (entry.client) {
         entry.lastUsed = Date.now();
         return entry.client;
       }
     }
 
-    const client = new HulyClient({
-      url: HULY_URL,
-      token: HULY_TOKEN,
-      email: HULY_EMAIL,
-      password: HULY_PASSWORD,
-      workspace: ws
-    });
+    // Create connection and store promise so concurrent callers share it
+    const connectPromise = (async () => {
+      const client = new HulyClient({
+        url: HULY_URL,
+        token: HULY_TOKEN,
+        email: HULY_EMAIL,
+        password: HULY_PASSWORD,
+        workspace: ws
+      });
+      await client.connect();
+      this._entries.set(ws, { client, lastUsed: Date.now(), connecting: null });
+      return client;
+    })();
 
-    await client.connect();
-    this._entries.set(ws, { client, lastUsed: Date.now() });
-    return client;
+    this._entries.set(ws, { client: null, lastUsed: Date.now(), connecting: connectPromise });
+
+    try {
+      return await connectPromise;
+    } catch (err) {
+      this._entries.delete(ws);
+      throw err;
+    }
   }
 
   /**
@@ -76,18 +90,19 @@ class ConnectionPool {
     if (!ws) return;
 
     const entry = this._entries.get(ws);
-    if (entry) {
+    if (entry?.client) {
       entry.client.disconnect();
-      this._entries.delete(ws);
     }
+    this._entries.delete(ws);
   }
 
   /**
    * Disconnect all cached clients.
    */
   clearAll() {
+    clearInterval(this._cleanupTimer);
     for (const [, entry] of this._entries) {
-      entry.client.disconnect();
+      if (entry.client) entry.client.disconnect();
     }
     this._entries.clear();
   }
@@ -98,7 +113,7 @@ class ConnectionPool {
   _evictStale() {
     const now = Date.now();
     for (const [ws, entry] of this._entries) {
-      if (now - entry.lastUsed > POOL_TTL_MS) {
+      if (entry.client && now - entry.lastUsed > POOL_TTL_MS) {
         console.warn(`[pool] Evicting stale connection for workspace: ${ws}`);
         entry.client.disconnect();
         this._entries.delete(ws);
