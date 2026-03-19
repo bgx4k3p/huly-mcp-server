@@ -14,9 +14,13 @@
  */
 
 import { createServer } from 'http';
+import { createRequire } from 'module';
 import crypto from 'node:crypto';
 import { pool } from './pool.mjs';
 import { HulyClient } from './client.mjs';
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require('../package.json');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const API_TOKEN = process.env.MCP_AUTH_TOKEN || null;
@@ -187,7 +191,7 @@ const OPENAPI_SPEC = {
   info: {
     title: 'Huly API',
     description: 'REST API for Huly issue tracking with multi-workspace support',
-    version: '2.0.0'
+    version: PKG_VERSION
   },
   servers: [{ url: `http://localhost:${PORT}`, description: 'Local server' }],
   security: API_TOKEN ? [{ bearerAuth: [] }] : [],
@@ -1015,11 +1019,11 @@ async function handleRequest(req, res) {
 
     if (method === 'POST' && (params = matchRoute('/api/workspaces/:slug/invite-link', path))) {
       const body = await parseBody(req);
-      return json(res, 200, await HulyClient.createInviteLink(HULY_URL, HULY_CREDS, params.slug, body.role, body.expireHours));
+      return json(res, 200, await HulyClient.createInviteLink(HULY_URL, HULY_CREDS, params.slug, body.email, body.role, body.firstName, body.lastName, body.expireHours));
     }
 
     if (method === 'GET' && path === '/api/integrations') {
-      return json(res, 200, await HulyClient.listIntegrations(HULY_URL, HULY_CREDS));
+      return json(res, 200, await HulyClient.listIntegrations(HULY_URL, HULY_CREDS, {}));
     }
 
     if (method === 'POST' && path === '/api/integrations') {
@@ -1028,7 +1032,8 @@ async function handleRequest(req, res) {
     }
 
     if (method === 'DELETE' && (params = matchRoute('/api/integrations/:id', path))) {
-      return json(res, 200, await HulyClient.deleteIntegration(HULY_URL, HULY_CREDS, params.id));
+      const body = await parseBody(req);
+      return json(res, 200, await HulyClient.deleteIntegration(HULY_URL, HULY_CREDS, { socialId: body.socialId, kind: body.kind, workspaceUuid: body.workspaceUuid }));
     }
 
     if (method === 'GET' && path === '/api/mailboxes') {
@@ -1211,12 +1216,6 @@ async function handleRequest(req, res) {
         )
       );
       return json(res, 200, result);
-    }
-
-    if (method === 'GET' && (params = matchRoute('/api/issues/:issueId/history', path))) {
-      return json(res, 200, await client.withReconnect(() =>
-        client.getIssueHistory(params.issueId)
-      ));
     }
 
     // ── Templates (Tier 2) ────────────────────────────────
@@ -1438,17 +1437,6 @@ async function handleRequest(req, res) {
       return json(res, 200, result);
     }
 
-    // ── Assignee ──────────────────────────────────────────
-
-    if (method === 'PATCH' && (params = matchRoute('/api/issues/:issueId/assignee', path))) {
-      const body = await parseBody(req);
-      return json(res, 200, await client.withReconnect(() =>
-        withSSE('issue.assigned', () =>
-          client.assignIssue(params.issueId, body.assignee)
-        )
-      ));
-    }
-
     // ── Members ───────────────────────────────────────────
 
     if (method === 'GET' && path === '/api/members') {
@@ -1503,25 +1491,6 @@ async function handleRequest(req, res) {
         )
       );
       return json(res, 200, result);
-    }
-
-    // ── Due Date & Estimation ─────────────────────────────
-
-    if (method === 'PATCH' && (params = matchRoute('/api/issues/:issueId/due-date', path))) {
-      const body = await parseBody(req);
-      return json(res, 200, await client.withReconnect(() =>
-        withSSE('issue.due_date_changed', () =>
-          client.setDueDate(params.issueId, body.dueDate)
-        )
-      ));
-    }
-
-    if (method === 'PATCH' && (params = matchRoute('/api/issues/:issueId/estimation', path))) {
-      const body = await parseBody(req);
-      if (body.hours === undefined) return json(res, 400, { error: 'hours is required' });
-      return json(res, 200, await client.withReconnect(() =>
-        client.setEstimation(params.issueId, body.hours)
-      ));
     }
 
     // ── Time Logs ─────────────────────────────────────────
@@ -1595,7 +1564,7 @@ async function handleRequest(req, res) {
 const server = createServer(handleRequest);
 
 server.listen(PORT, () => {
-  console.log(`Huly HTTP server v2.0.0 listening on port ${PORT}`);
+  console.log(`Huly HTTP server v${PKG_VERSION} listening on port ${PORT}`);
   if (API_TOKEN) console.log('Bearer token authentication enabled');
   console.log(`Rate limit: ${RATE_LIMIT} requests/minute`);
   console.log(`OpenAPI spec: http://localhost:${PORT}/api/openapi.json`);

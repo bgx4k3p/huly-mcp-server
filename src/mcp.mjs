@@ -17,9 +17,13 @@ import {
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { createRequire } from 'module';
 import { pool } from './pool.mjs';
 import { HulyClient } from './client.mjs';
 import { accountTools, workspaceTools } from './dispatch.mjs';
+
+const require = createRequire(import.meta.url);
+const { name: PKG_NAME, version: PKG_VERSION } = require('../package.json');
 
 const HULY_URL = process.env.HULY_URL || 'http://localhost:8087';
 const HULY_TOKEN = process.env.HULY_TOKEN;
@@ -161,13 +165,14 @@ const TOOLS = [
   },
   {
     name: 'change_username',
-    description: 'Change the current user\'s username/display name at the account level.',
+    description: 'Change the current user\'s first and last name at the account level.',
     inputSchema: {
       type: 'object',
       properties: {
-        newUsername: { type: 'string', description: 'New username' }
+        firstName: { type: 'string', description: 'First name' },
+        lastName: { type: 'string', description: 'Last name' }
       },
-      required: ['newUsername']
+      required: ['firstName']
     }
   },
 
@@ -193,7 +198,8 @@ const TOOLS = [
       type: 'object',
       properties: {
         workspace: { type: 'string', description: 'Workspace slug' },
-        email: { type: 'string', description: 'Email of the pending invitee' }
+        email: { type: 'string', description: 'Email of the pending invitee' },
+        role: { type: 'string', description: 'Role: OWNER, MAINTAINER, MEMBER, GUEST (default: MEMBER)' }
       },
       required: ['workspace', 'email']
     }
@@ -205,7 +211,10 @@ const TOOLS = [
       type: 'object',
       properties: {
         workspace: { type: 'string', description: 'Workspace slug' },
+        email: { type: 'string', description: 'Email address for the invite' },
         role: { type: 'string', description: 'Role for invitees: OWNER, MAINTAINER, MEMBER, GUEST (default: MEMBER)' },
+        firstName: { type: 'string', description: 'First name of invitee' },
+        lastName: { type: 'string', description: 'Last name of invitee' },
         expireHours: { type: 'number', description: 'Link expiry in hours (default: 48)' }
       },
       required: ['workspace']
@@ -216,56 +225,69 @@ const TOOLS = [
 
   {
     name: 'list_integrations',
-    description: 'List all integrations configured for the account.',
+    description: 'List all integrations configured for the account. Optionally filter by socialId, kind, or workspaceUuid.',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        filter: { type: 'object', description: 'Optional filter: { socialId?, kind?, workspaceUuid? }' }
+      },
       required: []
     }
   },
   {
     name: 'get_integration',
-    description: 'Get details of a specific integration by ID.',
+    description: 'Get details of a specific integration by its key (socialId + kind + workspaceUuid).',
     inputSchema: {
       type: 'object',
       properties: {
-        integrationId: { type: 'string', description: 'Integration ID' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (or null for account-level)' }
       },
-      required: ['integrationId']
+      required: ['socialId', 'kind']
     }
   },
   {
     name: 'create_integration',
-    description: 'Create a new integration. Pass integration-specific data as the "data" object.',
+    description: 'Create a new integration with a socialId, kind, optional workspaceUuid, and data.',
     inputSchema: {
       type: 'object',
       properties: {
-        data: { type: 'object', description: 'Integration configuration data' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (null for account-level)' },
+        data: { type: 'object', description: 'Integration configuration data' },
+        disabled: { type: 'boolean', description: 'Whether the integration is disabled' }
       },
-      required: ['data']
+      required: ['socialId', 'kind']
     }
   },
   {
     name: 'update_integration',
-    description: 'Update an existing integration by ID.',
+    description: 'Update an existing integration. Pass the full integration key and updated fields.',
     inputSchema: {
       type: 'object',
       properties: {
-        integrationId: { type: 'string', description: 'Integration ID' },
-        data: { type: 'object', description: 'Updated integration configuration data' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (null for account-level)' },
+        data: { type: 'object', description: 'Updated integration configuration data' },
+        disabled: { type: 'boolean', description: 'Whether the integration is disabled' }
       },
-      required: ['integrationId', 'data']
+      required: ['socialId', 'kind']
     }
   },
   {
     name: 'delete_integration',
-    description: 'Delete an integration by ID. This is irreversible.',
+    description: 'Delete an integration by its key (socialId + kind + workspaceUuid). This is irreversible.',
     inputSchema: {
       type: 'object',
       properties: {
-        integrationId: { type: 'string', description: 'Integration ID' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (null for account-level)' }
       },
-      required: ['integrationId']
+      required: ['socialId', 'kind']
     }
   },
 
@@ -282,13 +304,14 @@ const TOOLS = [
   },
   {
     name: 'create_mailbox',
-    description: 'Create a new mailbox. Pass mailbox configuration as the "data" object.',
+    description: 'Create a new mailbox with a name and domain.',
     inputSchema: {
       type: 'object',
       properties: {
-        data: { type: 'object', description: 'Mailbox configuration data' }
+        name: { type: 'string', description: 'Mailbox name (local part before @)' },
+        domain: { type: 'string', description: 'Email domain' }
       },
-      required: ['data']
+      required: ['name', 'domain']
     }
   },
   {
@@ -497,6 +520,7 @@ const TOOLS = [
       properties: {
         name: { type: 'string', description: 'Label name' },
         color: { type: ['string', 'number'], description: 'Label color: name (red, salmon, pink, hotpink, magenta, purple, indigo, violet, navy, blue, sky, cyan, teal, ocean, mint, green, olive, lime, gold, orange, brown, silver, gray, slate), palette index (0-23), or RGB hex (e.g., 0xBB83FC). Default: blue' },
+        description: { type: 'string', description: 'Label description' },
         ...workspaceProp
       },
       required: ['name']
@@ -640,19 +664,6 @@ const TOOLS = [
     }
   },
   {
-    name: 'assign_issue',
-    description: 'Assign an issue to a workspace member by name or email. Pass an empty string to unassign. Uses fuzzy matching on member names — use list_members first if unsure of the exact name.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        assignee: { type: 'string', description: 'Member name or email. Empty string to unassign.' },
-        ...workspaceProp
-      },
-      required: ['issueId', 'assignee']
-    }
-  },
-  {
     name: 'list_members',
     description: 'List all active workspace members. Returns each member\'s ID, name, email, role, and position. Use this to discover member names before assigning issues.',
     inputSchema: {
@@ -688,41 +699,16 @@ const TOOLS = [
     }
   },
   {
-    name: 'set_due_date',
-    description: 'Set or clear the due date on an issue. Pass an ISO 8601 date string to set, or omit/empty to clear. Returns confirmation with the date value.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        dueDate: { type: 'string', description: 'Due date (ISO 8601, e.g., "2026-04-01"). Empty to clear.' },
-        ...workspaceProp
-      },
-      required: ['issueId']
-    }
-  },
-  {
-    name: 'set_estimation',
-    description: 'Set the time estimation on an issue in hours. This represents the expected effort to complete the issue. Use log_time to record actual time spent.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        hours: { type: 'number', description: 'Estimated hours (e.g., 4.5)' },
-        ...workspaceProp
-      },
-      required: ['issueId', 'hours']
-    }
-  },
-  {
     name: 'log_time',
-    description: 'Log actual time spent working on an issue. Adds to the issue\'s cumulative reported time. Use set_estimation to set expected effort. Returns the new total reported time.',
+    description: 'Log actual time spent working on an issue. Adds to the issue\'s cumulative reported time. Returns the new total reported time.',
     inputSchema: {
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
         hours: { type: 'number', description: 'Hours spent (e.g., 2.5)' },
         description: { type: 'string', description: 'Description of work done' },
-        descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Description format (default: markdown)' },
+        date: { type: 'string', description: 'Date the work was done (ISO date, default: today)' },
+        employee: { type: 'string', description: 'Employee name who did the work (default: unattributed)' },
         ...workspaceProp
       },
       required: ['issueId', 'hours']
@@ -819,18 +805,6 @@ const TOOLS = [
     }
   },
   {
-    name: 'get_issue_history',
-    description: 'Get the activity timeline for an issue including comments, time logs, sub-issues, and labels. Returns events sorted chronologically. Use this to understand what has happened on an issue, for status updates, or to answer "what changed since yesterday?".',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        ...workspaceProp
-      },
-      required: ['issueId']
-    }
-  },
-  {
     name: 'create_issues_from_template',
     description: 'Create a structured set of issues from a predefined template. Available templates: "feature" (epic + design/implement/test/docs/review), "bug" (bug + reproduce/root-cause/fix/regression-test), "sprint" (planning/standup/review/retro ceremonies), "release" (epic + freeze/QA/changelog/staging/prod/verify). Templates auto-create parent-child hierarchies. Pass a title param to customize issue names.',
     inputSchema: {
@@ -874,6 +848,7 @@ const TOOLS = [
         project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         name: { type: 'string', description: 'New project name' },
         description: { type: 'string', description: 'New description' },
+        descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Description format (default: markdown)' },
         private: { type: 'boolean', description: 'Set project privacy' },
         defaultAssignee: { type: 'string', description: 'Default assignee name. Empty string to clear.' },
         ...workspaceProp
@@ -1189,7 +1164,7 @@ async function handleToolCall(name, args) {
 
 // Create and run the MCP server
 const server = new Server(
-  { name: 'huly-mcp-server', version: '2.0.0' },
+  { name: PKG_NAME, version: PKG_VERSION },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -1297,7 +1272,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Huly MCP Server v2.0.0 running on stdio (46 tools, resources enabled)');
+  console.error(`Huly MCP Server v${PKG_VERSION} running on stdio (${TOOLS.length} tools, resources enabled)`);
 }
 
 main().catch((error) => {

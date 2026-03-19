@@ -3,8 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22+-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-233%20passing-brightgreen)](test/integration.test.mjs)
-[![Coverage](https://img.shields.io/badge/coverage-100%25%20client%20%7C%2092%25%20routes-brightgreen)](test/integration.test.mjs)
+[![Tests](https://img.shields.io/badge/tests-315%20passing-brightgreen)](test/)
+[![Coverage](https://img.shields.io/badge/coverage-100%25%20dispatch%20%7C%2076%25%20tools-brightgreen)](test/)
 [![Huly SDK](https://img.shields.io/badge/Huly%20SDK-0.7.x-purple)](https://huly.io)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
 
@@ -255,7 +255,7 @@ Subscribe to real-time mutation events:
 curl -N http://localhost:3001/api/events
 ```
 
-Events: `issue.created`, `issue.updated`, `issue.moved`, `issue.assigned`,
+Events: `issue.created`, `issue.updated`, `issue.moved`,
 `issue.comment_added`, `issue.label_added`, `issues.batch_created`,
 `issues.template_created`, and more.
 
@@ -282,18 +282,20 @@ Uses Node.js built-in `node:test` and `node:assert` — no test framework depend
 npm test
 ```
 
-| Section | Tests | Description |
+| Suite | Tests | Description |
 | --- | --- | --- |
 | **Unit** | 28 | Constants, ID parsing, route matching, rate limiting, auth |
+| **Dispatch** | 92 | Schema→dispatch→client param forwarding for all 42 tools |
 | **Integration** | 55 | Full CRUD lifecycle against live Huly (dedicated MCPT project) |
 | **Account-Level** | 11 | Workspaces, profile, social IDs |
 | **Mock** | 27 | Destructive ops, token auth via mocks |
 | **HTTP Server** | 64 | Every REST endpoint via real HTTP requests |
 
-**100% client method coverage, 92% HTTP route coverage.**
-Component CRUD routes are wired but not integration-tested
-(Huly SDK limitation). Tests create a dedicated `MCPT` project
-at startup and delete it on teardown — no data left behind.
+**100% dispatch coverage** — every tool's params are traced end-to-end
+through the dispatch table to the client method. This catches the
+exact class of signature mismatch bugs that caused 9 runtime failures
+in v2.0.1. Tests create a dedicated `MCPT` project at startup and
+delete it on teardown — no data left behind.
 
 ---
 
@@ -436,7 +438,6 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `get_my_issues` | Issues assigned to current user | -- |
 | `batch_create_issues` | Create multiple issues at once | `descriptionFormat` per item |
 | `move_issue` | Move issue between projects | -- |
-| `get_issue_history` | Activity timeline for an issue | -- |
 | `create_issues_from_template` | Create from predefined templates | -- |
 
 #### Labels
@@ -485,7 +486,6 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | --- | --- |
 | `list_members` | List all active workspace members |
 | `get_member` | Find a member by name (fuzzy match) |
-| `assign_issue` | Assign or unassign an issue |
 
 #### Comments
 
@@ -501,8 +501,6 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `set_due_date` | Set or clear due date | -- |
-| `set_estimation` | Set time estimation in hours | -- |
 | `log_time` | Log actual time spent | `descriptionFormat`: md/html/plain |
 | `list_time_reports` | List time reports for an issue | -- |
 | `get_time_report` | Get a specific time report by ID | -- |
@@ -600,7 +598,6 @@ fetches related data in a single call:
 | PATCH | `/api/issues/:issueId` | Update issue |
 | DELETE | `/api/issues/:issueId` | Delete issue |
 | POST | `/api/issues/:issueId/move` | Move to different project |
-| GET | `/api/issues/:issueId/history` | Get activity history |
 | GET | `/api/my-issues` | Issues assigned to current user |
 | POST | `/api/projects/:project/batch-issues` | Batch create issues |
 | POST | `/api/projects/:project/template` | Create from template |
@@ -630,13 +627,10 @@ fetches related data in a single call:
 | PATCH | `/api/projects/:project/components/:name` | Update component |
 | DELETE | `/api/projects/:project/components/:name` | Delete component |
 | GET | `/api/members` | List workspace members |
-| PATCH | `/api/issues/:issueId/assignee` | Assign/unassign issue |
 | GET | `/api/issues/:issueId/comments` | List comments |
 | POST | `/api/issues/:issueId/comments` | Add comment |
 | PATCH | `/api/issues/:issueId/comments/:commentId` | Update comment |
 | DELETE | `/api/issues/:issueId/comments/:commentId` | Delete comment |
-| PATCH | `/api/issues/:issueId/due-date` | Set/clear due date |
-| PATCH | `/api/issues/:issueId/estimation` | Set estimation |
 | POST | `/api/issues/:issueId/time-logs` | Log time |
 | GET | `/api/issues/:issueId/time-reports` | List time reports |
 | DELETE | `/api/time-reports/:reportId` | Delete time report |

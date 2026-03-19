@@ -8,7 +8,7 @@ import {
   PRIORITY_MAP, PRIORITY_NAMES,
   MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES,
   COLOR_PALETTE, resolveColor,
-  DONE_CATEGORY, LOST_CATEGORY,
+  DONE_CATEGORY, LOST_CATEGORY, STATUS_CATEGORY_NAMES,
   DEFAULT_LABEL_CATEGORY, DEFAULT_LABEL_COLOR,
   PAGE_SIZE, MAX_BATCH_SIZE, AUTH_CACHE_TTL_MS, DEFAULT_MILESTONE_DAYS,
   nameMatch, strictGet, withExtra,
@@ -27,6 +27,7 @@ const { createRestTxOperations } = require(require.resolve('@hcengineering/api-c
 const { getClient: getAccountClient } = require('@hcengineering/account-client');
 const { loadServerConfig: loadConfig } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/config.js'));
 const { generateId } = require('@hcengineering/core');
+const { makeRank } = require('@hcengineering/rank');
 const { getClient: getCollaboratorClient } = require('@hcengineering/collaborator-client');
 
 const tracker = require('@hcengineering/tracker').default;
@@ -175,14 +176,8 @@ export class HulyClient {
    * Rename an existing workspace.
    */
   static async updateWorkspaceName(url, creds, workspaceSlug, newName) {
-    const { authClient } = await HulyClient._getAuthClient(url, creds);
-    // Need to get workspace UUID first
-    const workspaces = await authClient.getUserWorkspaces();
-    const ws = workspaces.find(w => (w.url || w.workspace) === workspaceSlug);
-    if (!ws) {
-      throw new Error(`Workspace not found: ${workspaceSlug}`);
-    }
-    await authClient.updateWorkspaceName(ws.uuid, newName);
+    const { wsClient } = await HulyClient._getWorkspaceAuthClient(url, creds, workspaceSlug);
+    await wsClient.updateWorkspaceName(newName);
     return { message: `Workspace "${workspaceSlug}" renamed to "${newName}"` };
   }
 
@@ -264,10 +259,10 @@ export class HulyClient {
   /**
    * Change the current user's username.
    */
-  static async changeUsername(url, creds, newUsername) {
+  static async changeUsername(url, creds, firstName, lastName) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
-    await authClient.changeUsername(newUsername);
-    return { message: `Username changed to "${newUsername}"` };
+    await authClient.changeUsername(firstName, lastName || '');
+    return { message: `Username changed to "${firstName}${lastName ? ' ' + lastName : ''}"` };
   }
 
   // ── Invites ─────────────────────────────────────────────
@@ -276,35 +271,34 @@ export class HulyClient {
    * Send an invite to join a workspace.
    */
   static async sendInvite(url, creds, workspaceSlug, inviteEmail, role) {
-    const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const workspaces = await authClient.getUserWorkspaces();
-    const ws = workspaces.find(w => (w.url || w.workspace) === workspaceSlug);
-    if (!ws) throw new Error(`Workspace not found: ${workspaceSlug}`);
-    await authClient.sendInvite(ws.uuid, inviteEmail, role || 'MEMBER');
+    const { wsClient } = await HulyClient._getWorkspaceAuthClient(url, creds, workspaceSlug);
+    await wsClient.sendInvite(inviteEmail, role || 'MEMBER');
     return { message: `Invite sent to ${inviteEmail} for workspace ${workspaceSlug}` };
   }
 
   /**
    * Resend a pending invite.
    */
-  static async resendInvite(url, creds, workspaceSlug, inviteEmail) {
-    const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const workspaces = await authClient.getUserWorkspaces();
-    const ws = workspaces.find(w => (w.url || w.workspace) === workspaceSlug);
-    if (!ws) throw new Error(`Workspace not found: ${workspaceSlug}`);
-    await authClient.resendInvite(ws.uuid, inviteEmail);
+  static async resendInvite(url, creds, workspaceSlug, inviteEmail, role) {
+    const { wsClient } = await HulyClient._getWorkspaceAuthClient(url, creds, workspaceSlug);
+    await wsClient.resendInvite(inviteEmail, role || 'MEMBER');
     return { message: `Invite resent to ${inviteEmail}` };
   }
 
   /**
    * Create an invite link for a workspace.
    */
-  static async createInviteLink(url, creds, workspaceSlug, role, expireHours) {
-    const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const workspaces = await authClient.getUserWorkspaces();
-    const ws = workspaces.find(w => (w.url || w.workspace) === workspaceSlug);
-    if (!ws) throw new Error(`Workspace not found: ${workspaceSlug}`);
-    const link = await authClient.createInviteLink(ws.uuid, role || 'MEMBER', expireHours || 48);
+  static async createInviteLink(url, creds, workspaceSlug, email, role, firstName, lastName, expireHours) {
+    const { wsClient } = await HulyClient._getWorkspaceAuthClient(url, creds, workspaceSlug);
+    const link = await wsClient.createInviteLink(
+      email || '',
+      role || 'MEMBER',
+      false,
+      firstName || '',
+      lastName || '',
+      undefined,
+      expireHours || 48
+    );
     return { link, workspace: workspaceSlug, role: role || 'MEMBER' };
   }
 
@@ -313,46 +307,49 @@ export class HulyClient {
   /**
    * List all integrations.
    */
-  static async listIntegrations(url, creds) {
+  static async listIntegrations(url, creds, filter) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const integrations = await authClient.listIntegrations();
+    const integrations = await authClient.listIntegrations(filter || {});
     return integrations;
   }
 
   /**
-   * Get a specific integration.
+   * Get a specific integration by key (socialId + kind + workspaceUuid).
    */
-  static async getIntegration(url, creds, integrationId) {
+  static async getIntegration(url, creds, integrationKey) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const integration = await authClient.getIntegration(integrationId);
+    const integration = await authClient.getIntegration(integrationKey);
     return integration;
   }
 
   /**
    * Create a new integration.
+   * @param {object} integration - { socialId, kind, workspaceUuid, data?, disabled? }
    */
-  static async createIntegration(url, creds, data) {
+  static async createIntegration(url, creds, integration) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const result = await authClient.createIntegration(data);
+    const result = await authClient.createIntegration(integration);
     return result;
   }
 
   /**
    * Update an existing integration.
+   * @param {object} integration - Full Integration object { socialId, kind, workspaceUuid, data?, disabled? }
    */
-  static async updateIntegration(url, creds, integrationId, data) {
+  static async updateIntegration(url, creds, integration) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const result = await authClient.updateIntegration(integrationId, data);
+    const result = await authClient.updateIntegration(integration);
     return result;
   }
 
   /**
-   * Delete an integration.
+   * Delete an integration by key.
+   * @param {object} integrationKey - { socialId, kind, workspaceUuid }
    */
-  static async deleteIntegration(url, creds, integrationId) {
+  static async deleteIntegration(url, creds, integrationKey) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
-    await authClient.deleteIntegration(integrationId);
-    return { message: `Integration ${integrationId} deleted` };
+    await authClient.deleteIntegration(integrationKey);
+    return { message: 'Integration deleted' };
   }
 
   // ── Mailboxes ───────────────────────────────────────────
@@ -369,9 +366,9 @@ export class HulyClient {
   /**
    * Create a new mailbox.
    */
-  static async createMailbox(url, creds, mailboxData) {
+  static async createMailbox(url, creds, name, domain) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
-    const result = await authClient.createMailbox(mailboxData);
+    const result = await authClient.createMailbox(name, domain);
     return result;
   }
 
@@ -743,7 +740,7 @@ export class HulyClient {
    * Get statuses scoped to a specific task type within a project.
    * Falls back to all statuses if task type has no scoped list.
    */
-  async _getScopedStatuses(client, project, taskTypeId) {
+  async _getScopedStatuses(client, _project, taskTypeId) {
     const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
     if (!allStatuses.length) throw new Error('No statuses found in workspace');
 
@@ -752,8 +749,9 @@ export class HulyClient {
     const taskType = taskTypes.find(tt => tt._id === taskTypeId);
 
     if (taskType?.statuses?.length) {
-      const scopedIds = new Set(taskType.statuses);
-      const scoped = allStatuses.filter(s => scopedIds.has(s._id));
+      // Preserve workflow order from TaskType.statuses array
+      const statusById = new Map(allStatuses.map(s => [s._id, s]));
+      const scoped = taskType.statuses.map(id => statusById.get(id)).filter(Boolean);
       if (scoped.length) return scoped;
     }
 
@@ -881,12 +879,12 @@ export class HulyClient {
     const relProjects = await client.findAll(tracker.class.Project, { _id: { $in: relSpaceIds } });
     const relProjectMap = new Map(relProjects.map(p => [p._id, p.identifier]));
     const relIssueMap = new Map(relIssues.map(i => [i._id, {
-      id: `${strictGet(relProjectMap, i.space, 'Related issue project')}-${i.number}`,
+      id: `${relProjectMap.get(i.space) ?? '?'}-${i.number}`,
       title: i.title
     }]));
     return {
-      relations: relationRefs.map(r => strictGet(relIssueMap, r._id, 'Related issue')),
-      blockedBy: blockedByRefs.map(r => strictGet(relIssueMap, r._id, 'Blocked-by issue'))
+      relations: relationRefs.map(r => relIssueMap.get(r._id)).filter(Boolean),
+      blockedBy: blockedByRefs.map(r => relIssueMap.get(r._id)).filter(Boolean)
     };
   }
 
@@ -918,7 +916,6 @@ export class HulyClient {
 
     // Detailed mode: batch fetch all related data once, then group by project
     const limitedProjects = projects.slice(0, 20);
-    const projectIds = limitedProjects.map(p => p._id);
 
     const [allMilestones, allComponents, allLabels, employees] = await Promise.all([
       client.findAll(tracker.class.Milestone, {}),
@@ -950,9 +947,9 @@ export class HulyClient {
       const projComponents = (componentsByProject.get(project._id) || []).map(c => ({
         name: c.label,
         description: fromMarkup(c.description),
-        lead: c.lead ? strictGet(employeeMap, c.lead, 'Component lead') : null
+        lead: c.lead ? employeeMap.get(c.lead) ?? null : null
       }));
-      const projMembers = (project.members || []).map(mId => strictGet(employeeMap, mId, 'Project member'));
+      const projMembers = (project.members || []).map(mId => employeeMap.get(mId)).filter(Boolean);
       const projLabels = allLabels.map(t => ({
         name: t.title,
         color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null
@@ -1027,13 +1024,13 @@ export class HulyClient {
     base.components = components.map(c => ({
       name: c.label,
       description: fromMarkup(c.description),
-      lead: c.lead ? strictGet(employeeMap, c.lead, 'Component lead') : null
+      lead: c.lead ? employeeMap.get(c.lead) ?? null : null
     }));
     base.labels = allLabels.map(t => ({
       name: t.title,
       color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null
     }));
-    base.members = (project.members || []).map(mId => strictGet(employeeMap, mId, 'Project member'));
+    base.members = (project.members || []).map(mId => employeeMap.get(mId)).filter(Boolean);
 
     return withExtra(project, base);
   }
@@ -1140,7 +1137,7 @@ export class HulyClient {
     const parentProjMap = new Map(parentProjects.map(p => [p._id, p.identifier]));
     const parentMap = new Map(parentIssues.map(p => [
       p._id,
-      `${strictGet(parentProjMap, p.space, 'Parent issue project')}-${p.number}`
+      `${parentProjMap.get(p.space) ?? '?'}-${p.number}`
     ]));
 
     // Batch fetch details if include_details is requested
@@ -1188,12 +1185,12 @@ export class HulyClient {
         status: strictGet(statusMap, issue.status, 'Status'),
         priority: strictGet(PRIORITY_NAMES, issue.priority, 'Priority'),
         type: strictGet(taskTypeMap, issue.kind, 'Task type'),
-        assignee: issue.assignee ? strictGet(employeeMap, issue.assignee, 'Employee') : null,
-        component: issue.component ? strictGet(componentMap, issue.component, 'Component') : null,
+        assignee: issue.assignee ? employeeMap.get(issue.assignee) ?? null : null,
+        component: issue.component ? componentMap.get(issue.component) ?? null : null,
         labels: issueLabels.map(l => l.title),
-        parent: issue.attachedTo ? strictGet(parentMap, issue.attachedTo, 'Parent issue') : null,
+        parent: (issue.attachedTo && issue.attachedToClass === tracker.class.Issue) ? parentMap.get(issue.attachedTo) ?? null : null,
         childCount: issue.subIssues || 0,
-        milestone: issue.milestone ? strictGet(milestoneMap, issue.milestone, 'Milestone') : null,
+        milestone: issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
         estimation: issue.estimation || 0,
         reportedTime: issue.reportedTime || 0,
@@ -1312,8 +1309,8 @@ export class HulyClient {
       status: strictGet(statusMap, issue.status, 'Status'),
       priority: strictGet(PRIORITY_NAMES, issue.priority, 'Priority'),
       type: strictGet(taskTypeMap, issue.kind, 'Task type'),
-      assignee: issue.assignee ? strictGet(employeeMap, issue.assignee, 'Employee') : null,
-      component: issue.component ? strictGet(componentMap, issue.component, 'Component') : null,
+      assignee: issue.assignee ? employeeMap.get(issue.assignee) ?? null : null,
+      component: issue.component ? componentMap.get(issue.component) ?? null : null,
       labels: issueLabels.map(l => l.title),
       parent: parentId,
       childCount: issue.subIssues || 0,
@@ -1466,7 +1463,8 @@ export class HulyClient {
         reportedTime: 0,
         childInfo: [],
         parents: [],
-        kind: taskTypeId
+        kind: taskTypeId,
+        rank: makeRank(undefined, undefined)
       },
       issueId
     );
@@ -1527,20 +1525,22 @@ export class HulyClient {
       updatedFields.push('priority');
     }
 
+    // Resolve type first so status can be scoped to the new type
+    let resolvedTaskTypeId = issue.kind;
+    if (type !== undefined) {
+      resolvedTaskTypeId = await this._findTaskTypeByName(client, project.identifier, type);
+      updates.kind = resolvedTaskTypeId;
+      updatedFields.push('type');
+    }
+
     if (status !== undefined) {
-      const taskTypeId = issue.kind || await this._getDefaultTaskType(client, project);
+      const taskTypeId = resolvedTaskTypeId || await this._getDefaultTaskType(client, project);
       const statuses = await this._getScopedStatuses(client, project, taskTypeId);
       const found = statuses.find(s => nameMatch(s.name, status));
       if (found) {
         updates.status = found._id;
         updatedFields.push('status');
       }
-    }
-
-    if (type !== undefined) {
-      const taskTypeId = await this._findTaskTypeByName(client, project.identifier, type);
-      updates.kind = taskTypeId;
-      updatedFields.push('type');
     }
 
     if (extra.assignee !== undefined) {
@@ -1619,7 +1619,7 @@ export class HulyClient {
       return { message: `Label "${labelName}" not found on issue` };
     }
 
-    await client.removeDoc(tags.class.TagReference, tagRef.space, tagRef._id);
+    await client.removeCollection(tags.class.TagReference, tagRef.space, tagRef._id, tagRef.attachedTo, tagRef.attachedToClass, tagRef.collection);
 
     return { message: `Label "${labelName}" removed` };
   }
@@ -1635,9 +1635,12 @@ export class HulyClient {
       targetClass: tracker.class.Issue
     });
 
-    return tagElements.map(t => ({
+    return tagElements.map(t => withExtra(t, {
+      id: t._id,
       name: t.title,
-      color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null
+      description: t.description || '',
+      color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null,
+      category: t.category || null
     }));
   }
 
@@ -1647,7 +1650,7 @@ export class HulyClient {
    * @param {number} [color] - Label color as hex number
    * @returns {Promise<Object>}
    */
-  async createLabel(name, color) {
+  async createLabel(name, color, description) {
     const client = await this._getClient();
 
     const existing = await client.findOne(tags.class.TagElement, {
@@ -1666,7 +1669,7 @@ export class HulyClient {
     await client.createDoc(tags.class.TagElement, space, {
       title: name,
       targetClass: tracker.class.Issue,
-      description: '',
+      description: description || '',
       color: resolveColor(color),
       category: DEFAULT_LABEL_CATEGORY
     }, tagId);
@@ -1735,8 +1738,17 @@ export class HulyClient {
       relations: newRelations
     });
 
+    // Write reverse relation on the target issue
+    const { project: relProject } = await this._parseAndFindIssue(client, relatedToIssueId);
+    const targetRelations = relatedIssue.relations || [];
+    if (!targetRelations.some(r => r._id === issue._id)) {
+      await client.updateDoc(tracker.class.Issue, relProject._id, relatedIssue._id, {
+        relations: [...targetRelations, { _id: issue._id, _class: issue._class }]
+      });
+    }
+
     return {
-      message: `Added relation: ${issueId} is now related to ${relatedToIssueId}`,
+      message: `Added relation: ${issueId} ↔ ${relatedToIssueId}`,
       issueId,
       relatedToIssueId
     };
@@ -1786,12 +1798,29 @@ export class HulyClient {
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
     const { project: parentProject, issue: parentIssue } = await this._parseAndFindIssue(client, parentIssueId);
 
+    // Clean up old parent if the child already has one
+    if (issue.attachedTo && issue.attachedToClass === tracker.class.Issue && issue.attachedTo !== parentIssue._id) {
+      const oldParent = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
+      if (oldParent) {
+        const oldChildInfo = (oldParent.childInfo || []).filter(c => c.childId !== issue._id);
+        const oldParentProject = await client.findOne(tracker.class.Project, { _id: oldParent.space });
+        if (oldParentProject) {
+          await client.updateDoc(tracker.class.Issue, oldParentProject._id, oldParent._id, {
+            childInfo: oldChildInfo,
+            subIssues: oldChildInfo.length
+          });
+        }
+      }
+    }
+
+    // Build full ancestor chain for breadcrumbs
     const parentInfo = {
       parentId: parentIssue._id,
       identifier: `${parentProject.identifier}-${parentIssue.number}`,
       parentTitle: parentIssue.title,
       space: parentProject._id
     };
+    const ancestors = [...(parentIssue.parents || []), parentInfo];
 
     await client.updateCollection(
       tracker.class.Issue,
@@ -1801,7 +1830,7 @@ export class HulyClient {
       tracker.class.Issue,
       'subIssues',
       {
-        parents: [parentInfo],
+        parents: ancestors,
         attachedTo: parentIssue._id,
         attachedToClass: tracker.class.Issue,
         collection: 'subIssues'
@@ -1876,8 +1905,11 @@ export class HulyClient {
       id: tt._id,
       name: tt.name || tt._id.split(':').pop(),
       description: fromMarkup(tt.description),
+      kind: tt.kind || null,
       ofClass: tt.ofClass,
       parent: tt.parent,
+      allowedAsChildOf: tt.allowedAsChildOf || [],
+      statusCategories: tt.statusCategories || [],
       statuses: tt.statuses || []
     }));
   }
@@ -1898,7 +1930,7 @@ export class HulyClient {
       return allStatuses.map(s => ({
         id: s._id,
         name: s.name,
-        category: s.category,
+        category: STATUS_CATEGORY_NAMES[s.category] || s.category,
         color: s.color,
         description: fromMarkup(s.description)
       }));
@@ -1945,7 +1977,7 @@ export class HulyClient {
     return scopedStatuses.map(s => ({
       id: s._id,
       name: s.name,
-      category: s.category,
+      category: STATUS_CATEGORY_NAMES[s.category] || s.category,
       color: s.color,
       description: s.description || ''
     }));
@@ -2102,10 +2134,8 @@ export class HulyClient {
       throw new Error(`Project not found: ${projectIdent}`);
     }
 
-    const existing = await client.findOne(tracker.class.Milestone, {
-      space: project._id,
-      label: name
-    });
+    const allMilestones = await client.findAll(tracker.class.Milestone, { space: project._id });
+    const existing = allMilestones.find(m => nameMatch(m.label, name));
 
     if (existing) {
       return {
@@ -2345,9 +2375,15 @@ export class HulyClient {
    * @param {string} [description] - Description of work done
    * @returns {Promise<Object>}
    */
-  async logTime(issueId, hours, description, format) {
+  async logTime(issueId, hours, description, _format, date, employeeName) {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
+
+    // Resolve employee — default to current user's Employee ref if possible
+    let employeeId = null;
+    if (employeeName) {
+      employeeId = await this._findEmployeeByName(client, employeeName);
+    }
 
     const reportId = generateId();
     await client.addCollection(
@@ -2357,10 +2393,10 @@ export class HulyClient {
       tracker.class.Issue,
       'reports',
       {
-        employee: null,
-        date: Date.now(),
+        employee: employeeId,
+        date: date ? new Date(date).getTime() : Date.now(),
         value: hours,
-        description: toMarkup(description || '', format)
+        description: description || ''
       },
       reportId
     );
@@ -2428,7 +2464,7 @@ export class HulyClient {
     const parentIssues = parentIds.length > 0
       ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
       : [];
-    const parentMap = new Map(parentIssues.map(p => [p._id, `${strictGet(projMap, p.space, 'Parent issue project')}-${p.number}`]));
+    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) ?? '?'}-${p.number}`]));
 
     return issues.map(i => withExtra(i, {
       id: `${strictGet(projMap, i.space, 'Issue project')}-${i.number}`,
@@ -2436,10 +2472,10 @@ export class HulyClient {
       status: strictGet(statusMap, i.status, 'Status'),
       priority: strictGet(PRIORITY_NAMES, i.priority, 'Priority'),
       type: strictGet(taskTypeMap, i.kind, 'Task type'),
-      assignee: i.assignee ? strictGet(employeeMap, i.assignee, 'Employee') : null,
-      component: i.component ? strictGet(componentMap, i.component, 'Component') : null,
-      milestone: i.milestone ? strictGet(milestoneMap, i.milestone, 'Milestone') : null,
-      parent: i.attachedTo ? strictGet(parentMap, i.attachedTo, 'Parent issue') : null,
+      assignee: i.assignee ? employeeMap.get(i.assignee) ?? null : null,
+      component: i.component ? componentMap.get(i.component) ?? null : null,
+      milestone: i.milestone ? milestoneMap.get(i.milestone) ?? null : null,
+      parent: (i.attachedTo && i.attachedToClass === tracker.class.Issue) ? parentMap.get(i.attachedTo) ?? null : null,
       childCount: i.subIssues || 0,
       dueDate: i.dueDate ? new Date(i.dueDate).toISOString().split('T')[0] : null,
       createdOn: i.createdOn,
@@ -2552,7 +2588,7 @@ export class HulyClient {
     const parentIssues = parentIds.length > 0
       ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
       : [];
-    const parentMap = new Map(parentIssues.map(p => [p._id, `${strictGet(projMap, p.space, 'Parent issue project')}-${p.number}`]));
+    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) ?? '?'}-${p.number}`]));
 
     const result = [];
     for (const issue of issues) {
@@ -2564,12 +2600,12 @@ export class HulyClient {
         status: strictGet(statusMap, issue.status, 'Status'),
         priority: strictGet(PRIORITY_NAMES, issue.priority, 'Priority'),
         type: strictGet(taskTypeMap, issue.kind, 'Task type'),
-        assignee: issue.assignee ? strictGet(employeeMap, issue.assignee, 'Employee') : null,
-        component: issue.component ? strictGet(componentMap, issue.component, 'Component') : null,
+        assignee: issue.assignee ? employeeMap.get(issue.assignee) ?? null : null,
+        component: issue.component ? componentMap.get(issue.component) ?? null : null,
         labels: issueLabels.map(l => l.title),
-        parent: issue.attachedTo ? strictGet(parentMap, issue.attachedTo, 'Parent issue') : null,
+        parent: (issue.attachedTo && issue.attachedToClass === tracker.class.Issue) ? parentMap.get(issue.attachedTo) ?? null : null,
         childCount: issue.subIssues || 0,
-        milestone: issue.milestone ? strictGet(milestoneMap, issue.milestone, 'Milestone') : null,
+        milestone: issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
         estimation: issue.estimation || 0,
         reportedTime: issue.reportedTime || 0,
@@ -2707,15 +2743,21 @@ export class HulyClient {
           reportedTime: 0,
           childInfo: [],
           parents: [],
-          kind: taskTypeId
+          kind: taskTypeId,
+          rank: makeRank(undefined, undefined)
         },
         issueId
       );
 
       if (item.description) {
-        await client.updateDoc(tracker.class.Issue, project._id, issueId, {
-          description: toMarkup(item.description, item.descriptionFormat)
-        });
+        try {
+          await this._writeCollaboratorField(issueId, tracker.class.Issue, item.description, item.descriptionFormat);
+        } catch {
+          // Fallback to markup if collaborator unavailable
+          await client.updateDoc(tracker.class.Issue, project._id, issueId, {
+            description: toMarkup(item.description, item.descriptionFormat)
+          });
+        }
       }
 
       if (item.labels && item.labels.length > 0) {
@@ -2764,18 +2806,40 @@ export class HulyClient {
       return { message: `Issue ${issueId} is already in project ${targetProject}` };
     }
 
-    // Get next number in target project
-    const nextNumber = (destProject.sequence || 0) + 1;
+    // Atomic sequence increment in target project
     await client.updateDoc(tracker.class.Project, destProject.space || destProject._id, destProject._id, {
-      sequence: nextNumber
+      $inc: { sequence: 1 }
     });
+    const updatedDest = await client.findOne(tracker.class.Project, { _id: destProject._id });
+    const nextNumber = updatedDest.sequence;
 
-    // Update the issue's space and number
-    await client.updateDoc(tracker.class.Issue, sourceProject._id, issue._id, {
+    // Validate status compatibility — remap if target project doesn't have the same status
+    const issueUpdates = {
       space: destProject._id,
       number: nextNumber,
       identifier: `${destProject.identifier}-${nextNumber}`
-    });
+    };
+
+    // Fix attachedTo for top-level issues (attached to source project)
+    if (issue.attachedTo === sourceProject._id || issue.attachedToClass === tracker.class.Project) {
+      issueUpdates.attachedTo = destProject._id;
+    }
+
+    // Remap status if needed
+    const destStatuses = await this._getScopedStatuses(client, destProject);
+    const srcStatusMap = await this._buildStatusMaps(client, sourceProject);
+    const currentStatusName = srcStatusMap.statusMap.get(issue.status);
+    if (currentStatusName) {
+      const destStatus = destStatuses.find(s => nameMatch(s.name, currentStatusName));
+      if (destStatus) {
+        issueUpdates.status = destStatus._id;
+      } else {
+        // Fall back to target project's default status
+        issueUpdates.status = destProject.defaultIssueStatus || destStatuses[0]?._id;
+      }
+    }
+
+    await client.updateDoc(tracker.class.Issue, sourceProject._id, issue._id, issueUpdates);
 
     const newId = `${destProject.identifier}-${nextNumber}`;
 
@@ -2805,7 +2869,7 @@ export class HulyClient {
     }
 
     const issues = await client.findAll(tracker.class.Issue, { space: project._id });
-    const { statuses, statusMap, doneStatuses } = await this._buildStatusMaps(client);
+    const { statuses, statusMap } = await this._buildStatusMaps(client);
     const closedStatuses = new Set(statuses
       .filter(s => s.category === DONE_CATEGORY || s.category === LOST_CATEGORY)
       .map(s => s._id));
@@ -3064,12 +3128,7 @@ export class HulyClient {
       throw new Error(`Project with identifier "${identifier}" already exists`);
     }
 
-    const statuses = await client.findAll(tracker.class.IssueStatus, {});
-    if (!statuses.length) throw new Error('No statuses found for project');
-    const todoStatus = statuses.find(s => s.name === 'Todo');
-    const defaultStatusId = todoStatus?._id || statuses[0]._id;
-
-    // Resolve project type
+    // Resolve project type first — needed to scope statuses
     const projectTypes = await client.findAll(task.class.ProjectType, {});
     if (!projectTypes.length) {
       throw new Error('No project types found in workspace. Configure project types in workspace settings first.');
@@ -3090,6 +3149,19 @@ export class HulyClient {
       throw new Error(`Multiple project types found: ${available}. Specify projectType explicitly.`);
     }
 
+    // Scope default status to the resolved ProjectType's task types
+    const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
+    if (!allStatuses.length) throw new Error('No statuses found for project');
+    let defaultStatusId;
+    if (resolvedProjectType.statuses?.length) {
+      const ptStatusIds = new Set(resolvedProjectType.statuses.map(s => s.taskType ? s._id : s));
+      const scopedStatuses = allStatuses.filter(s => ptStatusIds.has(s._id));
+      const todoStatus = scopedStatuses.find(s => s.name === 'Todo') || scopedStatuses[0];
+      defaultStatusId = todoStatus?._id || allStatuses.find(s => s.name === 'Todo')?._id || allStatuses[0]._id;
+    } else {
+      defaultStatusId = allStatuses.find(s => s.name === 'Todo')?._id || allStatuses[0]._id;
+    }
+
     const owners = this._accountUuid ? [this._accountUuid] : [];
 
     const projectId = generateId();
@@ -3105,7 +3177,6 @@ export class HulyClient {
       sequence: 0,
       defaultIssueStatus: defaultStatusId,
       defaultTimeReportDay: 0,
-      issues: 0,
       type: resolvedProjectType._id
     }, projectId);
 
@@ -3133,7 +3204,7 @@ export class HulyClient {
 
     const ops = {};
     if (updates.name !== undefined) ops.name = updates.name;
-    if (updates.description !== undefined) ops.description = updates.description;
+    if (updates.description !== undefined) ops.description = toMarkup(updates.description, updates.descriptionFormat);
     if (updates.isPrivate !== undefined) ops.private = updates.isPrivate;
     if (updates.defaultAssignee !== undefined) {
       if (updates.defaultAssignee === '') {
@@ -3195,7 +3266,7 @@ export class HulyClient {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
-    await client.removeDoc(tracker.class.Issue, project._id, issue._id);
+    await client.removeCollection(tracker.class.Issue, project._id, issue._id, issue.attachedTo, issue.attachedToClass, issue.collection);
 
     return {
       message: `Issue ${issueId} permanently deleted`,
@@ -3426,7 +3497,7 @@ export class HulyClient {
       }
     }
 
-    await client.removeDoc(tracker.class.TimeSpendReport, report.space, report._id);
+    await client.removeCollection(tracker.class.TimeSpendReport, report.space, report._id, report.attachedTo, report.attachedToClass, report.collection);
 
     return {
       message: `Time report deleted`,
@@ -3456,12 +3527,12 @@ export class HulyClient {
 
   async deleteComment(issueId, commentId) {
     const client = await this._getClient();
-    const { project } = await this._parseAndFindIssue(client, issueId);
+    await this._parseAndFindIssue(client, issueId);
 
     const comment = await client.findOne(chunter.class.ChatMessage, { _id: commentId });
     if (!comment) throw new Error(`Comment not found: ${commentId}`);
 
-    await client.removeDoc(chunter.class.ChatMessage, project._id, commentId);
+    await client.removeCollection(chunter.class.ChatMessage, comment.space, comment._id, comment.attachedTo, comment.attachedToClass, comment.collection);
 
     return {
       message: `Comment deleted from ${issueId}`,
@@ -3536,7 +3607,7 @@ export class HulyClient {
     return withExtra(status, {
       id: status._id,
       name: status.name,
-      category: status.category,
+      category: STATUS_CATEGORY_NAMES[status.category] || status.category,
       color: status.color
     });
   }
@@ -3607,7 +3678,10 @@ export class HulyClient {
     return withExtra(found, {
       id: found._id,
       name: found.name || found._id.split(':').pop(),
-      kind: found.ofClass || null,
+      kind: found.kind || null,
+      ofClass: found.ofClass || null,
+      allowedAsChildOf: found.allowedAsChildOf || [],
+      statusCategories: found.statusCategories || [],
       statuses: found.statuses || []
     });
   }
@@ -3629,7 +3703,9 @@ export class HulyClient {
       id: comment._id,
       text: fromMarkup(comment.message),
       createdBy: comment.createdBy || null,
-      createdOn: comment.createdOn
+      createdOn: comment.createdOn,
+      modifiedOn: comment.modifiedOn,
+      editedOn: comment.editedOn || null
     });
   }
 
