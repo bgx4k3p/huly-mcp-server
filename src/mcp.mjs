@@ -17,9 +17,13 @@ import {
   ListResourceTemplatesRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { createRequire } from 'module';
 import { pool } from './pool.mjs';
 import { HulyClient } from './client.mjs';
 import { accountTools, workspaceTools } from './dispatch.mjs';
+
+const require = createRequire(import.meta.url);
+const { name: PKG_NAME, version: PKG_VERSION } = require('../package.json');
 
 const HULY_URL = process.env.HULY_URL || 'http://localhost:8087';
 const HULY_TOKEN = process.env.HULY_TOKEN;
@@ -660,19 +664,6 @@ const TOOLS = [
     }
   },
   {
-    name: 'assign_issue',
-    description: 'Assign an issue to a workspace member by name or email. Pass an empty string to unassign. Uses fuzzy matching on member names — use list_members first if unsure of the exact name.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        assignee: { type: 'string', description: 'Member name or email. Empty string to unassign.' },
-        ...workspaceProp
-      },
-      required: ['issueId', 'assignee']
-    }
-  },
-  {
     name: 'list_members',
     description: 'List all active workspace members. Returns each member\'s ID, name, email, role, and position. Use this to discover member names before assigning issues.',
     inputSchema: {
@@ -708,34 +699,8 @@ const TOOLS = [
     }
   },
   {
-    name: 'set_due_date',
-    description: 'Set or clear the due date on an issue. Pass an ISO 8601 date string to set, or omit/empty to clear. Returns confirmation with the date value.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        dueDate: { type: 'string', description: 'Due date (ISO 8601, e.g., "2026-04-01"). Empty to clear.' },
-        ...workspaceProp
-      },
-      required: ['issueId']
-    }
-  },
-  {
-    name: 'set_estimation',
-    description: 'Set the time estimation on an issue in hours. This represents the expected effort to complete the issue. Use log_time to record actual time spent.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        hours: { type: 'number', description: 'Estimated hours (e.g., 4.5)' },
-        ...workspaceProp
-      },
-      required: ['issueId', 'hours']
-    }
-  },
-  {
     name: 'log_time',
-    description: 'Log actual time spent working on an issue. Adds to the issue\'s cumulative reported time. Use set_estimation to set expected effort. Returns the new total reported time.',
+    description: 'Log actual time spent working on an issue. Adds to the issue\'s cumulative reported time. Returns the new total reported time.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -837,18 +802,6 @@ const TOOLS = [
         ...workspaceProp
       },
       required: ['project']
-    }
-  },
-  {
-    name: 'get_issue_history',
-    description: 'Get the activity timeline for an issue including comments, time logs, sub-issues, and labels. Returns events sorted chronologically. Use this to understand what has happened on an issue, for status updates, or to answer "what changed since yesterday?".',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
-        ...workspaceProp
-      },
-      required: ['issueId']
     }
   },
   {
@@ -1211,7 +1164,7 @@ async function handleToolCall(name, args) {
 
 // Create and run the MCP server
 const server = new Server(
-  { name: 'huly-mcp-server', version: '2.0.0' },
+  { name: PKG_NAME, version: PKG_VERSION },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -1319,7 +1272,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Huly MCP Server v2.0.0 running on stdio (46 tools, resources enabled)');
+  console.error(`Huly MCP Server v${PKG_VERSION} running on stdio (${TOOLS.length} tools, resources enabled)`);
 }
 
 main().catch((error) => {

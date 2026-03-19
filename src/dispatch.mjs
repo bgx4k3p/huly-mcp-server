@@ -105,8 +105,6 @@ export const workspaceTools = {
     c.batchCreateIssues(a.project, a.issues),
   move_issue: (a, c) =>
     c.moveIssue(a.issueId, a.targetProject),
-  get_issue_history: (a, c) =>
-    c.getIssueHistory(a.issueId),
   create_issues_from_template: (a, c) =>
     c.createIssuesFromTemplate(a.project, a.template, { title: a.title, version: a.version }),
   summarize_project: (a, c) =>
@@ -144,7 +142,6 @@ export const workspaceTools = {
 
   // Members
   list_members: (a, c) => c.listMembers(),
-  assign_issue: (a, c) => c.assignIssue(a.issueId, a.assignee),
 
   // Comments
   add_comment: (a, c) => c.addComment(a.issueId, a.text, a.format),
@@ -153,8 +150,6 @@ export const workspaceTools = {
   delete_comment: (a, c) => c.deleteComment(a.issueId, a.commentId),
 
   // Time tracking
-  set_due_date: (a, c) => c.setDueDate(a.issueId, a.dueDate),
-  set_estimation: (a, c) => c.setEstimation(a.issueId, a.hours),
   log_time: (a, c) => c.logTime(a.issueId, a.hours, a.description, a.descriptionFormat, a.date, a.employee),
   list_time_reports: (a, c) => c.listTimeReports(a.issueId),
   delete_time_report: (a, c) => c.deleteTimeReport(a.reportId),
