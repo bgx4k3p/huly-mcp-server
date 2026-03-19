@@ -161,13 +161,14 @@ const TOOLS = [
   },
   {
     name: 'change_username',
-    description: 'Change the current user\'s username/display name at the account level.',
+    description: 'Change the current user\'s first and last name at the account level.',
     inputSchema: {
       type: 'object',
       properties: {
-        newUsername: { type: 'string', description: 'New username' }
+        firstName: { type: 'string', description: 'First name' },
+        lastName: { type: 'string', description: 'Last name' }
       },
-      required: ['newUsername']
+      required: ['firstName']
     }
   },
 
@@ -193,7 +194,8 @@ const TOOLS = [
       type: 'object',
       properties: {
         workspace: { type: 'string', description: 'Workspace slug' },
-        email: { type: 'string', description: 'Email of the pending invitee' }
+        email: { type: 'string', description: 'Email of the pending invitee' },
+        role: { type: 'string', description: 'Role: OWNER, MAINTAINER, MEMBER, GUEST (default: MEMBER)' }
       },
       required: ['workspace', 'email']
     }
@@ -205,7 +207,10 @@ const TOOLS = [
       type: 'object',
       properties: {
         workspace: { type: 'string', description: 'Workspace slug' },
+        email: { type: 'string', description: 'Email address for the invite' },
         role: { type: 'string', description: 'Role for invitees: OWNER, MAINTAINER, MEMBER, GUEST (default: MEMBER)' },
+        firstName: { type: 'string', description: 'First name of invitee' },
+        lastName: { type: 'string', description: 'Last name of invitee' },
         expireHours: { type: 'number', description: 'Link expiry in hours (default: 48)' }
       },
       required: ['workspace']
@@ -216,56 +221,69 @@ const TOOLS = [
 
   {
     name: 'list_integrations',
-    description: 'List all integrations configured for the account.',
+    description: 'List all integrations configured for the account. Optionally filter by socialId, kind, or workspaceUuid.',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        filter: { type: 'object', description: 'Optional filter: { socialId?, kind?, workspaceUuid? }' }
+      },
       required: []
     }
   },
   {
     name: 'get_integration',
-    description: 'Get details of a specific integration by ID.',
+    description: 'Get details of a specific integration by its key (socialId + kind + workspaceUuid).',
     inputSchema: {
       type: 'object',
       properties: {
-        integrationId: { type: 'string', description: 'Integration ID' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (or null for account-level)' }
       },
-      required: ['integrationId']
+      required: ['socialId', 'kind']
     }
   },
   {
     name: 'create_integration',
-    description: 'Create a new integration. Pass integration-specific data as the "data" object.',
+    description: 'Create a new integration with a socialId, kind, optional workspaceUuid, and data.',
     inputSchema: {
       type: 'object',
       properties: {
-        data: { type: 'object', description: 'Integration configuration data' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (null for account-level)' },
+        data: { type: 'object', description: 'Integration configuration data' },
+        disabled: { type: 'boolean', description: 'Whether the integration is disabled' }
       },
-      required: ['data']
+      required: ['socialId', 'kind']
     }
   },
   {
     name: 'update_integration',
-    description: 'Update an existing integration by ID.',
+    description: 'Update an existing integration. Pass the full integration key and updated fields.',
     inputSchema: {
       type: 'object',
       properties: {
-        integrationId: { type: 'string', description: 'Integration ID' },
-        data: { type: 'object', description: 'Updated integration configuration data' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (null for account-level)' },
+        data: { type: 'object', description: 'Updated integration configuration data' },
+        disabled: { type: 'boolean', description: 'Whether the integration is disabled' }
       },
-      required: ['integrationId', 'data']
+      required: ['socialId', 'kind']
     }
   },
   {
     name: 'delete_integration',
-    description: 'Delete an integration by ID. This is irreversible.',
+    description: 'Delete an integration by its key (socialId + kind + workspaceUuid). This is irreversible.',
     inputSchema: {
       type: 'object',
       properties: {
-        integrationId: { type: 'string', description: 'Integration ID' }
+        socialId: { type: 'string', description: 'Social ID (PersonId)' },
+        kind: { type: 'string', description: 'Integration kind (e.g. github, mail, telegram)' },
+        workspaceUuid: { type: 'string', description: 'Workspace UUID (null for account-level)' }
       },
-      required: ['integrationId']
+      required: ['socialId', 'kind']
     }
   },
 
@@ -282,13 +300,14 @@ const TOOLS = [
   },
   {
     name: 'create_mailbox',
-    description: 'Create a new mailbox. Pass mailbox configuration as the "data" object.',
+    description: 'Create a new mailbox with a name and domain.',
     inputSchema: {
       type: 'object',
       properties: {
-        data: { type: 'object', description: 'Mailbox configuration data' }
+        name: { type: 'string', description: 'Mailbox name (local part before @)' },
+        domain: { type: 'string', description: 'Email domain' }
       },
-      required: ['data']
+      required: ['name', 'domain']
     }
   },
   {
@@ -497,6 +516,7 @@ const TOOLS = [
       properties: {
         name: { type: 'string', description: 'Label name' },
         color: { type: ['string', 'number'], description: 'Label color: name (red, salmon, pink, hotpink, magenta, purple, indigo, violet, navy, blue, sky, cyan, teal, ocean, mint, green, olive, lime, gold, orange, brown, silver, gray, slate), palette index (0-23), or RGB hex (e.g., 0xBB83FC). Default: blue' },
+        description: { type: 'string', description: 'Label description' },
         ...workspaceProp
       },
       required: ['name']
@@ -722,7 +742,8 @@ const TOOLS = [
         issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
         hours: { type: 'number', description: 'Hours spent (e.g., 2.5)' },
         description: { type: 'string', description: 'Description of work done' },
-        descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Description format (default: markdown)' },
+        date: { type: 'string', description: 'Date the work was done (ISO date, default: today)' },
+        employee: { type: 'string', description: 'Employee name who did the work (default: unattributed)' },
         ...workspaceProp
       },
       required: ['issueId', 'hours']
@@ -874,6 +895,7 @@ const TOOLS = [
         project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         name: { type: 'string', description: 'New project name' },
         description: { type: 'string', description: 'New description' },
+        descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Description format (default: markdown)' },
         private: { type: 'boolean', description: 'Set project privacy' },
         defaultAssignee: { type: 'string', description: 'Default assignee name. Empty string to clear.' },
         ...workspaceProp

@@ -1015,11 +1015,11 @@ async function handleRequest(req, res) {
 
     if (method === 'POST' && (params = matchRoute('/api/workspaces/:slug/invite-link', path))) {
       const body = await parseBody(req);
-      return json(res, 200, await HulyClient.createInviteLink(HULY_URL, HULY_CREDS, params.slug, body.role, body.expireHours));
+      return json(res, 200, await HulyClient.createInviteLink(HULY_URL, HULY_CREDS, params.slug, body.email, body.role, body.firstName, body.lastName, body.expireHours));
     }
 
     if (method === 'GET' && path === '/api/integrations') {
-      return json(res, 200, await HulyClient.listIntegrations(HULY_URL, HULY_CREDS));
+      return json(res, 200, await HulyClient.listIntegrations(HULY_URL, HULY_CREDS, {}));
     }
 
     if (method === 'POST' && path === '/api/integrations') {
@@ -1028,7 +1028,8 @@ async function handleRequest(req, res) {
     }
 
     if (method === 'DELETE' && (params = matchRoute('/api/integrations/:id', path))) {
-      return json(res, 200, await HulyClient.deleteIntegration(HULY_URL, HULY_CREDS, params.id));
+      const body = await parseBody(req);
+      return json(res, 200, await HulyClient.deleteIntegration(HULY_URL, HULY_CREDS, { socialId: body.socialId, kind: body.kind, workspaceUuid: body.workspaceUuid }));
     }
 
     if (method === 'GET' && path === '/api/mailboxes') {

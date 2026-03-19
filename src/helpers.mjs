@@ -65,6 +65,13 @@ export const COLOR_PALETTE = {
 // ── Named constants ──────────────────────────────────────────
 export const DONE_CATEGORY = 'task:statusCategory:Won';
 export const LOST_CATEGORY = 'task:statusCategory:Lost';
+export const STATUS_CATEGORY_NAMES = {
+  'task:statusCategory:UnStarted': 'Backlog',
+  'task:statusCategory:ToDo': 'Todo',
+  'task:statusCategory:Active': 'Active',
+  'task:statusCategory:Won': 'Done',
+  'task:statusCategory:Lost': 'Cancelled'
+};
 export const DEFAULT_LABEL_CATEGORY = 'tracker:category:Other';
 export const DEFAULT_LABEL_COLOR = 9;
 export const PAGE_SIZE = 500;

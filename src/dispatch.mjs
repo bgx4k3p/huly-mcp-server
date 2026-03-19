@@ -39,27 +39,27 @@ export const accountTools = {
   change_password: (a, url, creds) =>
     HulyClient.changePassword(url, creds, a.newPassword),
   change_username: (a, url, creds) =>
-    HulyClient.changeUsername(url, creds, a.newUsername),
+    HulyClient.changeUsername(url, creds, a.firstName, a.lastName),
   send_invite: (a, url, creds) =>
     HulyClient.sendInvite(url, creds, a.workspace, a.email, a.role),
   resend_invite: (a, url, creds) =>
-    HulyClient.resendInvite(url, creds, a.workspace, a.email),
+    HulyClient.resendInvite(url, creds, a.workspace, a.email, a.role),
   create_invite_link: (a, url, creds) =>
-    HulyClient.createInviteLink(url, creds, a.workspace, a.role, a.expireHours),
+    HulyClient.createInviteLink(url, creds, a.workspace, a.email, a.role, a.firstName, a.lastName, a.expireHours),
   list_integrations: (a, url, creds) =>
-    HulyClient.listIntegrations(url, creds),
+    HulyClient.listIntegrations(url, creds, a.filter),
   get_integration: (a, url, creds) =>
-    HulyClient.getIntegration(url, creds, a.integrationId),
+    HulyClient.getIntegration(url, creds, { socialId: a.socialId, kind: a.kind, workspaceUuid: a.workspaceUuid }),
   create_integration: (a, url, creds) =>
-    HulyClient.createIntegration(url, creds, a.kind, a.data),
+    HulyClient.createIntegration(url, creds, { socialId: a.socialId, kind: a.kind, workspaceUuid: a.workspaceUuid, data: a.data, disabled: a.disabled }),
   update_integration: (a, url, creds) =>
-    HulyClient.updateIntegration(url, creds, a.integrationId, a.data),
+    HulyClient.updateIntegration(url, creds, { socialId: a.socialId, kind: a.kind, workspaceUuid: a.workspaceUuid, data: a.data, disabled: a.disabled }),
   delete_integration: (a, url, creds) =>
-    HulyClient.deleteIntegration(url, creds, a.integrationId),
+    HulyClient.deleteIntegration(url, creds, { socialId: a.socialId, kind: a.kind, workspaceUuid: a.workspaceUuid }),
   list_mailboxes: (a, url, creds) =>
     HulyClient.getMailboxes(url, creds),
   create_mailbox: (a, url, creds) =>
-    HulyClient.createMailbox(url, creds, a.name),
+    HulyClient.createMailbox(url, creds, a.name, a.domain),
   delete_mailbox: (a, url, creds) =>
     HulyClient.deleteMailbox(url, creds, a.mailboxId),
   find_person_by_social_key: (a, url, creds) =>
@@ -67,7 +67,7 @@ export const accountTools = {
   get_social_ids: (a, url, creds) =>
     HulyClient.getSocialIds(url, creds),
   add_email_social_id: (a, url, creds) =>
-    HulyClient.addEmailSocialId(url, creds, a.email),
+    HulyClient.addEmailSocialId(url, creds, a.targetEmail),
   list_subscriptions: (a, url, creds) =>
     HulyClient.getSubscriptions(url, creds)
 };
@@ -116,7 +116,7 @@ export const workspaceTools = {
   add_label: (a, c) => c.addLabel(a.issueId, a.label),
   remove_label: (a, c) => c.removeLabel(a.issueId, a.label),
   list_labels: (a, c) => c.listLabels(),
-  create_label: (a, c) => c.createLabel(a.name, a.color),
+  create_label: (a, c) => c.createLabel(a.name, a.color, a.description),
   update_label: (a, c) =>
     c.updateLabel(a.name, { newName: a.newName, color: a.color, description: a.description }),
 
@@ -155,16 +155,16 @@ export const workspaceTools = {
   // Time tracking
   set_due_date: (a, c) => c.setDueDate(a.issueId, a.dueDate),
   set_estimation: (a, c) => c.setEstimation(a.issueId, a.hours),
-  log_time: (a, c) => c.logTime(a.issueId, a.hours, a.description, a.descriptionFormat),
+  log_time: (a, c) => c.logTime(a.issueId, a.hours, a.description, a.descriptionFormat, a.date, a.employee),
   list_time_reports: (a, c) => c.listTimeReports(a.issueId),
-  delete_time_report: (a, c) => c.deleteTimeReport(a.issueId, a.reportId),
+  delete_time_report: (a, c) => c.deleteTimeReport(a.reportId),
 
   // Projects
   create_project: (a, c) =>
     c.createProject(a.identifier, a.name, a.description, a.private, a.descriptionFormat, a.projectType),
   update_project: (a, c) =>
     c.updateProject(a.project, {
-      name: a.name, description: a.description,
+      name: a.name, description: a.description, descriptionFormat: a.descriptionFormat,
       isPrivate: a.private, defaultAssignee: a.defaultAssignee
     }),
   archive_project: (a, c) => c.archiveProject(a.project, a.archived),
