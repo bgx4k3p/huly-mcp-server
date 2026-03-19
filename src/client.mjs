@@ -1004,6 +1004,9 @@ export class HulyClient {
 
     const status = await client.findOne(tracker.class.IssueStatus, { _id: issue.status });
 
+    const taskTypes = await client.findAll(task.class.TaskType, {});
+    const taskTypeMap = new Map(taskTypes.map(t => [t._id, t.name]));
+
     const issueLabels = await client.findAll(tags.class.TagReference, {
       attachedTo: issue._id
     });
@@ -1047,7 +1050,7 @@ export class HulyClient {
       description: descriptionContent,
       status: status?.name || 'Unknown',
       priority: PRIORITY_NAMES[issue.priority] || 'Unknown',
-      type: issue.kind,
+      type: taskTypeMap.get(issue.kind) || issue.kind,
       assignee: issue.assignee || null,
       component: issue.component || null,
       labels: issueLabels.map(l => l.title),
