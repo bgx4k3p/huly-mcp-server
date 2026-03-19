@@ -1902,11 +1902,8 @@ describe('Mock Tests (destructive methods)', { timeout: 30_000 }, () => {
   // ── updateWorkspaceName ──────────────────────────────────
 
   describe('updateWorkspaceName', () => {
-    it('resolves UUID and calls updateWorkspaceName', async () => {
-      const { calls } = mockAuthClient({
-        getUserWorkspaces: async () => [
-          { url: 'my-ws', name: 'Old Name', uuid: 'ws-uuid-456' }
-        ],
+    it('uses workspace-scoped client and calls updateWorkspaceName', async () => {
+      const { calls } = mockWsAuthClient({
         updateWorkspaceName: async () => ({})
       });
 
@@ -1915,8 +1912,7 @@ describe('Mock Tests (destructive methods)', { timeout: 30_000 }, () => {
 
       const updateCall = calls.find(c => c.method === 'updateWorkspaceName');
       assert.ok(updateCall);
-      assert.equal(updateCall.args[0], 'ws-uuid-456');
-      assert.equal(updateCall.args[1], 'New Name');
+      assert.equal(updateCall.args[0], 'New Name');
     });
   });
 
@@ -1995,11 +1991,8 @@ describe('Mock Tests (destructive methods)', { timeout: 30_000 }, () => {
   // ── sendInvite ───────────────────────────────────────────
 
   describe('sendInvite', () => {
-    it('resolves workspace UUID and sends invite', async () => {
-      const { calls } = mockAuthClient({
-        getUserWorkspaces: async () => [
-          { url: 'team-ws', name: 'Team', uuid: 'team-uuid' }
-        ],
+    it('uses workspace-scoped client and sends invite', async () => {
+      const { calls } = mockWsAuthClient({
         sendInvite: async () => ({})
       });
 
@@ -2008,53 +2001,49 @@ describe('Mock Tests (destructive methods)', { timeout: 30_000 }, () => {
 
       const inviteCall = calls.find(c => c.method === 'sendInvite');
       assert.ok(inviteCall);
-      assert.equal(inviteCall.args[0], 'team-uuid');
-      assert.equal(inviteCall.args[1], 'new@test.com');
-      assert.equal(inviteCall.args[2], 'MEMBER');
+      assert.equal(inviteCall.args[0], 'new@test.com');
+      assert.equal(inviteCall.args[1], 'MEMBER');
     });
   });
 
   // ── resendInvite ─────────────────────────────────────────
 
   describe('resendInvite', () => {
-    it('resolves workspace UUID and resends invite', async () => {
-      const { calls } = mockAuthClient({
-        getUserWorkspaces: async () => [
-          { url: 'team-ws', name: 'Team', uuid: 'team-uuid' }
-        ],
+    it('uses workspace-scoped client and resends invite', async () => {
+      const { calls } = mockWsAuthClient({
         resendInvite: async () => ({})
       });
 
-      const result = await HulyClient.resendInvite('https://mock', { email: 'e', password: 'p' }, 'team-ws', 'user@test.com');
+      const result = await HulyClient.resendInvite('https://mock', { email: 'e', password: 'p' }, 'team-ws', 'user@test.com', 'MEMBER');
       assert.ok(result.message.includes('user@test.com'));
 
       const resendCall = calls.find(c => c.method === 'resendInvite');
       assert.ok(resendCall);
-      assert.equal(resendCall.args[0], 'team-uuid');
-      assert.equal(resendCall.args[1], 'user@test.com');
+      assert.equal(resendCall.args[0], 'user@test.com');
+      assert.equal(resendCall.args[1], 'MEMBER');
     });
   });
 
   // ── createInviteLink ─────────────────────────────────────
 
   describe('createInviteLink', () => {
-    it('resolves workspace UUID and creates link', async () => {
-      const { calls } = mockAuthClient({
-        getUserWorkspaces: async () => [
-          { url: 'team-ws', name: 'Team', uuid: 'team-uuid' }
-        ],
+    it('uses workspace-scoped client and creates link', async () => {
+      const { calls } = mockWsAuthClient({
         createInviteLink: async () => 'https://example.com/invite/abc123'
       });
 
-      const result = await HulyClient.createInviteLink('https://mock', { email: 'e', password: 'p' }, 'team-ws', 'GUEST', 24);
+      const result = await HulyClient.createInviteLink('https://mock', { email: 'e', password: 'p' }, 'team-ws', 'user@test.com', 'GUEST', 'John', 'Doe', 24);
       assert.equal(result.link, 'https://example.com/invite/abc123');
       assert.equal(result.role, 'GUEST');
 
       const linkCall = calls.find(c => c.method === 'createInviteLink');
       assert.ok(linkCall);
-      assert.equal(linkCall.args[0], 'team-uuid');
+      assert.equal(linkCall.args[0], 'user@test.com');
       assert.equal(linkCall.args[1], 'GUEST');
-      assert.equal(linkCall.args[2], 24);
+      assert.equal(linkCall.args[2], false);
+      assert.equal(linkCall.args[3], 'John');
+      assert.equal(linkCall.args[4], 'Doe');
+      assert.equal(linkCall.args[6], 24);
     });
   });
 
@@ -2083,14 +2072,14 @@ describe('Mock Tests (destructive methods)', { timeout: 30_000 }, () => {
 
     it('updates an integration', async () => {
       const { calls } = mockAuthClient({
-        updateIntegration: async (id, data) => ({ id, ...data })
+        updateIntegration: async (integration) => integration
       });
 
-      const result = await HulyClient.updateIntegration('https://mock', { email: 'e', password: 'p' }, 'int-1', { name: 'updated' });
+      const key = { socialId: 'sid', kind: 'github', workspaceUuid: 'ws-1', data: { name: 'updated' } };
+      const result = await HulyClient.updateIntegration('https://mock', { email: 'e', password: 'p' }, key);
       assert.ok(result);
       const call = calls.find(c => c.method === 'updateIntegration');
-      assert.equal(call.args[0], 'int-1');
-      assert.deepEqual(call.args[1], { name: 'updated' });
+      assert.deepEqual(call.args[0], key);
     });
 
     it('deletes an integration', async () => {
@@ -2098,10 +2087,11 @@ describe('Mock Tests (destructive methods)', { timeout: 30_000 }, () => {
         deleteIntegration: async () => ({})
       });
 
-      const result = await HulyClient.deleteIntegration('https://mock', { email: 'e', password: 'p' }, 'int-1');
-      assert.ok(result.message.includes('int-1'));
+      const key = { socialId: 'sid', kind: 'github', workspaceUuid: 'ws-1' };
+      const result = await HulyClient.deleteIntegration('https://mock', { email: 'e', password: 'p' }, key);
+      assert.ok(result.message.includes('deleted'));
       const call = calls.find(c => c.method === 'deleteIntegration');
-      assert.equal(call.args[0], 'int-1');
+      assert.deepEqual(call.args[0], key);
     });
   });
 
