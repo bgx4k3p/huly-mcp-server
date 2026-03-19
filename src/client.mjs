@@ -1411,6 +1411,42 @@ export class HulyClient {
   }
 
   /**
+   * Update an existing label's name, color, or description.
+   * @param {string} name - Current label name to find
+   * @param {Object} updates - Fields to update
+   * @returns {Promise<Object>}
+   */
+  async updateLabel(name, updates = {}) {
+    const client = await this._getClient();
+
+    const tagElement = await client.findOne(tags.class.TagElement, {
+      title: name,
+      targetClass: tracker.class.Issue
+    });
+
+    if (!tagElement) {
+      throw new Error(`Label "${name}" not found`);
+    }
+
+    const ops = {};
+    if (updates.newName !== undefined) ops.title = updates.newName;
+    if (updates.color !== undefined) ops.color = resolveColor(updates.color);
+    if (updates.description !== undefined) ops.description = updates.description;
+
+    if (Object.keys(ops).length === 0) {
+      return { message: 'No updates specified', id: tagElement._id };
+    }
+
+    await client.updateDoc(tags.class.TagElement, tagElement.space, tagElement._id, ops);
+
+    return {
+      message: `Label "${name}" updated`,
+      id: tagElement._id,
+      updated: Object.keys(ops)
+    };
+  }
+
+  /**
    * Add a "related to" relationship between two issues.
    * @param {string} issueId - Issue identifier
    * @param {string} relatedToIssueId - Related issue identifier
@@ -2769,6 +2805,44 @@ export class HulyClient {
       name: name || identifier,
       description: description || '',
       private: isPrivate
+    };
+  }
+
+  /**
+   * Update a project's name, description, default assignee, or privacy.
+   * @param {string} projectIdent - Project identifier
+   * @param {Object} updates - Fields to update
+   * @returns {Promise<Object>}
+   */
+  async updateProject(projectIdent, updates = {}) {
+    const client = await this._getClient();
+    const project = await client.findOne(tracker.class.Project, {
+      identifier: projectIdent.toUpperCase()
+    });
+    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+
+    const ops = {};
+    if (updates.name !== undefined) ops.name = updates.name;
+    if (updates.description !== undefined) ops.description = updates.description;
+    if (updates.isPrivate !== undefined) ops.private = updates.isPrivate;
+    if (updates.defaultAssignee !== undefined) {
+      if (updates.defaultAssignee === '') {
+        ops.defaultAssignee = null;
+      } else {
+        ops.defaultAssignee = await this._findEmployeeByName(client, updates.defaultAssignee);
+      }
+    }
+
+    if (Object.keys(ops).length === 0) {
+      return { message: 'No updates specified', identifier: project.identifier };
+    }
+
+    await client.updateDoc(tracker.class.Project, project.space || project._id, project._id, ops);
+
+    return {
+      message: `Project ${projectIdent} updated`,
+      identifier: project.identifier,
+      updated: Object.keys(ops)
     };
   }
 

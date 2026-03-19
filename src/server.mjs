@@ -996,6 +996,18 @@ async function handleRequest(req, res) {
       return json(res, 201, result);
     }
 
+    if (method === 'PATCH' && (params = matchRoute('/api/projects/:identifier', path))) {
+      const body = await parseBody(req);
+      return json(res, 200, await client.withReconnect(() =>
+        withSSE('project.updated', () =>
+          client.updateProject(params.identifier, {
+            name: body.name, description: body.description,
+            isPrivate: body.private, defaultAssignee: body.defaultAssignee
+          })
+        )
+      ));
+    }
+
     if (method === 'POST' && (params = matchRoute('/api/projects/:identifier/archive', path))) {
       const body = await parseBody(req);
       const result = await client.withReconnect(() =>
@@ -1152,6 +1164,15 @@ async function handleRequest(req, res) {
       if (!body.name) return json(res, 400, { error: 'name is required' });
       return json(res, 201, await client.withReconnect(() =>
         client.createLabel(body.name, body.color)
+      ));
+    }
+
+    if (method === 'PATCH' && (params = matchRoute('/api/labels/:name', path))) {
+      const body = await parseBody(req);
+      return json(res, 200, await client.withReconnect(() =>
+        client.updateLabel(decodeURIComponent(params.name), {
+          newName: body.newName, color: body.color, description: body.description
+        })
       ));
     }
 

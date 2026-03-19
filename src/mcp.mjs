@@ -497,6 +497,21 @@ const TOOLS = [
     }
   },
   {
+    name: 'update_label',
+    description: 'Update an existing label\'s name, color, or description. Use list_labels to see available labels.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Current label name to find' },
+        newName: { type: 'string', description: 'New label name' },
+        color: { type: ['string', 'number'], description: 'New color: name (red, salmon, pink, hotpink, magenta, purple, indigo, violet, navy, blue, sky, cyan, teal, ocean, mint, green, olive, lime, gold, orange, brown, silver, gray, slate), palette index (0-23), or RGB hex (e.g., 0xBB83FC)' },
+        description: { type: 'string', description: 'New description' },
+        ...workspaceProp
+      },
+      required: ['name']
+    }
+  },
+  {
     name: 'add_relation',
     description: 'Add a bidirectional "related to" relationship between two issues. Use this for issues that are related but not blocking each other. For dependencies, use add_blocked_by instead.',
     inputSchema: {
@@ -840,6 +855,22 @@ const TOOLS = [
         ...workspaceProp
       },
       required: ['name']
+    }
+  },
+  {
+    name: 'update_project',
+    description: 'Update a project\'s name, description, default assignee, or privacy. Only specify fields you want to change.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        name: { type: 'string', description: 'New project name' },
+        description: { type: 'string', description: 'New description' },
+        private: { type: 'boolean', description: 'Set project privacy' },
+        defaultAssignee: { type: 'string', description: 'Default assignee name. Empty string to clear.' },
+        ...workspaceProp
+      },
+      required: ['project']
     }
   },
   {

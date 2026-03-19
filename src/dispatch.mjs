@@ -117,6 +117,8 @@ export const workspaceTools = {
   remove_label: (a, c) => c.removeLabel(a.issueId, a.label),
   list_labels: (a, c) => c.listLabels(),
   create_label: (a, c) => c.createLabel(a.name, a.color),
+  update_label: (a, c) =>
+    c.updateLabel(a.name, { newName: a.newName, color: a.color, description: a.description }),
 
   // Relations
   add_relation: (a, c) => c.addRelation(a.issueId, a.relatedToIssueId),
@@ -160,6 +162,11 @@ export const workspaceTools = {
   // Projects
   create_project: (a, c) =>
     c.createProject(a.identifier, a.name, a.description, a.private, a.descriptionFormat, a.projectType),
+  update_project: (a, c) =>
+    c.updateProject(a.project, {
+      name: a.name, description: a.description,
+      isPrivate: a.private, defaultAssignee: a.defaultAssignee
+    }),
   archive_project: (a, c) => c.archiveProject(a.project, a.archived),
   delete_project: (a, c) => c.deleteProject(a.project),
 
