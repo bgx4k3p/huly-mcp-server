@@ -54,6 +54,28 @@ export const MILESTONE_STATUS_MAP = {
 
 export const MILESTONE_STATUS_NAMES = ['Planned', 'In Progress', 'Completed', 'Canceled'];
 
+export const COLOR_PALETTE = {
+  red: 0, salmon: 1, pink: 2, hotpink: 3, magenta: 4,
+  purple: 5, indigo: 6, violet: 7, navy: 8, blue: 9,
+  sky: 10, cyan: 11, teal: 12, ocean: 13, mint: 14,
+  green: 15, olive: 16, lime: 17, gold: 18, orange: 19,
+  brown: 20, silver: 21, gray: 22, slate: 23
+};
+
+/**
+ * Resolve a color value: name ("blue"), palette index (9), or RGB (0x5E6AD2).
+ * Returns a number suitable for the Huly color field.
+ */
+export function resolveColor(value, fallback = 9) {
+  if (value == null) return fallback;
+  if (typeof value === 'string') {
+    const idx = COLOR_PALETTE[value.toLowerCase()];
+    if (idx !== undefined) return idx;
+  }
+  if (typeof value === 'number') return value;
+  return fallback;
+}
+
 // ── Utilities ──────────────────────────────────────────────────
 
 /**

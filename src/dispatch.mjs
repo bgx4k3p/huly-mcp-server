@@ -80,7 +80,7 @@ export const workspaceTools = {
   list_projects: (a, c) =>
     c.listProjects(),
   get_project: (a, c) =>
-    c.getProject(a.identifier),
+    c.getProject(a.project),
   list_issues: (a, c) =>
     c.listIssues(a.project, a.status, a.priority, a.label, a.milestone, a.limit),
   get_issue: (a, c) =>
@@ -160,8 +160,8 @@ export const workspaceTools = {
   // Projects
   create_project: (a, c) =>
     c.createProject(a.identifier, a.name, a.description, a.private, a.descriptionFormat, a.projectType),
-  archive_project: (a, c) => c.archiveProject(a.identifier, a.archived),
-  delete_project: (a, c) => c.deleteProject(a.identifier),
+  archive_project: (a, c) => c.archiveProject(a.project, a.archived),
+  delete_project: (a, c) => c.deleteProject(a.project),
 
   // Components
   list_components: (a, c) => c.listComponents(a.project),

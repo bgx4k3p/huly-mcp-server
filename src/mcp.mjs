@@ -366,10 +366,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        identifier: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         ...workspaceProp
       },
-      required: ['identifier']
+      required: ['project']
     }
   },
   {
@@ -490,7 +490,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Label name' },
-        color: { type: 'number', description: 'Label color as hex number (e.g., 0xFF6B6B). Default: 0x4ECDC4 (teal)' },
+        color: { type: ['string', 'number'], description: 'Label color: name (red, salmon, pink, hotpink, magenta, purple, indigo, violet, navy, blue, sky, cyan, teal, ocean, mint, green, olive, lime, gold, orange, brown, silver, gray, slate), palette index (0-23), or RGB hex (e.g., 0xBB83FC). Default: blue' },
         ...workspaceProp
       },
       required: ['name']
@@ -848,11 +848,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        identifier: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         archived: { type: 'boolean', description: 'true to archive, false to unarchive' },
         ...workspaceProp
       },
-      required: ['identifier', 'archived']
+      required: ['project', 'archived']
     }
   },
   {
@@ -861,10 +861,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        identifier: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         ...workspaceProp
       },
-      required: ['identifier']
+      required: ['project']
     }
   },
 
