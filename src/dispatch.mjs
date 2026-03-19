@@ -159,7 +159,7 @@ export const workspaceTools = {
 
   // Projects
   create_project: (a, c) =>
-    c.createProject(a.identifier, a.name, a.description, a.private, a.descriptionFormat),
+    c.createProject(a.identifier, a.name, a.description, a.private, a.descriptionFormat, a.projectType),
   archive_project: (a, c) => c.archiveProject(a.identifier, a.archived),
   delete_project: (a, c) => c.deleteProject(a.identifier),
 
