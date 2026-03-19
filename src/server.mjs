@@ -111,7 +111,7 @@ function parseBody(req) {
     });
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString();
-      if (!raw) return resolve({});
+      if (!raw) return reject(new Error('Empty request body'));
       try {
         resolve(JSON.parse(raw));
       } catch (e) {

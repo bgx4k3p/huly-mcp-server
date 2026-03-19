@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22+-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-185%20passing-brightgreen)](test/integration.test.mjs)
+[![Tests](https://img.shields.io/badge/tests-233%20passing-brightgreen)](test/integration.test.mjs)
 [![Coverage](https://img.shields.io/badge/coverage-100%25%20client%20%7C%2092%25%20routes-brightgreen)](test/integration.test.mjs)
 [![Huly SDK](https://img.shields.io/badge/Huly%20SDK-0.7.x-purple)](https://huly.io)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
@@ -647,10 +647,13 @@ Use `create_issues_from_template` (MCP) or `POST /api/projects/:project/template
 
 | Template | Creates |
 | --- | --- |
-| `feature` | Epic + design/implement/test/docs/review sub-issues |
-| `bug` | Bug + reproduce/root-cause/fix/regression-test sub-issues |
+| `feature` | Parent + design/implement/test/docs/review sub-issues |
+| `bug` | Parent + reproduce/root-cause/fix/regression-test sub-issues |
 | `sprint` | Planning/standup/review/retro ceremony issues |
-| `release` | Epic + freeze/QA/changelog/staging/prod/verify sub-issues |
+| `release` | Parent + freeze/QA/changelog/staging/prod/verify sub-issues |
+
+Templates use task types like Epic/Bug when available, falling back
+to the workspace default type otherwise.
 
 ---
 

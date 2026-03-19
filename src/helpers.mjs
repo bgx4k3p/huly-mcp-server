@@ -62,11 +62,21 @@ export const COLOR_PALETTE = {
   brown: 20, silver: 21, gray: 22, slate: 23
 };
 
+// ── Named constants ──────────────────────────────────────────
+export const DONE_CATEGORY = 'task:statusCategory:Won';
+export const LOST_CATEGORY = 'task:statusCategory:Lost';
+export const DEFAULT_LABEL_CATEGORY = 'tracker:category:Other';
+export const DEFAULT_LABEL_COLOR = 9;
+export const PAGE_SIZE = 500;
+export const MAX_BATCH_SIZE = 500;
+export const AUTH_CACHE_TTL_MS = 600000;
+export const DEFAULT_MILESTONE_DAYS = 30;
+
 /**
  * Resolve a color value: name ("blue"), palette index (9), or RGB (0x5E6AD2).
  * Returns a number suitable for the Huly color field.
  */
-export function resolveColor(value, fallback = 9) {
+export function resolveColor(value, fallback = DEFAULT_LABEL_COLOR) {
   if (value == null) return fallback;
   if (typeof value === 'string') {
     const idx = COLOR_PALETTE[value.toLowerCase()];
@@ -77,6 +87,18 @@ export function resolveColor(value, fallback = 9) {
 }
 
 // ── Utilities ──────────────────────────────────────────────────
+
+/**
+ * Strict map/array lookup — throws if key is missing.
+ * Use instead of `map.get(key) || fallback` to surface data corruption.
+ */
+export function strictGet(mapOrArray, key, label) {
+  const val = mapOrArray instanceof Map ? mapOrArray.get(key) : mapOrArray[key];
+  if (val === undefined) {
+    throw new Error(`${label} lookup failed for: ${key}`);
+  }
+  return val;
+}
 
 /**
  * Case-insensitive name comparison.
@@ -189,7 +211,13 @@ export function fromMarkup(value) {
       if (parsed && parsed.type === 'doc') {
         return fromCollaboratorMarkup(value);
       }
-    } catch { /* not JSON, return as-is */ }
+    } catch {
+      // Not JSON — could be plain text or corrupted markup.
+      // Throw if it looks like truncated/malformed JSON, return as-is if plain text.
+      if (value.startsWith('{') || value.startsWith('[')) {
+        throw new Error(`Corrupted markup (invalid JSON): ${value.slice(0, 100)}`);
+      }
+    }
     return value;
   }
   return String(value);
