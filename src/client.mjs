@@ -711,6 +711,26 @@ export class HulyClient {
   }
 
   /**
+   * Get the default task type for a project from its project type config.
+   * Returns the first task type scoped to the project type.
+   */
+  async _getDefaultTaskType(client, project) {
+    const projectTypes = await client.findAll(task.class.ProjectType, {});
+    const projectType = projectTypes.find(pt => pt._id === project.type);
+
+    if (projectType?.tasks?.length) {
+      const taskTypes = await client.findAll(task.class.TaskType, {});
+      const scoped = taskTypes.filter(tt => projectType.tasks.includes(tt._id));
+      if (scoped.length) return scoped[0]._id;
+    }
+
+    throw new Error(
+      `No task types configured for project "${project.identifier}". ` +
+      'Specify a type explicitly or configure task types in workspace settings.'
+    );
+  }
+
+  /**
    * Paginated findAll — fetches results in batches to avoid data loss.
    * The SDK's findAll has a server-side page limit. If limit exceeds
    * the page size, this fetches multiple pages using createdOn cursor.
@@ -1083,9 +1103,11 @@ export class HulyClient {
       statusId = todoStatus?._id || statuses[0]._id;
     }
 
-    let taskTypeId = tracker.taskTypes.Issue;
+    let taskTypeId;
     if (type) {
       taskTypeId = await this._findTaskTypeByName(client, projectIdent, type);
+    } else {
+      taskTypeId = await this._getDefaultTaskType(client, project);
     }
 
     // Resolve optional extra fields
@@ -2190,6 +2212,7 @@ export class HulyClient {
 
     // Cache lookups to avoid N+1 queries in the loop
     const cachedTaskTypes = await client.findAll(task.class.TaskType, {});
+    const defaultTaskTypeId = await this._getDefaultTaskType(client, project);
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
     const components = await client.findAll(tracker.class.Component, { space: project._id });
     const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
@@ -2211,9 +2234,11 @@ export class HulyClient {
         if (found) statusId = found._id;
       }
 
-      let taskTypeId = tracker.taskTypes.Issue;
+      let taskTypeId;
       if (item.type) {
         taskTypeId = await this._findTaskTypeByName(client, projectIdent, item.type, cachedTaskTypes);
+      } else {
+        taskTypeId = defaultTaskTypeId;
       }
 
       // Resolve optional fields from cached lookups
@@ -2620,6 +2645,17 @@ export class HulyClient {
     const todoStatus = statuses.find(s => s.name === 'Todo');
     const defaultStatusId = todoStatus?._id || statuses[0]._id;
 
+    // Resolve project type — use the only one if there's one, error if ambiguous
+    const projectTypes = await client.findAll(task.class.ProjectType, {});
+    if (!projectTypes.length) {
+      throw new Error('No project types found in workspace. Configure project types in workspace settings first.');
+    }
+    if (projectTypes.length > 1) {
+      const available = projectTypes.map(pt => pt.name || pt._id).join(', ');
+      throw new Error(`Multiple project types found: ${available}. Specify one explicitly.`);
+    }
+    const defaultProjectType = projectTypes[0];
+
     const projectId = generateId();
     await client.createDoc(tracker.class.Project, projectId, {
       identifier,
@@ -2633,7 +2669,8 @@ export class HulyClient {
       sequence: 0,
       defaultIssueStatus: defaultStatusId,
       defaultTimeReportDay: 0,
-      issues: 0
+      issues: 0,
+      type: defaultProjectType._id
     }, projectId);
 
     return {
