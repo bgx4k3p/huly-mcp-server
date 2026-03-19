@@ -353,20 +353,24 @@ const TOOLS = [
 
   {
     name: 'list_projects',
-    description: 'List all projects in the Huly workspace. Returns each project\'s identifier (e.g., "PROJ"), display name, and total issue count. Use this first to discover available projects before querying issues.',
+    description: 'List all projects in the Huly workspace. Returns each project\'s identifier (e.g., "PROJ"), display name, and total issue count. Use this first to discover available projects before querying issues. Set include_details=true to also fetch milestones, components, labels, and member names for each project (limited to 20 projects).',
     inputSchema: {
       type: 'object',
-      properties: { ...workspaceProp },
+      properties: {
+        include_details: { type: 'boolean', description: 'Include milestones, components, labels, and members for each project (default: false). Limits to 20 projects.' },
+        ...workspaceProp
+      },
       required: []
     }
   },
   {
     name: 'get_project',
-    description: 'Get details for a single project by its identifier (e.g., "PROJ"). Returns identifier, name, description, and issue count. Use list_projects first if you don\'t know the identifier.',
+    description: 'Get details for a single project by its identifier (e.g., "PROJ"). Returns identifier, name, description, and issue count. Set include_details=true to also fetch milestones, components, labels, and resolved member names. Use list_projects first if you don\'t know the identifier.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        include_details: { type: 'boolean', description: 'Include milestones, components, labels, and members (default: false)' },
         ...workspaceProp
       },
       required: ['project']
@@ -374,7 +378,7 @@ const TOOLS = [
   },
   {
     name: 'list_issues',
-    description: 'List issues in a project with optional filtering. Returns id, title, status, priority, type (Task/Epic/Bug), assignee, component, labels, milestone, parent issue, childCount, dueDate, estimation, reportedTime, createdOn, modifiedOn, and completedAt for each issue. Supports filtering by status, priority, label, and milestone. Default limit 500, auto-paginates. Use search_issues for full-text search across projects.',
+    description: 'List issues in a project with optional filtering. Returns id, title, status, priority, type (Task/Epic/Bug), assignee, component, labels, milestone, parent issue, childCount, dueDate, estimation, reportedTime, createdOn, modifiedOn, and completedAt for each issue. Does NOT include full descriptions — use get_issue to read resolved markdown descriptions (important for migrations). Supports filtering by status, priority, label, and milestone. Default limit 500, auto-paginates. Use search_issues for full-text search across projects.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -384,6 +388,7 @@ const TOOLS = [
         label: { type: 'string', description: 'Filter by label name (exact match)' },
         milestone: { type: 'string', description: 'Filter by milestone name (exact match)' },
         limit: { type: 'number', description: 'Maximum number of issues to return (default: 500)' },
+        include_details: { type: 'boolean', description: 'Include full details: descriptions, comments, time reports, relations, and children. Reduces default limit to 50.' },
         ...workspaceProp
       },
       required: ['project']
@@ -396,6 +401,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
+        include_details: { type: 'boolean', description: 'Include full details: comments, time reports, relations, and children.' },
         ...workspaceProp
       },
       required: ['issueId']
@@ -577,12 +583,13 @@ const TOOLS = [
   },
   {
     name: 'list_milestones',
-    description: 'List all milestones in a project, sorted by target date. Returns name, description, status (Planned/In Progress/Completed/Canceled), and target date. Supports optional status filtering.',
+    description: 'List all milestones in a project, sorted by target date. Returns name, description, status (Planned/In Progress/Completed/Canceled), and target date. Supports optional status filtering. Set include_details=true to include a list of issues for each milestone.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         status: { type: 'string', description: 'Filter by status: Planned, In Progress, Completed, Canceled' },
+        include_details: { type: 'boolean', description: 'Include issues list for each milestone (default: false)' },
         ...workspaceProp
       },
       required: ['project']
@@ -590,12 +597,13 @@ const TOOLS = [
   },
   {
     name: 'get_milestone',
-    description: 'Get details for a specific milestone by name, including the count of issues assigned to it. Use list_milestones first if you don\'t know the exact name.',
+    description: 'Get details for a specific milestone by name, including the count of issues assigned to it. Set include_details=true to include the full list of issues with id, title, status, and type. Use list_milestones first if you don\'t know the exact name.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
         name: { type: 'string', description: 'Milestone name/label (exact match, case-insensitive)' },
+        include_details: { type: 'boolean', description: 'Include full issues list (default: false)' },
         ...workspaceProp
       },
       required: ['project', 'name']
@@ -1065,6 +1073,97 @@ const TOOLS = [
         ...workspaceProp
       },
       required: ['issueId', 'commentId']
+    }
+  },
+
+  // ── Single-Item Lookups ──────────────────────────────────────
+
+  {
+    name: 'get_label',
+    description: 'Find a label by name (case-insensitive). Returns id, name, color, and description. Use list_labels first if you don\'t know the exact name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Label name to find' },
+        ...workspaceProp
+      },
+      required: ['name']
+    }
+  },
+  {
+    name: 'get_member',
+    description: 'Find a workspace member by name (fuzzy match). Returns id, name, and role. Use list_members first if you don\'t know the exact name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Member name to find' },
+        ...workspaceProp
+      },
+      required: ['name']
+    }
+  },
+  {
+    name: 'get_status',
+    description: 'Find an issue status by name (case-insensitive). Returns id, name, category, and color. Use list_statuses first if you don\'t know the exact name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Status name to find' },
+        ...workspaceProp
+      },
+      required: ['name']
+    }
+  },
+  {
+    name: 'get_component',
+    description: 'Find a component by name in a project (case-insensitive). Returns id, name, description, and lead. Use list_components first if you don\'t know the exact name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        name: { type: 'string', description: 'Component name to find' },
+        ...workspaceProp
+      },
+      required: ['project', 'name']
+    }
+  },
+  {
+    name: 'get_task_type',
+    description: 'Find a task type by name in a project (case-insensitive). Returns id, name, kind, and statuses. Use list_task_types first if you don\'t know the exact name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' },
+        name: { type: 'string', description: 'Task type name to find (e.g., "Issue", "Epic", "Bug")' },
+        ...workspaceProp
+      },
+      required: ['project', 'name']
+    }
+  },
+  {
+    name: 'get_comment',
+    description: 'Get a specific comment on an issue by its ID. Returns id, text, createdBy, and createdOn. Use list_comments first to find the comment ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
+        commentId: { type: 'string', description: 'Comment ID (from list_comments)' },
+        ...workspaceProp
+      },
+      required: ['issueId', 'commentId']
+    }
+  },
+  {
+    name: 'get_time_report',
+    description: 'Get a specific time report on an issue by its ID. Returns id, hours, description, and date. Use list_time_reports first to find the report ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' },
+        reportId: { type: 'string', description: 'Time report ID (from list_time_reports)' },
+        ...workspaceProp
+      },
+      required: ['issueId', 'reportId']
     }
   }
 ];

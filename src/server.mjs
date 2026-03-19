@@ -639,40 +639,6 @@ const OPENAPI_SPEC = {
       get: { summary: 'List comments on an issue', tags: ['Comments'], parameters: [{ name: 'issueId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Array of comments' } } },
       post: { summary: 'Add a comment to an issue', tags: ['Comments'], parameters: [{ name: 'issueId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '201': { description: 'Comment added' } } }
     },
-    '/api/issues/{issueId}/comments/{commentId}': {
-      patch: {
-        summary: 'Update a comment',
-        tags: ['Comments'],
-        parameters: [
-          { name: 'issueId', in: 'path', required: true, schema: { type: 'string' } },
-          { name: 'commentId', in: 'path', required: true, schema: { type: 'string' } },
-          { $ref: '#/components/parameters/workspace' }
-        ],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['text'],
-                properties: { text: { type: 'string' } }
-              }
-            }
-          }
-        },
-        responses: { '200': { description: 'Comment updated' } }
-      },
-      delete: {
-        summary: 'Delete a comment',
-        tags: ['Comments'],
-        parameters: [
-          { name: 'issueId', in: 'path', required: true, schema: { type: 'string' } },
-          { name: 'commentId', in: 'path', required: true, schema: { type: 'string' } },
-          { $ref: '#/components/parameters/workspace' }
-        ],
-        responses: { '200': { description: 'Comment deleted' } }
-      }
-    },
     '/api/issues/{issueId}/due-date': {
       patch: { summary: 'Set or clear due date', tags: ['Time Tracking'], parameters: [{ name: 'issueId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Due date updated' } } }
     },
@@ -739,7 +705,70 @@ const OPENAPI_SPEC = {
         responses: { '201': { description: 'Created component' } }
       }
     },
+    '/api/search': {
+      get: {
+        summary: 'Search issues by text',
+        tags: ['Search'],
+        parameters: [
+          { name: 'query', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'project', in: 'query', schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Search results' } }
+      }
+    },
+    '/api/events': {
+      get: {
+        summary: 'SSE stream of issue change events',
+        tags: ['Events'],
+        responses: { '200': { description: 'Server-Sent Events stream' } }
+      }
+    },
+    '/api/labels/{name}': {
+      get: {
+        summary: 'Get a label by name',
+        tags: ['Labels'],
+        parameters: [
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Label details' } }
+      }
+    },
+    '/api/members/{name}': {
+      get: {
+        summary: 'Get a member by name',
+        tags: ['Members'],
+        parameters: [
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Member details' } }
+      }
+    },
+    '/api/statuses/{name}': {
+      get: {
+        summary: 'Get a status by name',
+        tags: ['Metadata'],
+        parameters: [
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Status details' } }
+      }
+    },
     '/api/projects/{project}/components/{name}': {
+      get: {
+        summary: 'Get a component by name',
+        tags: ['Components'],
+        parameters: [
+          { name: 'project', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Component details' } }
+      },
       patch: {
         summary: 'Update a component',
         tags: ['Components'],
@@ -774,24 +803,72 @@ const OPENAPI_SPEC = {
         responses: { '200': { description: 'Component deleted' } }
       }
     },
-    '/api/search': {
+    '/api/projects/{project}/task-types/{name}': {
       get: {
-        summary: 'Search issues by text',
-        tags: ['Search'],
+        summary: 'Get a task type by name',
+        tags: ['Metadata'],
         parameters: [
-          { name: 'query', in: 'query', required: true, schema: { type: 'string' } },
-          { name: 'project', in: 'query', schema: { type: 'string' } },
-          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20 } },
+          { name: 'project', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
           { $ref: '#/components/parameters/workspace' }
         ],
-        responses: { '200': { description: 'Search results' } }
+        responses: { '200': { description: 'Task type details' } }
       }
     },
-    '/api/events': {
+    '/api/issues/{issueId}/comments/{commentId}': {
       get: {
-        summary: 'SSE stream of issue change events',
-        tags: ['Events'],
-        responses: { '200': { description: 'Server-Sent Events stream' } }
+        summary: 'Get a specific comment',
+        tags: ['Comments'],
+        parameters: [
+          { name: 'issueId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'commentId', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Comment details' } }
+      },
+      patch: {
+        summary: 'Update a comment',
+        tags: ['Comments'],
+        parameters: [
+          { name: 'issueId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'commentId', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['text'],
+                properties: { text: { type: 'string' } }
+              }
+            }
+          }
+        },
+        responses: { '200': { description: 'Comment updated' } }
+      },
+      delete: {
+        summary: 'Delete a comment',
+        tags: ['Comments'],
+        parameters: [
+          { name: 'issueId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'commentId', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Comment deleted' } }
+      }
+    },
+    '/api/issues/{issueId}/time-reports/{reportId}': {
+      get: {
+        summary: 'Get a specific time report',
+        tags: ['Time Tracking'],
+        parameters: [
+          { name: 'issueId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'reportId', in: 'path', required: true, schema: { type: 'string' } },
+          { $ref: '#/components/parameters/workspace' }
+        ],
+        responses: { '200': { description: 'Time report details' } }
       }
     }
   }
@@ -974,13 +1051,15 @@ async function handleRequest(req, res) {
     // ── Projects ──────────────────────────────────────────
 
     if (method === 'GET' && path === '/api/projects') {
-      return json(res, 200, await client.withReconnect(() => client.listProjects()));
+      const include_details = url.searchParams.get('include_details') === 'true';
+      return json(res, 200, await client.withReconnect(() => client.listProjects({ include_details })));
     }
 
     if (method === 'GET' && (params = matchRoute('/api/projects/:identifier', path))) {
       // Avoid matching other /api/projects/:something routes
       if (!['summary', 'milestones', 'issues', 'task-types', 'batch-issues', 'template', 'archive', 'components'].some(s => params.identifier === s)) {
-        return json(res, 200, await client.withReconnect(() => client.getProject(params.identifier)));
+        const include_details = url.searchParams.get('include_details') === 'true';
+        return json(res, 200, await client.withReconnect(() => client.getProject(params.identifier, { include_details })));
       }
     }
 
@@ -1054,14 +1133,16 @@ async function handleRequest(req, res) {
       const label = url.searchParams.get('label') || undefined;
       const milestone = url.searchParams.get('milestone') || undefined;
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit'), 10) : undefined;
+      const include_details = url.searchParams.get('include_details') === 'true';
       return json(res, 200, await client.withReconnect(() =>
-        client.listIssues(params.project, status, priority, label, milestone, limit)
+        client.listIssues(params.project, status, priority, label, milestone, limit, include_details)
       ));
     }
 
     if (method === 'GET' && (params = matchRoute('/api/projects/:project/issues/:number', path))) {
       const issueId = `${params.project}-${params.number}`;
-      return json(res, 200, await client.withReconnect(() => client.getIssue(issueId)));
+      const include_details = url.searchParams.get('include_details') === 'true';
+      return json(res, 200, await client.withReconnect(() => client.getIssue(issueId, { include_details })));
     }
 
     if (method === 'POST' && (params = matchRoute('/api/projects/:project/issues', path))) {
@@ -1167,6 +1248,12 @@ async function handleRequest(req, res) {
       ));
     }
 
+    if (method === 'GET' && (params = matchRoute('/api/labels/:name', path))) {
+      return json(res, 200, await client.withReconnect(() =>
+        client.getLabel(decodeURIComponent(params.name))
+      ));
+    }
+
     if (method === 'PATCH' && (params = matchRoute('/api/labels/:name', path))) {
       const body = await parseBody(req);
       return json(res, 200, await client.withReconnect(() =>
@@ -1228,24 +1315,38 @@ async function handleRequest(req, res) {
       ));
     }
 
+    if (method === 'GET' && (params = matchRoute('/api/projects/:project/task-types/:name', path))) {
+      return json(res, 200, await client.withReconnect(() =>
+        client.getTaskType(params.project, decodeURIComponent(params.name))
+      ));
+    }
+
     if (method === 'GET' && path === '/api/statuses') {
       const project = url.searchParams.get('project');
       const taskType = url.searchParams.get('taskType');
       return json(res, 200, await client.withReconnect(() => client.listStatuses(project, taskType)));
     }
 
+    if (method === 'GET' && (params = matchRoute('/api/statuses/:name', path))) {
+      return json(res, 200, await client.withReconnect(() =>
+        client.getStatus(decodeURIComponent(params.name))
+      ));
+    }
+
     // ── Milestones ────────────────────────────────────────
 
     if (method === 'GET' && (params = matchRoute('/api/projects/:project/milestones', path))) {
       const status = url.searchParams.get('status') || undefined;
+      const include_details = url.searchParams.get('include_details') === 'true';
       return json(res, 200, await client.withReconnect(() =>
-        client.listMilestones(params.project, status)
+        client.listMilestones(params.project, status, { include_details })
       ));
     }
 
     if (method === 'GET' && (params = matchRoute('/api/projects/:project/milestones/:name', path))) {
+      const include_details = url.searchParams.get('include_details') === 'true';
       return json(res, 200, await client.withReconnect(() =>
-        client.getMilestone(params.project, params.name)
+        client.getMilestone(params.project, params.name, { include_details })
       ));
     }
 
@@ -1310,6 +1411,12 @@ async function handleRequest(req, res) {
       return json(res, 201, result);
     }
 
+    if (method === 'GET' && (params = matchRoute('/api/projects/:project/components/:name', path))) {
+      return json(res, 200, await client.withReconnect(() =>
+        client.getComponent(params.project, decodeURIComponent(params.name))
+      ));
+    }
+
     if (method === 'PATCH' && (params = matchRoute('/api/projects/:project/components/:name', path))) {
       const body = await parseBody(req);
       const result = await client.withReconnect(() =>
@@ -1348,6 +1455,12 @@ async function handleRequest(req, res) {
       return json(res, 200, await client.withReconnect(() => client.listMembers()));
     }
 
+    if (method === 'GET' && (params = matchRoute('/api/members/:name', path))) {
+      return json(res, 200, await client.withReconnect(() =>
+        client.getMember(decodeURIComponent(params.name))
+      ));
+    }
+
     // ── Comments ──────────────────────────────────────────
 
     if (method === 'POST' && (params = matchRoute('/api/issues/:issueId/comments', path))) {
@@ -1363,6 +1476,12 @@ async function handleRequest(req, res) {
     if (method === 'GET' && (params = matchRoute('/api/issues/:issueId/comments', path))) {
       return json(res, 200, await client.withReconnect(() =>
         client.listComments(params.issueId)
+      ));
+    }
+
+    if (method === 'GET' && (params = matchRoute('/api/issues/:issueId/comments/:commentId', path))) {
+      return json(res, 200, await client.withReconnect(() =>
+        client.getComment(params.issueId, params.commentId)
       ));
     }
 
@@ -1420,6 +1539,12 @@ async function handleRequest(req, res) {
     if (method === 'GET' && (params = matchRoute('/api/issues/:issueId/time-reports', path))) {
       return json(res, 200, await client.withReconnect(() =>
         client.listTimeReports(params.issueId)
+      ));
+    }
+
+    if (method === 'GET' && (params = matchRoute('/api/issues/:issueId/time-reports/:reportId', path))) {
+      return json(res, 200, await client.withReconnect(() =>
+        client.getTimeReport(params.issueId, params.reportId)
       ));
     }
 

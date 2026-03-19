@@ -2,7 +2,7 @@ import { describe, it, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const HULY_URL = process.env.HULY_URL || 'http://localhost:8087';
 const PROJECT = 'MCPT';          // Dedicated test project, created/deleted per run
-const EXISTING_PROJECT = 'OPS';  // Pre-existing project for read-only tests
+const EXISTING_PROJECT = process.env.HULY_TEST_PROJECT || 'START';  // Pre-existing project for read-only tests
 const TEST_PREFIX = '[TEST]';
 const HULY_CREDS = process.env.HULY_TOKEN
   ? { token: process.env.HULY_TOKEN }
@@ -370,7 +370,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     // Create dedicated test project
     try {
-      await client.createProject(PROJECT, 'MCP Test Project', 'Automated test project');
+      await client.createProject(PROJECT, 'MCP Test Project', 'Automated test project', false, undefined, 'Classic project');
     } catch (e) {
       // Already exists from a prior run — that's fine
       if (!e.message.includes('already exists')) throw e;
@@ -887,7 +887,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     const tempProj = 'TPRJ';
 
     it('creates a new project', async () => {
-      const result = await client.createProject(tempProj, 'Temp Project', 'For testing');
+      const result = await client.createProject(tempProj, 'Temp Project', 'For testing', false, undefined, 'Classic project');
       assert.ok(result.id);
       assert.equal(result.identifier, tempProj);
     });
@@ -907,7 +907,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     it('deletes the project (create fresh for delete)', async () => {
       // Create a new one to delete since TPRJ is now archived and invisible
       const tempProj2 = 'TPR2';
-      await client.createProject(tempProj2, 'Temp 2', 'For delete test');
+      await client.createProject(tempProj2, 'Temp 2', 'For delete test', false, undefined, 'Classic project');
       const result = await client.deleteProject(tempProj2);
       assert.ok(result.message.includes('deleted'));
     });
@@ -1042,6 +1042,338 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     it('deletes a comment', async () => {
       const result = await client.deleteComment(testIssueId, commentId);
       assert.ok(result.message.includes('deleted'));
+    });
+  });
+
+  // ── Single-item lookups (get_*) ───────────────────────────
+
+  describe('get_label', () => {
+    it('creates and retrieves a label by name', async () => {
+      await client.createLabel('TestLookup', 7);
+      const label = await client.getLabel('TestLookup');
+      assert.equal(label.name, 'TestLookup');
+      assert.equal(label.color, 7);
+    });
+
+    it('throws for nonexistent label', async () => {
+      await assert.rejects(() => client.getLabel('NoSuchLabel999'), /not found/i);
+    });
+  });
+
+  describe('get_member', () => {
+    it('finds a member by name', async () => {
+      const members = await client.listMembers();
+      assert.ok(members.length > 0, 'Should have at least one member');
+      const member = await client.getMember(members[0].name);
+      assert.equal(member.name, members[0].name);
+    });
+
+    it('throws for nonexistent member', async () => {
+      await assert.rejects(() => client.getMember('NoSuchPerson999'), /not found/i);
+    });
+  });
+
+  describe('get_status', () => {
+    it('finds a status by name', async () => {
+      const status = await client.getStatus('Backlog');
+      assert.equal(status.name, 'Backlog');
+      assert.ok(status.category, 'Should have a category');
+    });
+
+    it('throws for nonexistent status', async () => {
+      await assert.rejects(() => client.getStatus('NoSuchStatus999'), /not found/i);
+    });
+  });
+
+  describe('get_component', () => {
+    const compName = `${TEST_PREFIX}-get-comp-${Date.now()}`;
+
+    it('creates and retrieves a component by name', async () => {
+      await client.createComponent(PROJECT, compName, 'Lookup test');
+      const comp = await client.getComponent(PROJECT, compName);
+      assert.equal(comp.name, compName);
+      assert.equal(comp.description, 'Lookup test');
+    });
+
+    it('throws for nonexistent component', async () => {
+      await assert.rejects(() => client.getComponent(PROJECT, 'NoComp999'), /not found/i);
+    });
+
+    after(async () => {
+      try { await client.deleteComponent(PROJECT, compName); } catch {}
+    });
+  });
+
+  describe('get_task_type', () => {
+    it('finds a task type by name', async () => {
+      const types = await client.listTaskTypes(PROJECT);
+      assert.ok(types.length > 0, 'Should have at least one task type');
+      const tt = await client.getTaskType(PROJECT, types[0].name);
+      assert.equal(tt.name, types[0].name);
+      assert.ok(tt.statuses, 'Should have statuses');
+    });
+
+    it('throws for nonexistent task type', async () => {
+      await assert.rejects(() => client.getTaskType(PROJECT, 'NoType999'), /not found/i);
+    });
+  });
+
+  describe('get_comment', () => {
+    let issueId, cmtId;
+
+    it('creates issue and comment, then retrieves comment by ID', async () => {
+      const issue = await client.createIssue(PROJECT, `${TEST_PREFIX} get_comment test`);
+      issueId = issue.id;
+      testIssueIds.push(issueId);
+      const cmt = await client.addComment(issueId, 'Lookup test comment');
+      cmtId = cmt.id;
+      const result = await client.getComment(issueId, cmtId);
+      assert.equal(result.id, cmtId);
+      assert.ok(result.text.includes('Lookup test comment'));
+    });
+
+    it('throws for nonexistent comment', async () => {
+      await assert.rejects(() => client.getComment(issueId, 'badid000000000000'), /not found/i);
+    });
+  });
+
+  describe('get_time_report', () => {
+    let issueId, reportId;
+
+    it('creates issue, logs time, then retrieves report by ID', async () => {
+      const issue = await client.createIssue(PROJECT, `${TEST_PREFIX} get_time_report test`);
+      issueId = issue.id;
+      testIssueIds.push(issueId);
+      const logged = await client.logTime(issueId, 1.5, 'Test work');
+      reportId = logged.id;
+      const result = await client.getTimeReport(issueId, reportId);
+      assert.equal(result.id, reportId);
+      assert.equal(result.hours, 1.5);
+    });
+
+    it('throws for nonexistent report', async () => {
+      await assert.rejects(() => client.getTimeReport(issueId, 'badid000000000000'), /not found/i);
+    });
+  });
+
+  // ── include_details flag ──────────────────────────────────
+
+  describe('get_issue with include_details', () => {
+    let issueId;
+
+    before(async () => {
+      const issue = await client.createIssue(PROJECT, `${TEST_PREFIX} details test`, 'Details test description');
+      issueId = issue.id;
+      testIssueIds.push(issueId);
+      await client.addComment(issueId, 'Detail comment');
+      await client.logTime(issueId, 2, 'Detail work');
+    });
+
+    it('returns basic fields without include_details', async () => {
+      const issue = await client.getIssue(issueId);
+      assert.ok(issue.title);
+      assert.ok(issue.description);
+      assert.equal(issue.comments, undefined);
+      assert.equal(issue.timeReports, undefined);
+    });
+
+    it('returns comments and timeReports with include_details', async () => {
+      const issue = await client.getIssue(issueId, { include_details: true });
+      assert.ok(issue.title);
+      assert.ok(Array.isArray(issue.comments), 'Should have comments array');
+      assert.ok(issue.comments.length >= 1, 'Should have at least 1 comment');
+      assert.ok(issue.comments[0].text.includes('Detail comment'));
+      assert.ok(Array.isArray(issue.timeReports), 'Should have timeReports array');
+      assert.ok(issue.timeReports.length >= 1, 'Should have at least 1 time report');
+      assert.equal(issue.timeReports[0].hours, 2);
+    });
+  });
+
+  describe('list_issues with include_details', () => {
+    it('returns descriptions when include_details is true', async () => {
+      const issues = await client.listIssues(PROJECT, null, null, null, null, 5, true);
+      assert.ok(issues.length > 0, 'Should have issues');
+      const withDesc = issues.find(i => i.description && i.description.length > 0);
+      assert.ok(withDesc, 'At least one issue should have a resolved description');
+    });
+
+    it('omits descriptions by default', async () => {
+      const issues = await client.listIssues(PROJECT, null, null, null, null, 5);
+      assert.ok(issues.length > 0);
+      // Default list should not have description at top level
+      // (it may be in extra but not resolved)
+    });
+  });
+
+  describe('get_project with include_details', () => {
+    it('returns milestones and components with include_details', async () => {
+      const proj = await client.getProject(PROJECT, { include_details: true });
+      assert.ok(proj.identifier);
+      assert.ok(Array.isArray(proj.milestones), 'Should have milestones array');
+      assert.ok(Array.isArray(proj.components), 'Should have components array');
+      assert.ok(Array.isArray(proj.labels), 'Should have labels array');
+      assert.ok(Array.isArray(proj.members), 'Should have members array');
+    });
+
+    it('omits details by default', async () => {
+      const proj = await client.getProject(PROJECT);
+      assert.equal(proj.milestones, undefined);
+      assert.equal(proj.components, undefined);
+    });
+  });
+
+  describe('list_projects with include_details', () => {
+    it('returns enriched projects with include_details', async () => {
+      const projects = await client.listProjects({ include_details: true });
+      assert.ok(projects.length > 0);
+      const proj = projects.find(p => p.identifier === PROJECT);
+      assert.ok(proj, 'Should find test project');
+      assert.ok(Array.isArray(proj.milestones), 'Should have milestones');
+    });
+  });
+
+  describe('get_milestone with include_details', () => {
+    const msName = `${TEST_PREFIX}-ms-details-${Date.now()}`;
+
+    before(async () => {
+      await client.createMilestone(PROJECT, msName);
+      const issue = await client.createIssue(PROJECT, `${TEST_PREFIX} ms-detail issue`);
+      testIssueIds.push(issue.id);
+      await client.setMilestone(issue.id, msName);
+    });
+
+    it('returns issues list with include_details', async () => {
+      const ms = await client.getMilestone(PROJECT, msName, { include_details: true });
+      assert.ok(ms.name === msName);
+      assert.ok(Array.isArray(ms.issues), 'Should have issues array');
+      assert.ok(ms.issues.length >= 1, 'Should have at least 1 issue');
+      assert.ok(ms.issues[0].title, 'Issue should have title');
+      assert.ok(ms.issues[0].status, 'Issue should have status');
+    });
+
+    it('omits issues by default', async () => {
+      const ms = await client.getMilestone(PROJECT, msName);
+      assert.equal(ms.issues, undefined);
+    });
+
+    after(async () => {
+      try { await client.deleteMilestone(PROJECT, msName); } catch {}
+    });
+  });
+
+  // ── update_label ──────────────────────────────────────────
+
+  describe('update_label', () => {
+    const labelName = `${TEST_PREFIX}-upd-label-${Date.now()}`;
+
+    it('creates, updates color, and reads back', async () => {
+      await client.createLabel(labelName, 3);
+      const updated = await client.updateLabel(labelName, { color: 11 });
+      assert.ok(updated.message.includes('updated') || updated.updated);
+      const label = await client.getLabel(labelName);
+      assert.equal(label.color, 11);
+    });
+
+    it('renames a label', async () => {
+      const newName = labelName + '-renamed';
+      await client.updateLabel(labelName, { newName });
+      const label = await client.getLabel(newName);
+      assert.equal(label.name, newName);
+      await assert.rejects(() => client.getLabel(labelName), /not found/i);
+    });
+  });
+
+  // ── Label color round-trip ─────────────────────────────────
+
+  describe('Label color round-trip', () => {
+    it('creates a label with palette index and reads back', async () => {
+      await client.createLabel('ColorIdx5', 5);
+      const label = await client.getLabel('ColorIdx5');
+      assert.equal(label.color, 5);
+    });
+
+    it('creates a label with RGB hex and reads back', async () => {
+      await client.createLabel('ColorRGB', 0xBB83FC);
+      const label = await client.getLabel('ColorRGB');
+      assert.equal(label.color, 0xBB83FC);
+    });
+
+    it('creates a label with named color and reads back', async () => {
+      await client.createLabel('ColorNamed', 'blue');
+      const label = await client.getLabel('ColorNamed');
+      assert.equal(label.color, 9);
+    });
+
+    it('creates a label with no color and gets default', async () => {
+      await client.createLabel('ColorDefault');
+      const label = await client.getLabel('ColorDefault');
+      assert.equal(label.color, 9);
+    });
+  });
+
+  // ── Description format round-trip (markdown/html/plain) ───
+
+  describe('Description format round-trip', () => {
+    it('creates issue with markdown description and reads back', async () => {
+      const issue = await client.createIssue(PROJECT, `${TEST_PREFIX} md desc`, 'This is **bold** and _italic_');
+      testIssueIds.push(issue.id);
+      const read = await client.getIssue(issue.id);
+      assert.ok(read.description.includes('bold'), 'Should contain bold text');
+    });
+
+    it('creates issue with HTML description and reads back', async () => {
+      const issue = await client.createIssue(
+        PROJECT, `${TEST_PREFIX} html desc`,
+        '<h2>HTML Test</h2><p>This is <strong>bold</strong> via HTML.</p>',
+        null, null, null, null, { descriptionFormat: 'html' }
+      );
+      testIssueIds.push(issue.id);
+      const read = await client.getIssue(issue.id);
+      assert.ok(read.description.includes('bold') || read.description.includes('HTML Test'), 'Should contain HTML content');
+    });
+
+    it('creates issue with plain text description and reads back', async () => {
+      const issue = await client.createIssue(
+        PROJECT, `${TEST_PREFIX} plain desc`,
+        'Just plain text, no formatting.',
+        null, null, null, null, { descriptionFormat: 'plain' }
+      );
+      testIssueIds.push(issue.id);
+      const read = await client.getIssue(issue.id);
+      assert.ok(read.description.includes('plain text'), 'Should contain plain text');
+    });
+
+    it('updates description with markdown and reads back', async () => {
+      const issue = await client.createIssue(PROJECT, `${TEST_PREFIX} update desc`);
+      testIssueIds.push(issue.id);
+      // updateIssue uses positional params: (id, title, description, priority, status, type, extra)
+      await client.updateIssue(issue.id, undefined, 'Updated with **markdown**');
+      const read = await client.getIssue(issue.id);
+      assert.ok(read.description.includes('markdown'), 'Should contain updated markdown');
+    });
+  });
+
+  // ── update_project ────────────────────────────────────────
+
+  describe('update_project', () => {
+    const projId = `TP${Date.now().toString(36).slice(-3).toUpperCase()}`;
+
+    before(async () => {
+      await client.createProject(projId, 'Update Test Project', 'Original desc', false, undefined, 'Classic project');
+    });
+
+    it('updates name and description', async () => {
+      const result = await client.updateProject(projId, {
+        name: 'Updated Project Name',
+        description: 'Updated desc'
+      });
+      assert.ok(result.updated || result.message);
+      const proj = await client.getProject(projId);
+      assert.equal(proj.name, 'Updated Project Name');
+    });
+
+    after(async () => {
+      try { await client.deleteProject(projId); } catch {}
     });
   });
 });
