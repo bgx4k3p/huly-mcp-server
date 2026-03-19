@@ -990,7 +990,7 @@ async function handleRequest(req, res) {
       if (!body.name) return json(res, 400, { error: 'name is required' });
       const result = await client.withReconnect(() =>
         withSSE('project.created', () =>
-          client.createProject(body.identifier, body.name, body.description, body.private)
+          client.createProject(body.identifier, body.name, body.description, body.private, body.descriptionFormat, body.projectType)
         )
       );
       return json(res, 201, result);

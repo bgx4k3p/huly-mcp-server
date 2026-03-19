@@ -1114,8 +1114,7 @@ export class HulyClient {
       statusId = found?._id;
     }
     if (!statusId) {
-      const todoStatus = statuses.find(s => s.name === 'Todo');
-      statusId = todoStatus?._id || statuses[0]._id;
+      statusId = project.defaultIssueStatus || statuses[0]._id;
     }
 
     let taskTypeId;
@@ -2257,8 +2256,7 @@ export class HulyClient {
 
     const statuses = await client.findAll(tracker.class.IssueStatus, {});
     if (!statuses.length) throw new Error('No statuses found for project');
-    const todoStatus = statuses.find(s => s.name === 'Todo');
-    const defaultStatusId = todoStatus?._id || statuses[0]._id;
+    const defaultStatusId = project.defaultIssueStatus || statuses[0]._id;
 
     // Cache lookups to avoid N+1 queries in the loop
     const cachedTaskTypes = await client.findAll(task.class.TaskType, {});
@@ -2681,7 +2679,7 @@ export class HulyClient {
 
   // ── Project Management ──────────────────────────────────────
 
-  async createProject(identifier, name, description, isPrivate = false, format) {
+  async createProject(identifier, name, description, isPrivate = false, format, projectType) {
     const client = await this._getClient();
 
     identifier = identifier.toUpperCase();
@@ -2695,16 +2693,26 @@ export class HulyClient {
     const todoStatus = statuses.find(s => s.name === 'Todo');
     const defaultStatusId = todoStatus?._id || statuses[0]._id;
 
-    // Resolve project type — use the only one if there's one, error if ambiguous
+    // Resolve project type
     const projectTypes = await client.findAll(task.class.ProjectType, {});
     if (!projectTypes.length) {
       throw new Error('No project types found in workspace. Configure project types in workspace settings first.');
     }
-    if (projectTypes.length > 1) {
+    let resolvedProjectType;
+    if (projectType) {
+      resolvedProjectType = projectTypes.find(pt =>
+        (pt.name && pt.name.toLowerCase() === projectType.toLowerCase()) || pt._id === projectType
+      );
+      if (!resolvedProjectType) {
+        const available = projectTypes.map(pt => pt.name || pt._id).join(', ');
+        throw new Error(`Project type "${projectType}" not found. Available: ${available}`);
+      }
+    } else if (projectTypes.length === 1) {
+      resolvedProjectType = projectTypes[0];
+    } else {
       const available = projectTypes.map(pt => pt.name || pt._id).join(', ');
-      throw new Error(`Multiple project types found: ${available}. Specify one explicitly.`);
+      throw new Error(`Multiple project types found: ${available}. Specify projectType explicitly.`);
     }
-    const defaultProjectType = projectTypes[0];
 
     const projectId = generateId();
     await client.createDoc(tracker.class.Project, projectId, {
@@ -2720,7 +2728,7 @@ export class HulyClient {
       defaultIssueStatus: defaultStatusId,
       defaultTimeReportDay: 0,
       issues: 0,
-      type: defaultProjectType._id
+      type: resolvedProjectType._id
     }, projectId);
 
     return {

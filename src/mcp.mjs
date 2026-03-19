@@ -836,6 +836,7 @@ const TOOLS = [
         description: { type: 'string', description: 'Project description' },
         descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Description format (default: markdown)' },
         private: { type: 'boolean', description: 'Whether the project is private (default: false)' },
+        projectType: { type: 'string', description: 'Project type name (e.g., "Classic project"). Auto-resolved if workspace has only one type.' },
         ...workspaceProp
       },
       required: ['name']
