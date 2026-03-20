@@ -1,5 +1,6 @@
 # Huly MCP Server
 
+[![npm](https://img.shields.io/npm/v/@bgx4k3p/huly-mcp-server?logo=npm&logoColor=white)](https://www.npmjs.com/package/@bgx4k3p/huly-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22+-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
