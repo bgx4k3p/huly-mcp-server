@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,7 @@
   },
   "files": [
     "src/",
+    "scripts/patch-sdk.mjs",
     "LICENSE",
     "README.md"
   ],
@@ -37,7 +38,8 @@
     "test": "HULY_TRANSPORT=ws node --test test/integration.test.mjs && HULY_TRANSPORT=rest node --test test/integration.test.mjs",
     "test:ws": "HULY_TRANSPORT=ws node --test test/integration.test.mjs",
     "test:rest": "HULY_TRANSPORT=rest node --test test/integration.test.mjs",
-    "postinstall": "node scripts/patch-sdk.mjs"
+    "postinstall": "node scripts/patch-sdk.mjs",
+    "pack": "node scripts/pack.mjs"
   },
   "dependencies": {
     "@hcengineering/api-client": "^0.7.3",
@@ -48,5 +50,13 @@
     "@hcengineering/tracker": "^0.7.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "jsdom": "^29.0.0"
-  }
+  },
+  "bundleDependencies": [
+    "@hcengineering/api-client",
+    "@hcengineering/chunter",
+    "@hcengineering/core",
+    "@hcengineering/tags",
+    "@hcengineering/task",
+    "@hcengineering/tracker"
+  ]
 }
