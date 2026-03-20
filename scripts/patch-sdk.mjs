@@ -9,8 +9,15 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { createRequire } from 'module';
 
-const require = createRequire(import.meta.url);
-const restPath = require.resolve('@hcengineering/api-client').replace(/index\.js$/, 'rest/rest.js');
+let restPath;
+try {
+  const require = createRequire(import.meta.url);
+  restPath = require.resolve('@hcengineering/api-client').replace(/index\.js$/, 'rest/rest.js');
+} catch {
+  // Bundled install — SDK is pre-patched, skip
+  console.log('SDK patch: skipped (bundled install)');
+  process.exit(0);
+}
 
 let src = readFileSync(restPath, 'utf8');
 let patched = false;

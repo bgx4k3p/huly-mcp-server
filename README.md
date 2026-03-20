@@ -21,15 +21,36 @@ VS Code, n8n, and any MCP client.
 
 ## Install
 
+### From npm
+
+```bash
+npm install @bgx4k3p/huly-mcp-server
+```
+
+Or run directly with npx:
+
+```bash
+npx @bgx4k3p/huly-mcp-server
+```
+
+### From source
+
 ```bash
 git clone https://github.com/bgx4k3p/huly-mcp-server.git
 cd huly-mcp-server
 npm install
 ```
 
-> **Note:** The Huly SDK publishes packages with pnpm `workspace:`
-> protocol in transitive dependencies, which prevents `npx` and
-> global npm installs from working. Clone from source is required.
+### Publishing
+
+The Huly SDK has `workspace:` protocol references in transitive
+dependencies on the npm registry. The custom pack script bundles
+only the needed SDK packages and prunes UI bloat (32MB to 4MB):
+
+```bash
+npm run pack
+npm publish bgx4k3p-huly-mcp-server-<version>.tgz --access public
+```
 
 ---
 
