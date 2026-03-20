@@ -24,6 +24,7 @@ const require = createRequire(import.meta.url);
 // Direct file requires to bypass package.json exports restrictions
 const { getWorkspaceToken } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/utils.js'));
 const { createRestTxOperations } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/rest/tx.js'));
+const { connect: connectWs } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/client.js'));
 const { getClient: getAccountClient } = require('@hcengineering/account-client');
 const { loadServerConfig: loadConfig } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/config.js'));
 const { generateId } = require('@hcengineering/core');
@@ -436,6 +437,7 @@ export class HulyClient {
     this.password = password || null;
     this.workspace = workspace;
     this._client = null;
+    this._platformClient = null;
     this._connectionPromise = null;
     this._collabClient = null;
     this._workspaceId = null;
@@ -443,7 +445,8 @@ export class HulyClient {
   }
 
   /**
-   * Establish a REST client connection to Huly.
+   * Establish a client connection to Huly.
+   * Transport is chosen via HULY_TRANSPORT env var: 'ws' (default) or 'rest'.
    * @returns {Promise<void>}
    */
   async connect() {
@@ -462,34 +465,49 @@ export class HulyClient {
         throw new Error('Missing required auth: set HULY_TOKEN or HULY_EMAIL + HULY_PASSWORD');
       }
 
+      const transport = (process.env.HULY_TRANSPORT || 'ws').toLowerCase();
       const authOpts = this.token
         ? { token: this.token, workspace: this.workspace }
         : { email: this.email, password: this.password, workspace: this.workspace };
 
       this._serverConfig = await loadConfig(this.url);
-      const { endpoint, token, workspaceId } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
-      this._workspaceId = workspaceId;
-      this._wsToken = token;
 
-      // Extract authenticated account UUID from JWT for ownership
-      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-      this._accountUuid = payload.account;
-      if (!this._accountUuid) {
-        throw new Error('Workspace token missing account field');
+      if (transport === 'ws') {
+        // WebSocket transport — full SDK support including Space creation
+        const platformClient = await connectWs(this.url, authOpts);
+        this._client = platformClient.client;
+        this._platformClient = platformClient;
+
+        // Extract account UUID from the platform client
+        const account = await platformClient.getAccount();
+        this._accountUuid = account.uuid;
+
+        // Get workspace ID from server config for collaborator client
+        const { workspaceId, token } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
+        this._workspaceId = workspaceId;
+        this._wsToken = token;
+      } else {
+        // REST transport — lightweight, no WebSocket dependency
+        const { endpoint, token, workspaceId } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
+        this._workspaceId = workspaceId;
+        this._wsToken = token;
+
+        // Extract authenticated account UUID from JWT for ownership
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+        this._accountUuid = payload.account;
+        if (!this._accountUuid) {
+          throw new Error('Workspace token missing account field');
+        }
+
+        this._client = await createRestTxOperations(endpoint, workspaceId, token);
       }
-
-      this._client = await createRestTxOperations(endpoint, workspaceId, token);
 
       // Initialize collaborator client for rich text (issue descriptions)
       const collabUrl = (this._serverConfig.COLLABORATOR_URL || '')
         .replace('wss://', 'https://').replace('ws://', 'http://');
       if (collabUrl) {
-        this._collabClient = getCollaboratorClient(workspaceId, token, collabUrl);
+        this._collabClient = getCollaboratorClient(this._workspaceId, this._wsToken, collabUrl);
       }
-
-      // SDK bug note: RestClientImpl.findAll crashes when lookupMap has null
-      // entries (workspaces with custom task types). Fixed via postinstall
-      // patch in scripts/patch-sdk.mjs. See hcengineering/huly.core#17.
     })();
 
     try {
@@ -503,6 +521,10 @@ export class HulyClient {
    * Disconnect and clear the cached client.
    */
   disconnect() {
+    if (this._platformClient) {
+      this._platformClient.close().catch(() => {});
+      this._platformClient = null;
+    }
     this._client = null;
     this._connectionPromise = null;
     this._collabClient = null;
@@ -3119,7 +3141,7 @@ export class HulyClient {
 
   // ── Project Management ──────────────────────────────────────
 
-  async createProject(identifier, name, description, isPrivate = false, format, projectType) {
+  async createProject(identifier, name, description, isPrivate = false, _format, projectType) {
     const client = await this._getClient();
 
     identifier = identifier.toUpperCase();
@@ -3168,7 +3190,7 @@ export class HulyClient {
     await client.createDoc(tracker.class.Project, projectId, {
       identifier,
       name: name || identifier,
-      description: toMarkup(description || '', format),
+      description: description || '',
       private: isPrivate,
       members: [],
       owners,
@@ -3204,7 +3226,7 @@ export class HulyClient {
 
     const ops = {};
     if (updates.name !== undefined) ops.name = updates.name;
-    if (updates.description !== undefined) ops.description = toMarkup(updates.description, updates.descriptionFormat);
+    if (updates.description !== undefined) ops.description = updates.description;
     if (updates.isPrivate !== undefined) ops.private = updates.isPrivate;
     if (updates.defaultAssignee !== undefined) {
       if (updates.defaultAssignee === '') {

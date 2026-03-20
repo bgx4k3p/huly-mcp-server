@@ -12,6 +12,8 @@ const HULY_CREDS = process.env.HULY_TOKEN
 process.env.HULY_URL = HULY_URL;
 process.env.HULY_WORKSPACE = process.env.HULY_WORKSPACE || 'default';
 const WORKSPACE = process.env.HULY_WORKSPACE;
+const TRANSPORT = process.env.HULY_TRANSPORT || 'ws';
+console.log(`\n  Transport: ${TRANSPORT.toUpperCase()}\n`);
 
 // ════════════════════════════════════════════════════════════════
 // 1. UNIT TESTS (no Huly connection needed)
@@ -2232,43 +2234,62 @@ describe('Mock Tests (destructive methods)', { timeout: 30_000 }, () => {
 });
 
 // ════════════════════════════════════════════════════════════════
-// 4. HTTP SERVER TESTS (start server, hit endpoints)
+// 4. STREAMABLE HTTP MCP SERVER TESTS
 // ════════════════════════════════════════════════════════════════
 
-describe('HTTP Server Tests', { timeout: 120_000 }, () => {
+describe('Streamable HTTP MCP Server Tests', { timeout: 120_000 }, () => {
   let server;
   let baseUrl;
   let port;
-  const httpTestIssueIds = [];
+  let sessionId;
 
   /**
-   * Make an HTTP request and return { status, headers, body }.
+   * Send a JSON-RPC request to the MCP endpoint and parse the SSE response.
    */
-  async function request(method, path, body, headers = {}) {
-    const url = `${baseUrl}${path}`;
-    const opts = {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...headers
-      }
+  async function mcpRequest(method, params = {}, headers = {}) {
+    const allHeaders = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      ...headers
     };
-    if (body) {
-      opts.body = JSON.stringify(body);
-    }
-    const res = await fetch(url, opts);
+    if (sessionId) allHeaders['Mcp-Session-Id'] = sessionId;
+
+    const res = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: allHeaders,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Math.floor(Math.random() * 100000),
+        method,
+        params
+      })
+    });
+
+    // Capture session ID from response
+    const sid = res.headers.get('mcp-session-id');
+    if (sid) sessionId = sid;
+
     const text = await res.text();
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = text;
-    }
+    // Parse SSE format: "event: message\ndata: {...}\n\n"
+    const dataLine = text.split('\n').find(l => l.startsWith('data: '));
+    const body = dataLine ? JSON.parse(dataLine.replace('data: ', '')) : JSON.parse(text);
+
     return {
       status: res.status,
       headers: Object.fromEntries(res.headers.entries()),
-      body: json
+      body
     };
+  }
+
+  /**
+   * Make a plain HTTP request (for health check, etc.).
+   */
+  async function httpRequest(method, path) {
+    const res = await fetch(`${baseUrl}${path}`, { method });
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = text; }
+    return { status: res.status, headers: Object.fromEntries(res.headers.entries()), body: json };
   }
 
   before(async () => {
@@ -2276,70 +2297,48 @@ describe('HTTP Server Tests', { timeout: 120_000 }, () => {
     port = 30000 + Math.floor(Math.random() * 20000);
     baseUrl = `http://127.0.0.1:${port}`;
 
-    // We need to start the server in a child process to isolate its module scope
     const { spawn } = await import('child_process');
 
     await new Promise((resolve, reject) => {
-      const env = {
-        ...process.env,
-        PORT: String(port),
-        HULY_URL,
-        HULY_WORKSPACE: WORKSPACE,
-        MCP_AUTH_TOKEN: '',  // No token auth for main tests
-      };
-      // Remove MCP_AUTH_TOKEN to disable auth
+      const env = { ...process.env, PORT: String(port), HULY_URL, HULY_WORKSPACE: WORKSPACE };
       delete env.MCP_AUTH_TOKEN;
 
       server = spawn('node', ['src/server.mjs'], {
-        cwd: '/Users/bgx4k3p/Developer/huly-mcp-server',
+        cwd: process.cwd(),
         env,
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
       let started = false;
-
+      server.stdout.on('data', (data) => {
+        if (!started && data.toString().includes('listening')) { started = true; resolve(); }
+      });
       server.stderr.on('data', (data) => {
-        const msg = data.toString();
-        if (!started && msg.includes('listening')) {
-          started = true;
-          resolve();
-        }
+        if (!started && data.toString().includes('listening')) { started = true; resolve(); }
       });
-
       server.on('error', reject);
-      server.on('exit', (code) => {
-        if (!started) reject(new Error(`Server exited with code ${code}`));
-      });
-
-      // Timeout: if server doesn't start in 30s, fail
-      setTimeout(() => {
-        if (!started) reject(new Error('Server start timeout'));
-      }, 30000);
+      server.on('exit', (code) => { if (!started) reject(new Error(`Server exited with code ${code}`)); });
+      setTimeout(() => { if (!started) reject(new Error('Server start timeout')); }, 30000);
     });
 
-    // Create test project via the HTTP API
-    const createRes = await request('POST', '/api/projects', {
-      identifier: PROJECT,
-      name: 'MCP Test Project',
-      description: 'Automated HTTP test project'
+    // Initialize MCP session
+    const initRes = await mcpRequest('initialize', {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'test', version: '1.0' }
     });
-    // 200 = created, or it already exists from integration tests
-    if (createRes.status !== 200 && createRes.status !== 201) {
-      // If it errors with "already exists", that's fine
-      if (!JSON.stringify(createRes.body).includes('already exists')) {
-        throw new Error(`Failed to create test project: ${JSON.stringify(createRes.body)}`);
-      }
-    }
+    assert.ok(initRes.body.result, 'Should return init result');
+    assert.ok(sessionId, 'Should have session ID');
   });
 
   after(async () => {
-    // Delete test project (cleans up all test data)
-    try {
-      await request('DELETE', `/api/projects/${PROJECT}`);
-    } catch {
-      // best effort
+    if (sessionId) {
+      // Terminate session
+      await fetch(`${baseUrl}/mcp`, {
+        method: 'DELETE',
+        headers: { 'Mcp-Session-Id': sessionId }
+      }).catch(() => {});
     }
-
     if (server) {
       server.kill('SIGTERM');
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -2351,37 +2350,90 @@ describe('HTTP Server Tests', { timeout: 120_000 }, () => {
 
   describe('GET /health', () => {
     it('returns 200 with status ok', async () => {
-      const res = await request('GET', '/health');
+      const res = await httpRequest('GET', '/health');
       assert.equal(res.status, 200);
       assert.equal(res.body.status, 'ok');
-      assert.ok(res.body.timestamp, 'Should include a timestamp');
+      assert.equal(res.body.transport, 'streamable-http');
+      assert.ok(res.body.timestamp);
     });
   });
 
-  // ── OpenAPI spec ────────────────────────────────────────────
+  // ── MCP Protocol ──────────────────────────────────────────
 
-  describe('GET /api/openapi.json', () => {
-    it('returns the OpenAPI spec', async () => {
-      const res = await request('GET', '/api/openapi.json');
-      assert.equal(res.status, 200);
-      assert.equal(res.body.openapi, '3.0.3');
-      assert.ok(res.body.paths, 'Should have paths');
-      assert.ok(res.body.paths['/health'], 'Should have /health path');
-      assert.ok(res.body.paths['/api/projects'], 'Should have /api/projects path');
+  describe('tools/list', () => {
+    it('returns all tools', async () => {
+      const res = await mcpRequest('tools/list');
+      assert.ok(res.body.result.tools);
+      assert.ok(res.body.result.tools.length > 70, `Expected 70+ tools, got ${res.body.result.tools.length}`);
+      const names = res.body.result.tools.map(t => t.name);
+      assert.ok(names.includes('list_projects'));
+      assert.ok(names.includes('create_issue'));
+      assert.ok(names.includes('search_issues'));
+    });
+  });
+
+  describe('tools/call — list_projects', () => {
+    it('returns projects via MCP tool call', async () => {
+      const res = await mcpRequest('tools/call', {
+        name: 'list_projects',
+        arguments: {}
+      });
+      assert.ok(res.body.result.content);
+      const data = JSON.parse(res.body.result.content[0].text);
+      assert.ok(Array.isArray(data));
+    });
+  });
+
+  describe('tools/call — list_statuses', () => {
+    it('returns statuses for a project', async () => {
+      const res = await mcpRequest('tools/call', {
+        name: 'list_statuses',
+        arguments: { project: EXISTING_PROJECT }
+      });
+      assert.ok(res.body.result.content);
+      const data = JSON.parse(res.body.result.content[0].text);
+      assert.ok(Array.isArray(data));
+      assert.ok(data.length > 0);
+    });
+  });
+
+  describe('tools/call — unknown tool', () => {
+    it('returns error for unknown tool', async () => {
+      const res = await mcpRequest('tools/call', {
+        name: 'nonexistent_tool',
+        arguments: {}
+      });
+      assert.ok(res.body.result.isError);
+    });
+  });
+
+  describe('resources/list', () => {
+    it('returns project resources', async () => {
+      const res = await mcpRequest('resources/list');
+      assert.ok(res.body.result.resources);
+      assert.ok(Array.isArray(res.body.result.resources));
+    });
+  });
+
+  describe('resources/templates/list', () => {
+    it('returns resource templates', async () => {
+      const res = await mcpRequest('resources/templates/list');
+      assert.ok(res.body.result.resourceTemplates);
+      const templates = res.body.result.resourceTemplates;
+      assert.ok(templates.find(t => t.uriTemplate.includes('projects')));
+      assert.ok(templates.find(t => t.uriTemplate.includes('issues')));
     });
   });
 
   // ── Auth rejection ──────────────────────────────────────────
 
   describe('Auth rejection', () => {
-    it('rejects requests when MCP_AUTH_TOKEN is set and no token provided', async () => {
-      // Start a second server with auth enabled on a different port
+    it('rejects MCP requests when MCP_AUTH_TOKEN is set and no token provided', async () => {
       const { spawn } = await import('child_process');
       const authPort = port + 1;
-      const authBaseUrl = `http://127.0.0.1:${authPort}`;
 
       const authServer = spawn('node', ['src/server.mjs'], {
-        cwd: '/Users/bgx4k3p/Developer/huly-mcp-server',
+        cwd: process.cwd(),
         env: {
           ...process.env,
           PORT: String(authPort),
@@ -2392,39 +2444,45 @@ describe('HTTP Server Tests', { timeout: 120_000 }, () => {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
-      // Wait for startup
       await new Promise((resolve, reject) => {
         let started = false;
-        authServer.stderr.on('data', (data) => {
-          if (!started && data.toString().includes('listening')) {
-            started = true;
-            resolve();
-          }
-        });
+        const onData = (data) => {
+          if (!started && data.toString().includes('listening')) { started = true; resolve(); }
+        };
+        authServer.stdout.on('data', onData);
+        authServer.stderr.on('data', onData);
         authServer.on('error', reject);
         setTimeout(() => { if (!started) reject(new Error('Auth server timeout')); }, 15000);
       });
 
       try {
-        // Request without token
-        const noAuthRes = await fetch(`${authBaseUrl}/api/projects`);
-        assert.equal(noAuthRes.status, 401);
-
-        // Request with wrong token
-        const wrongRes = await fetch(`${authBaseUrl}/api/projects`, {
-          headers: { 'Authorization': 'Bearer wrong-token' }
+        // No token → 401
+        const noAuth = await fetch(`http://127.0.0.1:${authPort}/mcp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
         });
-        assert.equal(wrongRes.status, 401);
+        assert.equal(noAuth.status, 401);
 
-        // Request with correct token
-        const goodRes = await fetch(`${authBaseUrl}/api/projects`, {
-          headers: { 'Authorization': 'Bearer test-secret-token-12345' }
+        // Wrong token → 401
+        const wrongAuth = await fetch(`http://127.0.0.1:${authPort}/mcp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'Authorization': 'Bearer wrong' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
         });
-        assert.equal(goodRes.status, 200);
+        assert.equal(wrongAuth.status, 401);
 
-        // Health check should work without auth
-        const healthRes = await fetch(`${authBaseUrl}/health`);
-        assert.equal(healthRes.status, 200);
+        // Correct token → 200
+        const goodAuth = await fetch(`http://127.0.0.1:${authPort}/mcp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'Authorization': 'Bearer test-secret-token-12345' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } } })
+        });
+        assert.equal(goodAuth.status, 200);
+
+        // Health check works without auth
+        const health = await fetch(`http://127.0.0.1:${authPort}/health`);
+        assert.equal(health.status, 200);
       } finally {
         authServer.kill('SIGTERM');
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -2436,606 +2494,20 @@ describe('HTTP Server Tests', { timeout: 120_000 }, () => {
   // ── Rate limit headers ──────────────────────────────────────
 
   describe('Rate limit headers', () => {
-    it('includes rate limit headers in response', async () => {
-      const res = await request('GET', '/api/projects');
-      assert.ok(res.headers['x-ratelimit-limit'], 'Should have X-RateLimit-Limit header');
+    it('includes rate limit headers on MCP requests', async () => {
+      const res = await mcpRequest('tools/list');
+      assert.ok(res.headers['x-ratelimit-limit'], 'Should have X-RateLimit-Limit');
       assert.ok(res.headers['x-ratelimit-remaining'] !== undefined, 'Should have X-RateLimit-Remaining');
-      assert.ok(res.headers['x-ratelimit-reset'], 'Should have X-RateLimit-Reset header');
+      assert.ok(res.headers['x-ratelimit-reset'], 'Should have X-RateLimit-Reset');
     });
   });
 
-  // ── GET /api/projects ───────────────────────────────────────
-
-  describe('GET /api/projects', () => {
-    it('returns projects array including OPS', async () => {
-      const res = await request('GET', '/api/projects');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-      const ops = res.body.find(p => p.identifier === PROJECT);
-      assert.ok(ops, `Should find ${PROJECT}`);
-    });
-  });
-
-  // ── GET /api/projects/MCPT/summary ───────────────────────────
-
-  describe('GET /api/projects/MCPT/summary', () => {
-    it('returns project summary', async () => {
-      const res = await request('GET', `/api/projects/${PROJECT}/summary`);
-      assert.equal(res.status, 200);
-      assert.ok(res.body, 'Should return a body');
-      assert.ok(
-        typeof res.body.totalIssues === 'number' || typeof res.body.total === 'number',
-        'Should have a total issue count'
-      );
-    });
-  });
-
-  // ── Account-level HTTP routes ───────────────────────────────
-
-  describe('GET /api/workspaces', () => {
-    it('returns workspaces array', async () => {
-      const res = await request('GET', '/api/workspaces');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-      assert.ok(res.body.length >= 3);
-      const slugs = res.body.map(w => w.slug);
-      assert.ok(slugs.includes(WORKSPACE));
-    });
-  });
-
-  describe('GET /api/profile', () => {
-    it('returns user profile', async () => {
-      const res = await request('GET', '/api/profile');
-      assert.equal(res.status, 200);
-      assert.ok(res.body.uuid || res.body.firstName);
-    });
-  });
-
-  describe('GET /api/social-ids', () => {
-    it('returns social IDs', async () => {
-      const res = await request('GET', '/api/social-ids');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  // ── POST create + GET retrieve issue via REST ───────────────
-
-  describe('Create and retrieve issue via REST', () => {
-    let createdIssueNumber;
-
-    it('POST creates a new issue', async () => {
-      const res = await request('POST', `/api/projects/${PROJECT}/issues`, {
-        title: `${TEST_PREFIX} HTTP server test issue`,
-        description: 'Created via HTTP server integration test.',
-        priority: 'low'
-      });
-      assert.equal(res.status, 201);
-      assert.ok(res.body.id, 'Should return issue id');
-      assert.ok(res.body.id.startsWith(`${PROJECT}-`));
-
-      createdIssueNumber = res.body.id.split('-')[1];
-      httpTestIssueIds.push(res.body.id);
-    });
-
-    it('GET retrieves the created issue', async () => {
-      assert.ok(createdIssueNumber, 'Issue must have been created');
-      const res = await request('GET', `/api/projects/${PROJECT}/issues/${createdIssueNumber}`);
-      assert.equal(res.status, 200);
-      assert.ok(res.body.title.includes(TEST_PREFIX));
-    });
-  });
-
-  // ── Account-level HTTP routes ──────────────────────────────
-
-  describe('GET /api/account', () => {
-    it('returns account info', async () => {
-      const res = await request('GET', '/api/account');
-      assert.equal(res.status, 200);
-      assert.ok(typeof res.body === 'object');
-    });
-  });
-
-  describe('GET /api/mailboxes', () => {
-    it('returns mailboxes array', async () => {
-      const res = await request('GET', '/api/mailboxes');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  describe('GET /api/integrations', () => {
-    it('returns integrations array', async () => {
-      const res = await request('GET', '/api/integrations');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  describe('GET /api/subscriptions', () => {
-    it('returns subscriptions or error', async () => {
-      const res = await request('GET', '/api/subscriptions');
-      // May fail on self-hosted (no billing), accept 200 or 500
-      assert.ok([200, 500].includes(res.status));
-    });
-  });
-
-  describe('GET /api/workspaces/:slug/info', () => {
-    it('returns workspace info', async () => {
-      const res = await request('GET', `/api/workspaces/${WORKSPACE}/info`);
-      assert.equal(res.status, 200);
-      assert.equal(res.body.slug, WORKSPACE);
-      assert.equal(res.body.mode, 'active');
-    });
-  });
-
-  describe('GET /api/workspaces/:slug/members', () => {
-    it('returns members for test workspace', async () => {
-      const res = await request('GET', `/api/workspaces/${WORKSPACE}/members`);
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-      assert.ok(res.body.length >= 1);
-    });
-  });
-
-  // ── Workspace-level routes ─────────────────────────────────
-
-  describe('GET /api/projects/:identifier', () => {
-    it('returns OPS project details', async () => {
-      const res = await request('GET', '/api/projects/OPS');
-      assert.equal(res.status, 200);
-      assert.equal(res.body.identifier, 'OPS');
-    });
-  });
-
-  describe('GET /api/projects/MCPT/issues (with filters)', () => {
-    it('returns issues with limit', async () => {
-      const res = await request('GET', '/api/projects/MCPT/issues?limit=5');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-      assert.ok(res.body.length <= 5);
-    });
-  });
-
-  describe('PATCH /api/issues/:issueId', () => {
-    it('updates an issue', async () => {
-      // Use the issue created in the earlier REST test
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('PATCH', `/api/issues/${issueId}`, {
-        title: `${TEST_PREFIX} HTTP updated issue`
-      });
-      assert.equal(res.status, 200);
-      assert.ok(res.body.updated || res.body.id);
-    });
-  });
-
-  describe('GET /api/statuses', () => {
-    it('returns statuses array', async () => {
-      const res = await request('GET', '/api/statuses');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-      assert.ok(res.body.length > 0);
-    });
-  });
-
-  describe('GET /api/members', () => {
-    it('returns members array', async () => {
-      const res = await request('GET', '/api/members');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-      assert.ok(res.body.length > 0);
-    });
-  });
-
-  describe('GET /api/labels', () => {
-    it('returns labels array', async () => {
-      const res = await request('GET', '/api/labels');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  describe('POST /api/labels', () => {
-    it('creates a label', async () => {
-      const res = await request('POST', '/api/labels', {
-        name: `${TEST_PREFIX}-http-label-${Date.now()}`
-      });
-      assert.equal(res.status, 201);
-      assert.ok(res.body.id || res.body.message);
-    });
-  });
-
-  describe('GET /api/projects/MCPT/task-types', () => {
-    it('returns task types', async () => {
-      const res = await request('GET', '/api/projects/MCPT/task-types');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-      assert.ok(res.body.length > 0);
-    });
-  });
-
-  describe('GET /api/projects/MCPT/milestones', () => {
-    it('returns milestones array', async () => {
-      const res = await request('GET', '/api/projects/MCPT/milestones');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  describe('GET /api/search', () => {
-    it('searches issues by query', async () => {
-      const res = await request('GET', '/api/search?query=test&limit=5');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-
-    it('returns 400 without query param', async () => {
-      const res = await request('GET', '/api/search');
-      assert.equal(res.status, 400);
-    });
-  });
-
-  describe('GET /api/my-issues', () => {
-    it('returns issues assigned to current user', async () => {
-      const res = await request('GET', '/api/my-issues');
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  describe('Issue labels via REST', () => {
-    it('adds and removes a label on an issue', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-
-      // Add label
-      const addRes = await request('POST', `/api/issues/${issueId}/labels`, {
-        label: 'http-test-label'
-      });
-      assert.equal(addRes.status, 200);
-
-      // Remove label
-      const removeRes = await request('DELETE', `/api/issues/${issueId}/labels/http-test-label`);
-      assert.equal(removeRes.status, 200);
-    });
-  });
-
-  describe('Issue comments via REST', () => {
-    it('adds and lists comments', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-
-      // Add comment
-      const addRes = await request('POST', `/api/issues/${issueId}/comments`, {
-        text: 'HTTP test comment'
-      });
-      assert.equal(addRes.status, 201);
-
-      // List comments
-      const listRes = await request('GET', `/api/issues/${issueId}/comments`);
-      assert.equal(listRes.status, 200);
-      assert.ok(Array.isArray(listRes.body));
-      assert.ok(listRes.body.length >= 1);
-    });
-  });
-
-  describe('Issue due date via REST', () => {
-    it('sets a due date', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('PATCH', `/api/issues/${issueId}/due-date`, {
-        dueDate: '2026-12-31'
-      });
-      assert.equal(res.status, 200);
-    });
-  });
-
-  describe('Issue estimation via REST', () => {
-    it('sets estimation', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('PATCH', `/api/issues/${issueId}/estimation`, {
-        hours: 8
-      });
-      assert.equal(res.status, 200);
-    });
-  });
-
-  describe('Issue time logs via REST', () => {
-    it('logs time', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('POST', `/api/issues/${issueId}/time-logs`, {
-        hours: 2,
-        description: 'HTTP test time log'
-      });
-      assert.equal(res.status, 201);
-    });
-  });
-
-  describe('Issue assignee via REST', () => {
-    it('assigns and unassigns', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-
-      // Get a member name
-      const membersRes = await request('GET', '/api/members');
-      if (membersRes.body.length === 0) return;
-      const memberName = membersRes.body[0].name;
-
-      // Assign
-      const assignRes = await request('PATCH', `/api/issues/${issueId}/assignee`, {
-        assignee: memberName
-      });
-      assert.equal(assignRes.status, 200);
-
-      // Unassign
-      const unassignRes = await request('PATCH', `/api/issues/${issueId}/assignee`, {
-        assignee: ''
-      });
-      assert.equal(unassignRes.status, 200);
-    });
-  });
-
-  describe('Issue relations via REST', () => {
-    let secondIssueId;
-
-    before(async () => {
-      const res = await request('POST', '/api/projects/MCPT/issues', {
-        title: `${TEST_PREFIX} HTTP relation target`
-      });
-      secondIssueId = res.body.id;
-      httpTestIssueIds.push(secondIssueId);
-    });
-
-    it('adds a relation', async () => {
-      if (httpTestIssueIds.length < 2) return;
-      const res = await request('POST', `/api/issues/${httpTestIssueIds[0]}/relations`, {
-        relatedToIssueId: secondIssueId
-      });
-      assert.equal(res.status, 200);
-    });
-
-    it('adds a blocked-by', async () => {
-      if (httpTestIssueIds.length < 2) return;
-      const res = await request('POST', `/api/issues/${httpTestIssueIds[0]}/blocked-by`, {
-        blockedByIssueId: secondIssueId
-      });
-      assert.equal(res.status, 200);
-    });
-
-    it('sets parent', async () => {
-      if (httpTestIssueIds.length < 2) return;
-      const res = await request('POST', `/api/issues/${secondIssueId}/parent`, {
-        parentIssueId: httpTestIssueIds[0]
-      });
-      assert.equal(res.status, 200);
-    });
-  });
-
-  describe('Issue history via REST', () => {
-    it('returns issue history', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('GET', `/api/issues/${issueId}/history`);
-      assert.equal(res.status, 200);
-      assert.ok(typeof res.body === 'object');
-    });
-  });
-
-  describe('Issue move via REST', () => {
-    it('move to same project returns already message', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('POST', `/api/issues/${issueId}/move`, {
-        targetProject: PROJECT
-      });
-      assert.equal(res.status, 200);
-      assert.ok(res.body.message.includes('already'));
-    });
-  });
-
-  describe('Batch create issues via REST', () => {
-    it('creates multiple issues', async () => {
-      const res = await request('POST', '/api/projects/MCPT/batch-issues', {
-        issues: [
-          { title: `${TEST_PREFIX} HTTP batch 1` },
-          { title: `${TEST_PREFIX} HTTP batch 2` }
-        ]
-      });
-      assert.equal(res.status, 201);
-      assert.ok(res.body.total >= 2 || (res.body.created && res.body.created.length >= 2));
-
-      // Collect for cleanup
-      const created = res.body.created || [];
-      for (const item of created) {
-        if (item.id) httpTestIssueIds.push(item.id);
-      }
-    });
-  });
-
-  describe('Create from template via REST', () => {
-    it('creates issues from sprint template', async () => {
-      const res = await request('POST', '/api/projects/MCPT/template', {
-        template: 'sprint',
-        title: `${TEST_PREFIX} HTTP Sprint`
-      });
-      assert.equal(res.status, 201);
-      assert.ok(res.body.total >= 1 || (res.body.created && res.body.created.length >= 1));
-
-      // Collect for cleanup
-      const created = res.body.created || [];
-      for (const item of created) {
-        if (item.id) httpTestIssueIds.push(item.id);
-      }
-    });
-  });
-
-  describe('Milestone via REST', () => {
-    const msName = `${TEST_PREFIX}-http-ms-${Date.now()}`;
-
-    it('creates a milestone', async () => {
-      const res = await request('POST', '/api/projects/MCPT/milestones', {
-        name: msName,
-        description: 'HTTP test milestone'
-      });
-      assert.equal(res.status, 201);
-    });
-
-    it('gets the milestone', async () => {
-      const res = await request('GET', `/api/projects/MCPT/milestones/${encodeURIComponent(msName)}`);
-      assert.equal(res.status, 200);
-      assert.equal(res.body.name, msName);
-    });
-
-    it('sets milestone on an issue', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('PATCH', `/api/issues/${issueId}/milestone`, {
-        milestone: msName
-      });
-      assert.equal(res.status, 200);
-    });
-
-    it('clears milestone from issue', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const issueId = httpTestIssueIds[0];
-      const res = await request('PATCH', `/api/issues/${issueId}/milestone`, {
-        milestone: ''
-      });
-      assert.equal(res.status, 200);
-    });
-  });
+  // ── 404 for unknown routes ─────────────────────────────────
 
   describe('404 for unknown routes', () => {
     it('returns 404 for unknown path', async () => {
-      const res = await request('GET', '/api/nonexistent');
+      const res = await httpRequest('GET', '/api/nonexistent');
       assert.equal(res.status, 404);
-    });
-  });
-
-  describe('SSE endpoint', () => {
-    it('connects to event stream', async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-
-      try {
-        const res = await fetch(`${baseUrl}/api/events`, { signal: controller.signal });
-        assert.equal(res.status, 200);
-        assert.equal(res.headers.get('content-type'), 'text/event-stream');
-      } catch (e) {
-        if (e.name !== 'AbortError') throw e;
-      } finally {
-        clearTimeout(timeout);
-        controller.abort();
-      }
-    });
-  });
-
-  // ── Component listing via REST ───────────────────────────────
-
-  describe('Component listing via REST', () => {
-    it('lists components', async () => {
-      const res = await request('GET', `/api/projects/${PROJECT}/components`);
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  // ── Time reports via REST ──────────────────────────────────
-
-  describe('Time reports via REST', () => {
-    it('lists time reports for an issue', async () => {
-      if (httpTestIssueIds.length === 0) return;
-      const res = await request('GET', `/api/issues/${httpTestIssueIds[0]}/time-reports`);
-      assert.equal(res.status, 200);
-      assert.ok(Array.isArray(res.body));
-    });
-  });
-
-  // ── Comment update/delete via REST ─────────────────────────
-
-  describe('Comment update/delete via REST', () => {
-    let commentIssueId;
-    let commentId;
-
-    it('creates issue and comment', async () => {
-      const issueRes = await request('POST', `/api/projects/${PROJECT}/issues`, {
-        title: `${TEST_PREFIX} HTTP comment ops`
-      });
-      commentIssueId = issueRes.body.id;
-      httpTestIssueIds.push(commentIssueId);
-
-      const commentRes = await request('POST', `/api/issues/${commentIssueId}/comments`, {
-        text: 'Original'
-      });
-      assert.equal(commentRes.status, 201);
-      commentId = commentRes.body.id;
-    });
-
-    it('updates a comment', async () => {
-      if (!commentId) return;
-      const res = await request('PATCH', `/api/issues/${commentIssueId}/comments/${commentId}`, {
-        text: 'Updated via REST'
-      });
-      assert.equal(res.status, 200);
-    });
-
-    it('deletes a comment', async () => {
-      if (!commentId) return;
-      const res = await request('DELETE', `/api/issues/${commentIssueId}/comments/${commentId}`);
-      assert.equal(res.status, 200);
-    });
-  });
-
-  // ── Delete issue via REST ──────────────────────────────────
-
-  describe('DELETE /api/issues/:issueId', () => {
-    it('creates and deletes an issue', async () => {
-      const createRes = await request('POST', `/api/projects/${PROJECT}/issues`, {
-        title: `${TEST_PREFIX} HTTP delete me`
-      });
-      assert.equal(createRes.status, 201);
-      const id = createRes.body.id;
-
-      const deleteRes = await request('DELETE', `/api/issues/${id}`);
-      assert.equal(deleteRes.status, 200);
-      assert.ok(deleteRes.body.message.includes('deleted'));
-    });
-  });
-
-  // ── Project archive via REST ───────────────────────────────
-
-  describe('Project create + delete via REST', () => {
-    const tempProj = 'HTPR';
-
-    it('creates a temporary project', async () => {
-      const res = await request('POST', '/api/projects', {
-        identifier: tempProj, name: 'HTTP Temp Project'
-      });
-      assert.ok([200, 201].includes(res.status));
-    });
-
-    it('deletes the temporary project', async () => {
-      const res = await request('DELETE', `/api/projects/${tempProj}`);
-      assert.equal(res.status, 200);
-      assert.ok(res.body.message.includes('deleted'));
-    });
-  });
-
-  describe('OpenAPI spec completeness', () => {
-    it('documents all major route paths', async () => {
-      const res = await request('GET', '/api/openapi.json');
-      const paths = Object.keys(res.body.paths);
-      assert.ok(paths.includes('/api/projects'), 'Should have /api/projects');
-      assert.ok(paths.includes('/api/my-issues'), 'Should have /api/my-issues');
-      assert.ok(paths.includes('/api/search'), 'Should have /api/search');
-      assert.ok(paths.includes('/api/events'), 'Should have /api/events');
-      assert.ok(paths.includes('/api/members'), 'Should have /api/members');
-      assert.ok(paths.includes('/api/statuses'), 'Should have /api/statuses');
-      assert.ok(paths.includes('/api/labels'), 'Should have /api/labels');
-      assert.ok(paths.includes('/health'), 'Should have /health');
     });
   });
 });

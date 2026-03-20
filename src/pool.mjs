@@ -7,14 +7,10 @@
  */
 
 import { HulyClient } from './client.mjs';
-
-const HULY_URL = process.env.HULY_URL || 'http://localhost:8087';
-const HULY_TOKEN = process.env.HULY_TOKEN;
-const HULY_EMAIL = process.env.HULY_EMAIL;
-const HULY_PASSWORD = process.env.HULY_PASSWORD;
-const HULY_WORKSPACE = process.env.HULY_WORKSPACE;
-const POOL_TTL_MS = parseInt(process.env.HULY_POOL_TTL_MS || '1800000', 10); // 30 min default
-const CLEANUP_INTERVAL_MS = 300000; // 5 min
+import {
+  HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, HULY_WORKSPACE,
+  POOL_TTL_MS, POOL_CLEANUP_INTERVAL_MS
+} from './config.mjs';
 
 class ConnectionPool {
   constructor() {
@@ -22,7 +18,7 @@ class ConnectionPool {
     this._entries = new Map();
 
     // Periodic cleanup of stale connections
-    this._cleanupTimer = setInterval(() => this._evictStale(), CLEANUP_INTERVAL_MS);
+    this._cleanupTimer = setInterval(() => this._evictStale(), POOL_CLEANUP_INTERVAL_MS);
     if (this._cleanupTimer.unref) this._cleanupTimer.unref();
   }
 
