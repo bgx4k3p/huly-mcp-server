@@ -1,7 +1,7 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.0.2",
-  "description": "MCP and HTTP REST server for Huly issue tracking with multi-workspace support",
+  "version": "2.0.3",
+  "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
   "author": "bgx4k3p",
@@ -34,7 +34,9 @@
     "start": "node src/index.mjs",
     "start:mcp": "node src/mcp.mjs",
     "start:server": "node src/server.mjs",
-    "test": "node --test test/integration.test.mjs",
+    "test": "HULY_TRANSPORT=ws node --test test/integration.test.mjs && HULY_TRANSPORT=rest node --test test/integration.test.mjs",
+    "test:ws": "HULY_TRANSPORT=ws node --test test/integration.test.mjs",
+    "test:rest": "HULY_TRANSPORT=rest node --test test/integration.test.mjs",
     "postinstall": "node scripts/patch-sdk.mjs"
   },
   "dependencies": {

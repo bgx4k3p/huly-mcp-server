@@ -18,9 +18,31 @@ globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 0);
 globalThis.cancelAnimationFrame = clearTimeout;
 globalThis.CustomEvent = dom.window.CustomEvent;
 
-// Stub indexedDB (Huly SDK checks for it but doesn't require it for API operations)
+// Stub indexedDB — the Huly SDK's client-resources caches the model in IndexedDB.
+// The WebSocket transport needs onsuccess to fire with a fake DB so the model
+// loading promise resolves. REST transport doesn't use this but it's harmless.
 if (typeof globalThis.indexedDB === 'undefined') {
-  globalThis.indexedDB = { open: () => ({ result: null, onerror: null, onsuccess: null }) };
+  globalThis.indexedDB = {
+    open: () => {
+      const fakeDb = {
+        objectStoreNames: { contains: () => true },
+        createObjectStore: () => ({}),
+        onclose: null,
+        transaction: () => ({
+          objectStore: () => ({
+            get: () => { const r = { onsuccess: null, result: undefined }; setTimeout(() => r.onsuccess?.({ target: r }), 0); return r; },
+            put: () => { const r = { onsuccess: null }; setTimeout(() => r.onsuccess?.({ target: r }), 0); return r; },
+          }),
+        }),
+      };
+      const req = { result: fakeDb, error: null, onerror: null, onsuccess: null, onupgradeneeded: null };
+      setTimeout(() => {
+        if (req.onupgradeneeded) req.onupgradeneeded();
+        if (req.onsuccess) req.onsuccess({ target: req });
+      }, 0);
+      return req;
+    }
+  };
 }
 
 import { createRequire } from 'module';

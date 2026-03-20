@@ -3,21 +3,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-22+-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-315%20passing-brightgreen)](test/)
-[![Coverage](https://img.shields.io/badge/coverage-100%25%20dispatch%20%7C%2076%25%20tools-brightgreen)](test/)
 [![Huly SDK](https://img.shields.io/badge/Huly%20SDK-0.7.x-purple)](https://huly.io)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
 
-MCP and HTTP REST server providing full coverage of the
-[Huly](https://huly.io) SDK — issues, projects, workspaces, members,
-and account management. Tested against self-hosted Huly.
+MCP server providing full coverage of the [Huly](https://huly.io) SDK —
+issues, projects, workspaces, members, and account management.
+Two transports: **stdio** for local tools and **Streamable HTTP** for
+remote clients. Tested against self-hosted Huly.
 May also work with [Huly Cloud](https://app.huly.io) (not yet tested).
 
 ## Why This Exists
 
-Huly has no REST API. The only programmatic access is through their JavaScript SDK,
+Huly has no public API. The only programmatic access is through their JavaScript SDK,
 which connects via WebSocket. This server wraps that SDK and exposes **MCP tools**
-and a **full HTTP REST API** with OpenAPI spec, authentication, rate limiting, and SSE events.
+over both stdio and **Streamable HTTP** transports — compatible with Claude Code,
+VS Code, n8n, and any MCP client.
 
 ## Install
 
@@ -64,14 +64,14 @@ export HULY_TOKEN=<paste-token-from-above>
 export HULY_WORKSPACE=your-workspace
 ```
 
-The token does not expire. You can store it in a secrets manager or
-`~/.secrets` file and stop exposing your password in environment variables.
+The token does not expire. You can store it in a secrets manager
+and stop exposing your password in environment variables.
 
 ---
 
 ## Integrations
 
-### Claude Code (MCP)
+### Claude Code (stdio)
 
 After cloning and running `npm install`, register the server:
 
@@ -130,38 +130,34 @@ Then ask Claude things like:
 All tools have detailed descriptions optimized for AI agents.
 MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{id}`.
 
-### n8n / Automation Workflows
+### Streamable HTTP (n8n, VS Code, remote clients)
 
-Start the HTTP server:
+Start the HTTP MCP server:
 
 ```bash
 npm run start:server
-# Listening on port 3001
+# MCP endpoint: http://localhost:3001/mcp
+# Health check: http://localhost:3001/health
 ```
 
-Use HTTP Request nodes pointing to `http://localhost:3001/api/...`:
+Any MCP client that supports Streamable HTTP can connect to
+`http://localhost:3001/mcp`. This includes n8n (v1.88+),
+VS Code, and other MCP-compatible tools.
+
+To secure the endpoint, set a bearer token:
 
 ```bash
-# List projects
-curl http://localhost:3001/api/projects
-
-# Create an issue
-curl -X POST http://localhost:3001/api/projects/OPS/issues \
-  -H "Content-Type: application/json" \
-  -d '{"title": "New issue", "priority": "high"}'
-
-# Get project summary
-curl http://localhost:3001/api/projects/OPS/summary
+MCP_AUTH_TOKEN=your-secret npm run start:server
 ```
 
-OpenAPI spec available at `GET /api/openapi.json` for auto-discovery in n8n and other tools.
+Clients must then include `Authorization: Bearer your-secret` in requests.
 
 ### Docker
 
 ```bash
 docker build -t huly-mcp-server .
 
-# With token (recommended)
+# Streamable HTTP server (recommended)
 docker run -d \
   -p 3001:3001 \
   -e HULY_URL=https://your-huly-instance.com \
@@ -169,19 +165,7 @@ docker run -d \
   -e HULY_WORKSPACE=my-workspace \
   huly-mcp-server
 
-# With email/password
-docker run -d \
-  -p 3001:3001 \
-  -e HULY_URL=https://your-huly-instance.com \
-  -e HULY_EMAIL=admin@example.com \
-  -e HULY_PASSWORD=secret \
-  -e HULY_WORKSPACE=my-workspace \
-  huly-mcp-server
-```
-
-For MCP stdio mode in Docker:
-
-```bash
+# MCP stdio mode
 docker run -i \
   -e HULY_URL=https://your-huly-instance.com \
   -e HULY_TOKEN=your-token \
@@ -193,9 +177,6 @@ docker run -i \
 
 ## Server Configuration
 
-These settings control the MCP server itself — authentication, rate limiting,
-connection pooling. They are separate from the Huly credentials above.
-
 ### Environment Variables
 
 | Variable | Required | Default | Description |
@@ -206,14 +187,16 @@ connection pooling. They are separate from the Huly credentials above.
 | `HULY_EMAIL` | No | - | Huly login email (required if no token) |
 | `HULY_PASSWORD` | No | - | Huly login password (required if no token) |
 | `HULY_WORKSPACE` | Yes* | - | Default workspace slug |
-| **Server Settings** | | | |
-| `PORT` | No | `3001` | HTTP server port |
-| `MCP_AUTH_TOKEN` | No | - | Bearer token for HTTP server auth (disabled if unset) |
-| `HULY_RATE_LIMIT` | No | `100` | Max requests per minute per IP |
+| `HULY_TRANSPORT` | No | `ws` | SDK transport: `ws` (WebSocket) or `rest` (REST API) |
 | `HULY_POOL_TTL_MS` | No | `1800000` | Connection pool TTL in ms (30 min) |
+| **HTTP Server** | | | |
+| `PORT` | No | `3001` | HTTP server port (auto-assigns if taken) |
+| `MCP_AUTH_TOKEN` | No | - | Bearer token for HTTP auth (disabled if unset) |
+| `HULY_RATE_LIMIT` | No | `200` | Max requests per minute per IP |
+| `ALLOWED_ORIGINS` | No | `*` | CORS allowed origins (comma-separated) |
 
-*`HULY_WORKSPACE` is required for MCP mode. For HTTP mode it can be
-omitted if every request specifies a workspace via header or query param.
+*`HULY_WORKSPACE` is required for MCP stdio mode. For HTTP mode it can
+be omitted if every request specifies a workspace via the tool arguments.
 
 ### HTTP Server Authentication
 
@@ -226,76 +209,49 @@ openssl rand -hex 32
 
 # Start with auth enabled
 MCP_AUTH_TOKEN=your-token-here npm run start:server
-
-# Clients must include it in requests
-curl -H "Authorization: Bearer your-token-here" http://localhost:3001/api/projects
 ```
 
 If `MCP_AUTH_TOKEN` is not set, auth is disabled (fine for local-only usage).
 
 MCP stdio mode (Claude Code) does not use this token — stdio is inherently local.
 
-### Rate Limiting
-
-Per-IP rate limiting is always active. Response headers show current state:
-
-```text
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 97
-X-RateLimit-Reset: 1710000000
-```
-
-Returns `429 Too Many Requests` when exceeded.
-
-### SSE Event Stream
-
-Subscribe to real-time mutation events:
-
-```bash
-curl -N http://localhost:3001/api/events
-```
-
-Events: `issue.created`, `issue.updated`, `issue.moved`,
-`issue.comment_added`, `issue.label_added`, `issues.batch_created`,
-`issues.template_created`, and more.
-
 ### Multi-Workspace
 
-All tools/endpoints accept an optional workspace parameter. The connection pool caches clients by workspace slug:
+All tools accept an optional `workspace` parameter. The connection pool
+caches clients by workspace slug with configurable TTL:
 
-```bash
-# MCP: pass workspace in tool arguments
+```json
 {"tool": "list_projects", "arguments": {"workspace": "workspace-a"}}
-
-# HTTP: via header or query param
-curl -H "X-Huly-Workspace: workspace-a" http://localhost:3001/api/projects
-curl "http://localhost:3001/api/projects?workspace=workspace-b"
 ```
+
+If omitted, the `HULY_WORKSPACE` env var is used as the default.
 
 ---
 
 ## Testing
 
 Uses Node.js built-in `node:test` and `node:assert` — no test framework dependencies.
+Tests run twice: once with WebSocket transport, once with REST transport.
 
 ```bash
-npm test
+npm test              # Both transports (ws + rest)
+npm run test:ws       # WebSocket only
+npm run test:rest     # REST only
 ```
+
+194 tests across 101 suites:
 
 | Suite | Tests | Description |
 | --- | --- | --- |
-| **Unit** | 28 | Constants, ID parsing, route matching, rate limiting, auth |
-| **Dispatch** | 92 | Schema→dispatch→client param forwarding for all 42 tools |
-| **Integration** | 55 | Full CRUD lifecycle against live Huly (dedicated MCPT project) |
-| **Account-Level** | 11 | Workspaces, profile, social IDs |
-| **Mock** | 27 | Destructive ops, token auth via mocks |
-| **HTTP Server** | 64 | Every REST endpoint via real HTTP requests |
+| **Unit** | 28 | Constants, ID parsing, rate limiting, auth logic |
+| **Integration** | 55 | Full CRUD lifecycle against live Huly |
+| **Dispatch** | 45 | Schema to dispatch to client param forwarding for all tools |
+| **Account-level** | 11 | Workspaces, profile, social IDs |
+| **Mock** | 44 | Destructive ops, token auth via mocks |
+| **Streamable HTTP** | 11 | MCP protocol over HTTP: init, tools, resources, auth, rate limiting |
 
 **100% dispatch coverage** — every tool's params are traced end-to-end
-through the dispatch table to the client method. This catches the
-exact class of signature mismatch bugs that caused 9 runtime failures
-in v2.0.1. Tests create a dedicated `MCPT` project at startup and
-delete it on teardown — no data left behind.
+through the dispatch table to the client method.
 
 ---
 
@@ -323,17 +279,18 @@ bypass Application for `/_*` or these individual paths:
 ```text
 src/
   client.mjs    # HulyClient — all business logic and SDK calls
-  helpers.mjs   # Shared constants, markup conversion, utilities
-  dispatch.mjs  # Tool-to-method dispatch table (used by mcp + server)
+  helpers.mjs   # Shared constants, markup conversion, JSDOM polyfills
+  dispatch.mjs  # Tool-to-method dispatch table
   pool.mjs      # Connection pool — caches clients by workspace with TTL
-  mcp.mjs       # MCP stdio entry point — tool definitions + resources
-  server.mjs    # HTTP REST entry point — auth, rate limiting, SSE, OpenAPI
+  mcpShared.mjs # Shared MCP server factory — tool definitions + resources
+  mcp.mjs       # MCP stdio entry point (Claude Code)
+  server.mjs    # MCP Streamable HTTP entry point (n8n, VS Code, remote)
   index.mjs     # CLI entry point — --get-token mode + MCP re-export
 ```
 
 ```text
-Claude Code -> stdio -> mcp.mjs   -> pool.mjs -> client.mjs -> REST -> Huly
-n8n / curl  -> HTTP  -> server.mjs -> pool.mjs -> client.mjs -> REST -> Huly
+Claude Code  -> stdio           -> mcp.mjs    -> mcpShared.mjs -> pool -> client -> Huly SDK
+n8n / remote -> Streamable HTTP -> server.mjs -> mcpShared.mjs -> pool -> client -> Huly SDK
 ```
 
 ---
@@ -375,11 +332,9 @@ via `descriptionFormat` / `format` parameter:
 
 ## API Reference
 
-Full list of all MCP tools and HTTP endpoints available through this server.
+Full list of all MCP tools available through this server.
 
-### MCP Tools
-
-#### Account & Workspace Management
+### Account and Workspace Management
 
 | Tool | Description |
 | --- | --- |
@@ -396,7 +351,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `change_password` | Change password |
 | `change_username` | Change username |
 
-#### Invites
+### Invites
 
 | Tool | Description |
 | --- | --- |
@@ -404,7 +359,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `resend_invite` | Resend pending invite |
 | `create_invite_link` | Generate shareable invite link |
 
-#### Integrations, Mailboxes, Social IDs, Subscriptions
+### Integrations, Mailboxes, Social IDs, Subscriptions
 
 | Tool | Description |
 | --- | --- |
@@ -413,7 +368,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `find_person_by_social_key` / `get_social_ids` / `add_email_social_id` | Person/social ID management |
 | `list_subscriptions` | List account subscriptions |
 
-#### Projects
+### Projects
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
@@ -425,7 +380,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `delete_project` | Permanently delete a project | -- |
 | `summarize_project` | Aggregated project metrics and health | -- |
 
-#### Issues
+### Issues
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
@@ -440,7 +395,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `move_issue` | Move issue between projects | -- |
 | `create_issues_from_template` | Create from predefined templates | -- |
 
-#### Labels
+### Labels
 
 | Tool | Description |
 | --- | --- |
@@ -451,7 +406,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `add_label` | Add a label to an issue |
 | `remove_label` | Remove a label from an issue |
 
-#### Relations
+### Relations
 
 | Tool | Description |
 | --- | --- |
@@ -459,7 +414,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `add_blocked_by` | Add "blocked by" dependency |
 | `set_parent` | Set parent issue (epic/task hierarchy) |
 
-#### Components
+### Components
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
@@ -469,7 +424,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `update_component` | Update component fields | `descriptionFormat`: md/html/plain |
 | `delete_component` | Delete a component | -- |
 
-#### Milestones
+### Milestones
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
@@ -480,14 +435,14 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `delete_milestone` | Delete a milestone | -- |
 | `set_milestone` | Set or clear milestone on an issue | -- |
 
-#### Members
+### Members
 
 | Tool | Description |
 | --- | --- |
 | `list_members` | List all active workspace members |
 | `get_member` | Find a member by name (fuzzy match) |
 
-#### Comments
+### Comments
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
@@ -497,7 +452,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `update_comment` | Update comment text | `format`: md/html/plain |
 | `delete_comment` | Delete a comment | -- |
 
-#### Time Tracking
+### Time Tracking
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
@@ -506,7 +461,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 | `get_time_report` | Get a specific time report by ID | -- |
 | `delete_time_report` | Delete a time report | -- |
 
-#### Metadata
+### Metadata
 
 | Tool | Description |
 | --- | --- |
@@ -520,7 +475,7 @@ Full list of all MCP tools and HTTP endpoints available through this server.
 > `"markdown"`, `"html"`, or `"plain"`. Content is passed
 > through unmodified -- the format tells Huly how to render it.
 
-#### include\_details Flag
+### include\_details Flag
 
 Several read tools support an `include_details` boolean parameter that
 fetches related data in a single call:
@@ -534,7 +489,7 @@ fetches related data in a single call:
 | `get_milestone` | Full list of issues in the milestone |
 | `list_milestones` | Issues list per milestone |
 
-#### CRUD Coverage
+### CRUD Coverage
 
 | Entity | Create | Read | List | Update | Delete |
 | --- | --- | --- | --- | --- | --- |
@@ -549,95 +504,9 @@ fetches related data in a single call:
 | Status | -- | `get_status` | `list_statuses` | -- | -- |
 | Task Type | -- | `get_task_type` | `list_task_types` | -- | -- |
 
-### HTTP REST Endpoints
-
-#### System Routes
-
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/health` | Health check |
-| GET | `/api/openapi.json` | OpenAPI 3.0.3 spec |
-| GET | `/api/events` | SSE event stream |
-
-#### Account & Workspace Routes
-
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/api/workspaces` | List workspaces |
-| GET | `/api/workspaces/:slug/info` | Get workspace info |
-| POST | `/api/workspaces` | Create workspace |
-| PATCH | `/api/workspaces/:slug/name` | Rename workspace |
-| DELETE | `/api/workspaces/:slug` | Delete workspace |
-| GET | `/api/workspaces/:slug/members` | List members |
-| PATCH | `/api/workspaces/:slug/role` | Update member role |
-| POST | `/api/workspaces/:slug/invites` | Send invite |
-| POST | `/api/workspaces/:slug/invite-link` | Create invite link |
-| GET | `/api/account` | Get account info |
-| GET | `/api/profile` | Get user profile |
-| PATCH | `/api/profile` | Update profile |
-| GET | `/api/integrations` | List integrations |
-| POST | `/api/integrations` | Create integration |
-| DELETE | `/api/integrations/:id` | Delete integration |
-| GET | `/api/mailboxes` | List mailboxes |
-| GET | `/api/social-ids` | List social IDs |
-| GET | `/api/subscriptions` | List subscriptions |
-
-#### Project & Issue Routes
-
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/api/projects` | List all projects |
-| GET | `/api/projects/:identifier` | Get project by identifier |
-| POST | `/api/projects` | Create a new project |
-| POST | `/api/projects/:identifier/archive` | Archive/unarchive project |
-| DELETE | `/api/projects/:identifier` | Delete project |
-| GET | `/api/projects/:project/summary` | Project summary with metrics |
-| GET | `/api/projects/:project/issues` | List issues (query filters) |
-| GET | `/api/projects/:project/issues/:number` | Get issue |
-| POST | `/api/projects/:project/issues` | Create issue |
-| PATCH | `/api/issues/:issueId` | Update issue |
-| DELETE | `/api/issues/:issueId` | Delete issue |
-| POST | `/api/issues/:issueId/move` | Move to different project |
-| GET | `/api/my-issues` | Issues assigned to current user |
-| POST | `/api/projects/:project/batch-issues` | Batch create issues |
-| POST | `/api/projects/:project/template` | Create from template |
-| GET | `/api/search?query=...&project=...&limit=...` | Search issues |
-
-#### Other Resource Routes
-
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/api/labels` | List all labels |
-| POST | `/api/labels` | Create label |
-| POST | `/api/issues/:issueId/labels` | Add label to issue |
-| DELETE | `/api/issues/:issueId/labels/:label` | Remove label |
-| POST | `/api/issues/:issueId/relations` | Add relation |
-| POST | `/api/issues/:issueId/blocked-by` | Add blocked-by |
-| POST | `/api/issues/:issueId/parent` | Set parent |
-| GET | `/api/projects/:project/task-types` | List task types |
-| GET | `/api/statuses` | List all statuses |
-| GET | `/api/projects/:project/milestones` | List milestones |
-| GET | `/api/projects/:project/milestones/:name` | Get milestone |
-| POST | `/api/projects/:project/milestones` | Create milestone |
-| PATCH | `/api/projects/:project/milestones/:name` | Update milestone |
-| DELETE | `/api/projects/:project/milestones/:name` | Delete milestone |
-| PATCH | `/api/issues/:issueId/milestone` | Set/clear milestone |
-| GET | `/api/projects/:project/components` | List components |
-| POST | `/api/projects/:project/components` | Create component |
-| PATCH | `/api/projects/:project/components/:name` | Update component |
-| DELETE | `/api/projects/:project/components/:name` | Delete component |
-| GET | `/api/members` | List workspace members |
-| GET | `/api/issues/:issueId/comments` | List comments |
-| POST | `/api/issues/:issueId/comments` | Add comment |
-| PATCH | `/api/issues/:issueId/comments/:commentId` | Update comment |
-| DELETE | `/api/issues/:issueId/comments/:commentId` | Delete comment |
-| POST | `/api/issues/:issueId/time-logs` | Log time |
-| GET | `/api/issues/:issueId/time-reports` | List time reports |
-| DELETE | `/api/time-reports/:reportId` | Delete time report |
-
 ### Issue Templates
 
-Use `create_issues_from_template` (MCP) or `POST /api/projects/:project/template` (HTTP):
+Use `create_issues_from_template`:
 
 | Template | Creates |
 | --- | --- |
