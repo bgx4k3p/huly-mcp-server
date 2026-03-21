@@ -70,5 +70,5 @@ jobs:
             echo "Tarball not found: $TARBALL"
             exit 1
           fi
-        # No NPM_TOKEN needed — uses OIDC Trusted Publishing.
-        # Configured at npmjs.com package settings → Trusted Publisher.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
