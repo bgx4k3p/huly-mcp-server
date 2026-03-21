@@ -38,6 +38,7 @@
     "test": "HULY_TRANSPORT=ws node --test test/integration.test.mjs && HULY_TRANSPORT=rest node --test test/integration.test.mjs",
     "test:ws": "HULY_TRANSPORT=ws node --test test/integration.test.mjs",
     "test:rest": "HULY_TRANSPORT=rest node --test test/integration.test.mjs",
+    "lint": "eslint src/ scripts/",
     "postinstall": "node scripts/patch-sdk.mjs",
     "pack": "node scripts/pack.mjs"
   },
@@ -58,5 +59,8 @@
     "@hcengineering/tags",
     "@hcengineering/task",
     "@hcengineering/tracker"
-  ]
+  ],
+  "devDependencies": {
+    "eslint": "^10.1.0"
+  }
 }

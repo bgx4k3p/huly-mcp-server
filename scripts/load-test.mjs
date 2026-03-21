@@ -91,8 +91,8 @@ async function main() {
 
   // Pick the operation to benchmark
   const operation = PROJECT
-    ? (c) => c.listIssues(PROJECT, null, null, null, null, 50)
-    : (c) => c.listProjects({});
+    ? (c) => c.listIssues(PROJECT, null, null, null, null, 50).then(r => r.items)
+    : (c) => c.listProjects({}).then(r => r.items);
 
   // Warm up
   await operation(client);

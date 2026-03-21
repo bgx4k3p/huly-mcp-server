@@ -78,11 +78,11 @@ export const accountTools = {
  */
 export const workspaceTools = {
   list_projects: (a, c) =>
-    c.listProjects({ include_details: a.include_details }),
+    c.listProjects({ include_details: a.include_details, cursor: a.cursor, limit: a.limit }),
   get_project: (a, c) =>
     c.getProject(a.project, { include_details: a.include_details }),
   list_issues: (a, c) =>
-    c.listIssues(a.project, a.status, a.priority, a.label, a.milestone, a.limit, a.include_details),
+    c.listIssues(a.project, a.status, a.priority, a.label, a.milestone, a.limit, a.include_details, a.cursor),
   get_issue: (a, c) =>
     c.getIssue(a.issueId, { include_details: a.include_details }),
   create_issue: (a, c) =>
@@ -113,7 +113,7 @@ export const workspaceTools = {
   // Labels
   add_label: (a, c) => c.addLabel(a.issueId, a.label),
   remove_label: (a, c) => c.removeLabel(a.issueId, a.label),
-  list_labels: (a, c) => c.listLabels(),
+  list_labels: (a, c) => c.listLabels({ cursor: a.cursor, limit: a.limit }),
   create_label: (a, c) => c.createLabel(a.name, a.color, a.description),
   update_label: (a, c) =>
     c.updateLabel(a.name, { newName: a.newName, color: a.color, description: a.description }),
@@ -124,11 +124,11 @@ export const workspaceTools = {
   set_parent: (a, c) => c.setParent(a.issueId, a.parentIssueId),
 
   // Task types & statuses
-  list_task_types: (a, c) => c.listTaskTypes(a.project),
-  list_statuses: (a, c) => c.listStatuses(a.project, a.taskType),
+  list_task_types: (a, c) => c.listTaskTypes(a.project, { cursor: a.cursor, limit: a.limit }),
+  list_statuses: (a, c) => c.listStatuses(a.project, a.taskType, { cursor: a.cursor, limit: a.limit }),
 
   // Milestones
-  list_milestones: (a, c) => c.listMilestones(a.project, a.status, { include_details: a.include_details }),
+  list_milestones: (a, c) => c.listMilestones(a.project, a.status, { include_details: a.include_details, cursor: a.cursor, limit: a.limit }),
   get_milestone: (a, c) => c.getMilestone(a.project, a.name, { include_details: a.include_details }),
   create_milestone: (a, c) =>
     c.createMilestone(a.project, a.name, a.description, a.targetDate, a.status, a.descriptionFormat),
@@ -141,17 +141,17 @@ export const workspaceTools = {
   delete_milestone: (a, c) => c.deleteMilestone(a.project, a.name),
 
   // Members
-  list_members: (a, c) => c.listMembers(),
+  list_members: (a, c) => c.listMembers({ cursor: a.cursor, limit: a.limit }),
 
   // Comments
   add_comment: (a, c) => c.addComment(a.issueId, a.text, a.format),
-  list_comments: (a, c) => c.listComments(a.issueId),
+  list_comments: (a, c) => c.listComments(a.issueId, { cursor: a.cursor, limit: a.limit }),
   update_comment: (a, c) => c.updateComment(a.issueId, a.commentId, a.text, a.format),
   delete_comment: (a, c) => c.deleteComment(a.issueId, a.commentId),
 
   // Time tracking
   log_time: (a, c) => c.logTime(a.issueId, a.hours, a.description, a.descriptionFormat, a.date, a.employee),
-  list_time_reports: (a, c) => c.listTimeReports(a.issueId),
+  list_time_reports: (a, c) => c.listTimeReports(a.issueId, { cursor: a.cursor, limit: a.limit }),
   delete_time_report: (a, c) => c.deleteTimeReport(a.reportId),
 
   // Projects
@@ -166,7 +166,7 @@ export const workspaceTools = {
   delete_project: (a, c) => c.deleteProject(a.project),
 
   // Components
-  list_components: (a, c) => c.listComponents(a.project),
+  list_components: (a, c) => c.listComponents(a.project, { cursor: a.cursor, limit: a.limit }),
   create_component: (a, c) =>
     c.createComponent(a.project, a.name, a.description, a.lead, a.descriptionFormat),
   update_component: (a, c) =>

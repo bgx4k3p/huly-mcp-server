@@ -7,10 +7,12 @@
 import {
   PRIORITY_MAP, PRIORITY_NAMES,
   MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES,
-  COLOR_PALETTE, resolveColor,
+  resolveColor,
   DONE_CATEGORY, LOST_CATEGORY, STATUS_CATEGORY_NAMES,
   DEFAULT_LABEL_CATEGORY, DEFAULT_LABEL_COLOR,
   PAGE_SIZE, MAX_BATCH_SIZE, AUTH_CACHE_TTL_MS, DEFAULT_MILESTONE_DAYS,
+  DEFAULT_PAGE_SIZE, DEFAULT_DETAIL_PAGE_SIZE,
+  encodeCursor, decodeCursor,
   nameMatch, strictGet, withExtra,
   toCollaboratorMarkup, fromCollaboratorMarkup,
   toMarkup, fromMarkup
@@ -785,18 +787,23 @@ export class HulyClient {
    * The SDK's findAll has a server-side page limit. If limit exceeds
    * the page size, this fetches multiple pages using createdOn cursor.
    */
+  /**
+   * Paginated findAll with cursor support.
+   * Fetches from the SDK in PAGE_SIZE batches, returns { items, nextCursor? }.
+   * @param {Object} client - SDK client
+   * @param {string} _class - Document class
+   * @param {Object} query - Query filter
+   * @param {Object} options - { limit, cursor, ...findAllOptions }
+   * @returns {{ items: Object[], nextCursor?: string }}
+   */
   async _paginatedFindAll(client, _class, query, options = {}) {
-    const limit = options.limit || PAGE_SIZE;
+    const limit = options.limit || DEFAULT_PAGE_SIZE;
+    let lastCreatedOn = options.cursor
+      ? decodeCursor(options.cursor).createdOn
+      : undefined;
 
-    // If within a single page, just fetch directly
-    if (limit <= PAGE_SIZE) {
-      return await client.findAll(_class, query, options);
-    }
-
-    // Fetch in pages using createdOn as cursor
     const allResults = [];
-    let remaining = limit;
-    let lastCreatedOn = undefined;
+    let remaining = limit + 1; // fetch one extra to detect next page
 
     while (remaining > 0) {
       const pageLimit = Math.min(remaining, PAGE_SIZE);
@@ -817,11 +824,42 @@ export class HulyClient {
       remaining -= page.length;
       lastCreatedOn = page[page.length - 1].createdOn;
 
-      // If we got less than requested, no more pages
       if (page.length < pageLimit) break;
     }
 
-    return allResults;
+    // If we got more than limit, there are more results
+    if (allResults.length > limit) {
+      const items = allResults.slice(0, limit);
+      return { items, nextCursor: encodeCursor(items[items.length - 1].createdOn) };
+    }
+
+    return { items: allResults };
+  }
+
+  /**
+   * In-memory cursor pagination for small collections fetched via findAll.
+   * Filters by cursor, sorts by createdOn desc, slices to limit.
+   * @param {Object[]} allResults - Full result set from findAll
+   * @param {Object} options - { cursor?, limit? }
+   * @returns {{ items: Object[], nextCursor?: string }}
+   */
+  _cursoredFindAll(allResults, options = {}) {
+    const { cursor, limit = DEFAULT_PAGE_SIZE } = options;
+    let items = [...allResults];
+
+    if (cursor) {
+      const { createdOn } = decodeCursor(cursor);
+      items = items.filter(r => r.createdOn < createdOn);
+    }
+
+    items.sort((a, b) => b.createdOn - a.createdOn);
+
+    if (items.length > limit) {
+      const page = items.slice(0, limit);
+      return { items: page, nextCursor: encodeCursor(page[page.length - 1].createdOn) };
+    }
+
+    return { items };
   }
 
   async _findEmployeeByName(client, name) {
@@ -921,8 +959,7 @@ export class HulyClient {
     const projects = await client.findAll(tracker.class.Project, {});
 
     if (!options.include_details) {
-      // Count issues per project efficiently using the project's own sequence counter
-      return projects.map(project => withExtra(project, {
+      const enriched = projects.map(project => withExtra(project, {
         id: project._id,
         identifier: project.identifier,
         name: project.name || project.identifier,
@@ -934,6 +971,7 @@ export class HulyClient {
         createdOn: project.createdOn,
         modifiedOn: project.modifiedOn
       }));
+      return this._cursoredFindAll(enriched, options);
     }
 
     // Detailed mode: batch fetch all related data once, then group by project
@@ -960,7 +998,7 @@ export class HulyClient {
       componentsByProject.get(c.space).push(c);
     }
 
-    return limitedProjects.map(project => {
+    const detailed = limitedProjects.map(project => {
       const projMilestones = (milestonesByProject.get(project._id) || []).map(m => ({
         name: m.label,
         status: strictGet(MILESTONE_STATUS_NAMES, m.status, 'Milestone status'),
@@ -993,6 +1031,7 @@ export class HulyClient {
         labels: projLabels
       });
     });
+    return this._cursoredFindAll(detailed, options);
   }
 
   /**
@@ -1067,9 +1106,9 @@ export class HulyClient {
    * @param {number} [limit=500] - Maximum number of issues
    * @returns {Promise<Object[]>}
    */
-  async listIssues(project, status, priority, label, milestone, limit, include_details = false) {
+  async listIssues(project, status, priority, label, milestone, limit, include_details = false, cursor) {
     if (limit === undefined || limit === null) {
-      limit = include_details ? 50 : 500;
+      limit = include_details ? DEFAULT_DETAIL_PAGE_SIZE : DEFAULT_PAGE_SIZE;
     }
     const client = await this._getClient();
 
@@ -1112,10 +1151,11 @@ export class HulyClient {
       }
     }
 
-    let issues = await this._paginatedFindAll(client, tracker.class.Issue, query, {
-      limit,
-      sort: { modifiedOn: -1 }
+    const fetchResult = await this._paginatedFindAll(client, tracker.class.Issue, query, {
+      limit, cursor
     });
+    const issues = fetchResult.items;
+    const nextCursor = fetchResult.nextCursor;
 
     let labelFilter = null;
     if (label) {
@@ -1267,7 +1307,9 @@ export class HulyClient {
       result.push(withExtra(issue, entry));
     }
 
-    return result;
+    const response = { items: result };
+    if (nextCursor) response.nextCursor = nextCursor;
+    return response;
   }
 
   /**
@@ -1650,20 +1692,21 @@ export class HulyClient {
    * List all available labels for issues.
    * @returns {Promise<Object[]>}
    */
-  async listLabels() {
+  async listLabels(options = {}) {
     const client = await this._getClient();
 
     const tagElements = await client.findAll(tags.class.TagElement, {
       targetClass: tracker.class.Issue
     });
 
-    return tagElements.map(t => withExtra(t, {
+    const enriched = tagElements.map(t => withExtra(t, {
       id: t._id,
       name: t.title,
       description: t.description || '',
       color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null,
       category: t.category || null
     }));
+    return this._cursoredFindAll(enriched, options);
   }
 
   /**
@@ -1894,7 +1937,7 @@ export class HulyClient {
    * @param {string} projectIdent - Project identifier
    * @returns {Promise<Object[]>}
    */
-  async listTaskTypes(projectIdent) {
+  async listTaskTypes(projectIdent, options = {}) {
     const client = await this._getClient();
 
     const project = await client.findOne(tracker.class.Project, {
@@ -1923,7 +1966,7 @@ export class HulyClient {
       );
     }
 
-    return typesToReturn.map(tt => ({
+    const enriched = typesToReturn.map(tt => ({
       id: tt._id,
       name: tt.name || tt._id.split(':').pop(),
       description: fromMarkup(tt.description),
@@ -1934,6 +1977,7 @@ export class HulyClient {
       statusCategories: tt.statusCategories || [],
       statuses: tt.statuses || []
     }));
+    return this._cursoredFindAll(enriched, options);
   }
 
   /**
@@ -1942,20 +1986,21 @@ export class HulyClient {
    * @param {string} [taskTypeName] - Task type name to scope statuses (e.g., "Task", "Epic")
    * @returns {Promise<Object[]>}
    */
-  async listStatuses(projectIdent, taskTypeName) {
+  async listStatuses(projectIdent, taskTypeName, options = {}) {
     const client = await this._getClient();
 
     const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
 
     // If no scoping requested, return all
     if (!projectIdent && !taskTypeName) {
-      return allStatuses.map(s => ({
+      const enriched = allStatuses.map(s => ({
         id: s._id,
         name: s.name,
         category: STATUS_CATEGORY_NAMES[s.category] || s.category,
         color: s.color,
         description: fromMarkup(s.description)
       }));
+      return this._cursoredFindAll(enriched, options);
     }
 
     // Get task types scoped to this project
@@ -1996,13 +2041,14 @@ export class HulyClient {
       ? allStatuses.filter(s => statusIds.has(s._id))
       : allStatuses;
 
-    return scopedStatuses.map(s => ({
+    const enriched = scopedStatuses.map(s => ({
       id: s._id,
       name: s.name,
       category: STATUS_CATEGORY_NAMES[s.category] || s.category,
       color: s.color,
       description: s.description || ''
     }));
+    return this._cursoredFindAll(enriched, options);
   }
 
   /**
@@ -2036,7 +2082,7 @@ export class HulyClient {
     });
 
     if (!options.include_details) {
-      return milestones.map(m => withExtra(m, {
+      const enriched = milestones.map(m => withExtra(m, {
         id: m._id,
         name: m.label,
         description: fromMarkup(m.description),
@@ -2044,6 +2090,7 @@ export class HulyClient {
         targetDate: m.targetDate ? new Date(m.targetDate).toISOString().split('T')[0] : null,
         comments: m.comments || 0
       }));
+      return this._cursoredFindAll(enriched, options);
     }
 
     // Detailed mode: batch fetch all issues for the project, then group by milestone
@@ -2059,7 +2106,7 @@ export class HulyClient {
       }
     }
 
-    return milestones.map(m => {
+    const detailed = milestones.map(m => {
       const mIssues = (issuesByMilestone.get(m._id) || []).map(i => ({
         id: `${project.identifier}-${i.number}`,
         title: i.title,
@@ -2077,6 +2124,7 @@ export class HulyClient {
         issues: mIssues
       });
     });
+    return this._cursoredFindAll(detailed, options);
   }
 
   /**
@@ -2253,16 +2301,17 @@ export class HulyClient {
    * List all active workspace members.
    * @returns {Promise<Object[]>}
    */
-  async listMembers() {
+  async listMembers(options = {}) {
     const client = await this._getClient();
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
-    return employees.map(e => withExtra(e, {
+    const enriched = employees.map(e => withExtra(e, {
       id: e._id,
       name: e.name,
       email: e.channels?.[0]?.value || null,
       role: e.role || 'USER',
       position: e.position || null
     }));
+    return this._cursoredFindAll(enriched, options);
   }
 
   /**
@@ -2326,7 +2375,7 @@ export class HulyClient {
    * @param {string} issueId - Issue identifier
    * @returns {Promise<Object[]>}
    */
-  async listComments(issueId) {
+  async listComments(issueId, options = {}) {
     const client = await this._getClient();
     const { issue } = await this._parseAndFindIssue(client, issueId);
 
@@ -2334,13 +2383,14 @@ export class HulyClient {
       attachedTo: issue._id
     }, { sort: { createdOn: 1 } });
 
-    return comments.map(c => withExtra(c, {
+    const enriched = comments.map(c => withExtra(c, {
       id: c._id,
       text: fromMarkup(c.message),
       createdBy: c.createdBy || null,
       createdOn: c.createdOn,
       modifiedOn: c.modifiedOn
     }));
+    return this._cursoredFindAll(enriched, options);
   }
 
   /**
@@ -2574,10 +2624,10 @@ export class HulyClient {
       }
     }
 
-    let issues = await this._paginatedFindAll(client, tracker.class.Issue, query, {
-      limit,
-      sort: { modifiedOn: -1 }
+    const fetchResult = await this._paginatedFindAll(client, tracker.class.Issue, query, {
+      limit
     });
+    const issues = fetchResult.items;
 
     const projects = await client.findAll(tracker.class.Project, {});
     const projMap = new Map(projects.map(p => [p._id, p.identifier]));
@@ -3367,7 +3417,7 @@ export class HulyClient {
 
   // ── Components ──────────────────────────────────────────────
 
-  async listComponents(projectIdent) {
+  async listComponents(projectIdent, options = {}) {
     const client = await this._getClient();
     const project = await client.findOne(tracker.class.Project, {
       identifier: projectIdent.toUpperCase()
@@ -3376,12 +3426,13 @@ export class HulyClient {
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
 
-    return components.map(c => withExtra(c, {
+    const enriched = components.map(c => withExtra(c, {
       id: c._id,
       name: c.label,
       description: fromMarkup(c.description),
       lead: c.lead || null
     }));
+    return this._cursoredFindAll(enriched, options);
   }
 
   async createComponent(projectIdent, name, description, lead, format) {
@@ -3486,7 +3537,7 @@ export class HulyClient {
 
   // ── Time Reports ────────────────────────────────────────────
 
-  async listTimeReports(issueId) {
+  async listTimeReports(issueId, options = {}) {
     const client = await this._getClient();
     const { issue } = await this._parseAndFindIssue(client, issueId);
 
@@ -3494,12 +3545,13 @@ export class HulyClient {
       attachedTo: issue._id
     }, { sort: { date: -1 } });
 
-    return reports.map(r => withExtra(r, {
+    const enriched = reports.map(r => withExtra(r, {
       id: r._id,
       hours: r.value,
       description: fromMarkup(r.description),
       date: r.date ? new Date(r.date).toISOString() : null
     }));
+    return this._cursoredFindAll(enriched, options);
   }
 
   async deleteTimeReport(reportId) {
@@ -3508,17 +3560,9 @@ export class HulyClient {
     const report = await client.findOne(tracker.class.TimeSpendReport, { _id: reportId });
     if (!report) throw new Error(`Time report not found: ${reportId}`);
 
-    // Update the issue's reportedTime
-    if (report.attachedTo) {
-      const issue = await client.findOne(tracker.class.Issue, { _id: report.attachedTo });
-      if (issue) {
-        const newReported = Math.max(0, (issue.reportedTime || 0) - (report.value || 0));
-        await client.updateDoc(tracker.class.Issue, issue.space, issue._id, {
-          reportedTime: newReported
-        });
-      }
-    }
-
+    // The transactor automatically decrements reportedTime on the issue
+    // when a TimeSpendReport is removed via removeCollection — do NOT
+    // manually update reportedTime here or it gets decremented twice.
     await client.removeCollection(tracker.class.TimeSpendReport, report.space, report._id, report.attachedTo, report.attachedToClass, report.collection);
 
     return {
