@@ -31,6 +31,18 @@ const workspaceProp = {
   }
 };
 
+// Pagination properties for all list tools
+const paginationProps = {
+  cursor: {
+    type: 'string',
+    description: 'Opaque pagination cursor from a previous response\'s nextCursor field. Omit for the first page.'
+  },
+  limit: {
+    type: 'number',
+    description: 'Maximum items per page (default: 50, or 20 with include_details)'
+  }
+};
+
 // ── Tool Definitions ──────────────────────────────────────────
 
 export { workspaceProp };
@@ -112,9 +124,9 @@ export function createMcpServer(capabilities = {}) {
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     try {
       const client = await pool.getClient();
-      const projects = await client.withReconnect(() => client.listProjects());
+      const result = await client.withReconnect(() => client.listProjects());
       return {
-        resources: projects.map(p => ({
+        resources: result.items.map(p => ({
           uri: `huly://projects/${p.identifier}`,
           name: `${p.identifier}: ${p.name}`,
           description: `Project with ${p.issueCount} issues`,
@@ -324,7 +336,7 @@ function getToolDefinitions() {
     {
       name: 'list_projects',
       description: 'List all projects in the Huly workspace. Returns each project\'s identifier (e.g., "PROJ"), display name, and total issue count. Use this first to discover available projects before querying issues. Set include_details=true to also fetch milestones, components, labels, and member names for each project (limited to 20 projects).',
-      inputSchema: { type: 'object', properties: { include_details: { type: 'boolean', description: 'Include milestones, components, labels, and members for each project (default: false). Limits to 20 projects.' }, ...workspaceProp }, required: [] }
+      inputSchema: { type: 'object', properties: { include_details: { type: 'boolean', description: 'Include milestones, components, labels, and members for each project (default: false). Limits to 20 projects.' }, ...paginationProps, ...workspaceProp }, required: [] }
     },
     {
       name: 'get_project',
@@ -333,8 +345,8 @@ function getToolDefinitions() {
     },
     {
       name: 'list_issues',
-      description: 'List issues in a project with optional filtering. Returns id, title, status, priority, type (Task/Epic/Bug), assignee, component, labels, milestone, parent issue, childCount, dueDate, estimation, reportedTime, createdOn, modifiedOn, and completedAt for each issue. Does NOT include full descriptions — use get_issue to read resolved markdown descriptions (important for migrations). Supports filtering by status, priority, label, and milestone. Default limit 500, auto-paginates. Use search_issues for full-text search across projects.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, status: { type: 'string', description: 'Filter by status: Backlog, Todo, In Progress, Done, Canceled' }, priority: { type: 'string', description: 'Filter by priority: urgent, high, medium, low, none' }, label: { type: 'string', description: 'Filter by label name (exact match)' }, milestone: { type: 'string', description: 'Filter by milestone name (exact match)' }, limit: { type: 'number', description: 'Maximum number of issues to return (default: 500)' }, include_details: { type: 'boolean', description: 'Include full details: descriptions, comments, time reports, relations, and children. Reduces default limit to 50.' }, ...workspaceProp }, required: ['project'] }
+      description: 'List issues in a project with optional filtering and cursor-based pagination. Returns { items, nextCursor? }. Pass nextCursor from a previous response to get the next page. Default page size: 50 (20 with include_details).',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, status: { type: 'string', description: 'Filter by status: Backlog, Todo, In Progress, Done, Canceled' }, priority: { type: 'string', description: 'Filter by priority: urgent, high, medium, low, none' }, label: { type: 'string', description: 'Filter by label name (exact match)' }, milestone: { type: 'string', description: 'Filter by milestone name (exact match)' }, include_details: { type: 'boolean', description: 'Include full details: descriptions, comments, time reports, relations, and children. Reduces default page size to 20.' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'get_issue',
@@ -363,8 +375,8 @@ function getToolDefinitions() {
     },
     {
       name: 'list_labels',
-      description: 'List all available labels in the workspace. Returns each label\'s name and hex color. Use this to discover existing labels before adding them to issues.',
-      inputSchema: { type: 'object', properties: { ...workspaceProp }, required: [] }
+      description: 'List all available labels in the workspace. Returns { items, nextCursor? }. Each label has name and hex color.',
+      inputSchema: { type: 'object', properties: { ...paginationProps, ...workspaceProp }, required: [] }
     },
     {
       name: 'create_label',
@@ -459,8 +471,8 @@ function getToolDefinitions() {
     // ── Components ───────────────────────────────────────────
     {
       name: 'list_components',
-      description: 'List all components in a project.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...workspaceProp }, required: ['project'] }
+      description: 'List all components in a project. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'get_component',
@@ -486,8 +498,8 @@ function getToolDefinitions() {
     // ── Milestones ───────────────────────────────────────────
     {
       name: 'list_milestones',
-      description: 'List all milestones in a project. Returns name, status, date range, and issue count.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, include_details: { type: 'boolean', description: 'Include issue list for each milestone' }, ...workspaceProp }, required: ['project'] }
+      description: 'List all milestones in a project. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, include_details: { type: 'boolean', description: 'Include issue list for each milestone' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'get_milestone',
@@ -518,8 +530,8 @@ function getToolDefinitions() {
     // ── Members ──────────────────────────────────────────────
     {
       name: 'list_members',
-      description: 'List all active members of the workspace with their names and roles.',
-      inputSchema: { type: 'object', properties: { ...workspaceProp }, required: [] }
+      description: 'List all active members of the workspace. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { ...paginationProps, ...workspaceProp }, required: [] }
     },
     {
       name: 'get_member',
@@ -530,8 +542,8 @@ function getToolDefinitions() {
     // ── Comments ─────────────────────────────────────────────
     {
       name: 'list_comments',
-      description: 'List all comments on an issue, ordered chronologically.',
-      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, ...workspaceProp }, required: ['issueId'] }
+      description: 'List comments on an issue. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, ...paginationProps, ...workspaceProp }, required: ['issueId'] }
     },
     {
       name: 'get_comment',
@@ -557,8 +569,8 @@ function getToolDefinitions() {
     // ── Metadata ─────────────────────────────────────────────
     {
       name: 'list_statuses',
-      description: 'List all issue statuses available in a project, grouped by category (Backlog, Unstarted, Active, Won, Lost).',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...workspaceProp }, required: ['project'] }
+      description: 'List issue statuses available in a project. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'get_status',
@@ -567,8 +579,8 @@ function getToolDefinitions() {
     },
     {
       name: 'list_task_types',
-      description: 'List all task types available in a project (e.g., Issue, Epic, Bug).',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...workspaceProp }, required: ['project'] }
+      description: 'List task types available in a project. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'get_task_type',
@@ -584,8 +596,8 @@ function getToolDefinitions() {
     },
     {
       name: 'list_time_reports',
-      description: 'List all time reports for an issue.',
-      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier' }, ...workspaceProp }, required: ['issueId'] }
+      description: 'List time reports for an issue. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier' }, ...paginationProps, ...workspaceProp }, required: ['issueId'] }
     },
     {
       name: 'get_time_report',

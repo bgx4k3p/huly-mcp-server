@@ -402,7 +402,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_projects', () => {
     it('returns projects including test project', async () => {
-      const projects = await client.listProjects();
+      const projects = (await client.listProjects()).items;
       assert.ok(Array.isArray(projects), 'Should return an array');
       assert.ok(projects.length > 0, 'Should have at least one project');
 
@@ -437,7 +437,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_issues', () => {
     it('returns issues for OPS', async () => {
-      const issues = await client.listIssues(PROJECT, undefined, undefined, undefined, undefined, 5);
+      const issues = (await client.listIssues(PROJECT, undefined, undefined, undefined, undefined, 5)).items;
       assert.ok(Array.isArray(issues));
       // OPS may have very few issues
       if (issues.length > 0) {
@@ -450,7 +450,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('respects limit parameter', async () => {
-      const issues = await client.listIssues(PROJECT, undefined, undefined, undefined, undefined, 5);
+      const issues = (await client.listIssues(PROJECT, undefined, undefined, undefined, undefined, 5)).items;
       assert.ok(issues.length <= 5);
     });
   });
@@ -459,7 +459,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_statuses', () => {
     it('returns available statuses', async () => {
-      const statuses = await client.listStatuses();
+      const statuses = (await client.listStatuses()).items;
       assert.ok(Array.isArray(statuses));
       assert.ok(statuses.length > 0);
       const names = statuses.map(s => s.name);
@@ -472,7 +472,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_members', () => {
     it('returns workspace members', async () => {
-      const members = await client.listMembers();
+      const members = (await client.listMembers()).items;
       assert.ok(Array.isArray(members));
       assert.ok(members.length > 0, 'Should have at least one member');
       const first = members[0];
@@ -484,7 +484,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_labels', () => {
     it('returns labels array', async () => {
-      const labels = await client.listLabels();
+      const labels = (await client.listLabels()).items;
       assert.ok(Array.isArray(labels));
       // May be empty if no labels exist yet, but should at least be an array
     });
@@ -494,7 +494,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_milestones', () => {
     it('returns milestones for OPS', async () => {
-      const milestones = await client.listMilestones(PROJECT);
+      const milestones = (await client.listMilestones(PROJECT)).items;
       assert.ok(Array.isArray(milestones));
       // Milestones may or may not exist, just verify it returns an array
     });
@@ -504,7 +504,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_task_types', () => {
     it('returns task types for OPS', async () => {
-      const types = await client.listTaskTypes(PROJECT);
+      const types = (await client.listTaskTypes(PROJECT)).items;
       assert.ok(Array.isArray(types));
       assert.ok(types.length > 0, 'Should have at least one task type');
       const names = types.map(t => t.name);
@@ -599,7 +599,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     it('lists comments on the issue', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const comments = await client.listComments(lifecycleIssueId);
+      const comments = (await client.listComments(lifecycleIssueId)).items;
       assert.ok(Array.isArray(comments));
       assert.ok(comments.length >= 1, 'Should have at least one comment');
       const found = comments.some(c =>
@@ -631,7 +631,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
       const result = await client.logTime(lifecycleIssueId, 1.5, 'Test time log');
       assert.ok(result, 'Should return a result');
-      const reports = await client.listTimeReports(lifecycleIssueId);
+      const reports = (await client.listTimeReports(lifecycleIssueId)).items;
       assert.ok(Array.isArray(reports));
       assert.ok(reports.some(r => r.hours === 1.5), 'Should find the 1.5h time entry');
     });
@@ -778,7 +778,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   describe('assign_issue', () => {
     it('assigns the lifecycle issue to a member', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const members = await client.listMembers();
+      const members = (await client.listMembers()).items;
       assert.ok(members.length > 0, 'Need at least one member');
       const result = await client.assignIssue(lifecycleIssueId, members[0].name);
       assert.ok(result);
@@ -939,7 +939,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('reads back the created component', async () => {
-      const components = await client.listComponents(PROJECT);
+      const components = (await client.listComponents(PROJECT)).items;
       assert.ok(Array.isArray(components));
       const found = components.find(c => c.name === compName);
       assert.ok(found, 'Should find the created component');
@@ -952,7 +952,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('reads back the updated component', async () => {
-      const components = await client.listComponents(PROJECT);
+      const components = (await client.listComponents(PROJECT)).items;
       const found = components.find(c => c.name === compName);
       assert.ok(found, 'Should find the component');
       assert.equal(found.description, 'Updated desc');
@@ -1002,7 +1002,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('lists time reports', async () => {
-      const reports = await client.listTimeReports(testIssueId);
+      const reports = (await client.listTimeReports(testIssueId)).items;
       assert.ok(Array.isArray(reports));
       assert.ok(reports.length >= 1);
       assert.ok(reports.some(r => r.id === reportId));
@@ -1035,7 +1035,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('verifies comment was updated', async () => {
-      const comments = await client.listComments(testIssueId);
+      const comments = (await client.listComments(testIssueId)).items;
       const updated = comments.find(c => c.id === commentId);
       assert.ok(updated);
       assert.equal(updated.text, 'Updated text');
@@ -1064,7 +1064,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('get_member', () => {
     it('finds a member by name', async () => {
-      const members = await client.listMembers();
+      const members = (await client.listMembers()).items;
       assert.ok(members.length > 0, 'Should have at least one member');
       const member = await client.getMember(members[0].name);
       assert.equal(member.name, members[0].name);
@@ -1108,7 +1108,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('get_task_type', () => {
     it('finds a task type by name', async () => {
-      const types = await client.listTaskTypes(PROJECT);
+      const types = (await client.listTaskTypes(PROJECT)).items;
       assert.ok(types.length > 0, 'Should have at least one task type');
       const tt = await client.getTaskType(PROJECT, types[0].name);
       assert.equal(tt.name, types[0].name);
@@ -1193,14 +1193,14 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_issues with include_details', () => {
     it('returns descriptions when include_details is true', async () => {
-      const issues = await client.listIssues(PROJECT, null, null, null, null, 5, true);
+      const issues = (await client.listIssues(PROJECT, null, null, null, null, 5, true)).items;
       assert.ok(issues.length > 0, 'Should have issues');
       const withDesc = issues.find(i => i.description && i.description.length > 0);
       assert.ok(withDesc, 'At least one issue should have a resolved description');
     });
 
     it('omits descriptions by default', async () => {
-      const issues = await client.listIssues(PROJECT, null, null, null, null, 5);
+      const issues = (await client.listIssues(PROJECT, null, null, null, null, 5)).items;
       assert.ok(issues.length > 0);
       // Default list should not have description at top level
       // (it may be in extra but not resolved)
@@ -1226,7 +1226,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('list_projects with include_details', () => {
     it('returns enriched projects with include_details', async () => {
-      const projects = await client.listProjects({ include_details: true });
+      const projects = (await client.listProjects({ include_details: true })).items;
       assert.ok(projects.length > 0);
       const proj = projects.find(p => p.identifier === PROJECT);
       assert.ok(proj, 'Should find test project');
@@ -1439,7 +1439,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
       // Create an issue first
       const issue = await client.createIssue(AUDIT_PROJECT, 'Assign test');
       // Get actual members to construct a partial name
-      const members = await client.listMembers();
+      const members = (await client.listMembers()).items;
       if (members.length > 0) {
         const fullName = members[0].name;
         const partial = fullName.slice(0, 2); // First 2 chars — should NOT match
@@ -1463,7 +1463,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     it('returns completedAt when issue is in done status', async () => {
       const issue = await client.createIssue(AUDIT_PROJECT, 'CompletedAt test');
       // Get available statuses and find a done one
-      const statuses = await client.listStatuses(AUDIT_PROJECT);
+      const statuses = (await client.listStatuses(AUDIT_PROJECT)).items;
       const doneStatus = statuses.find(s => s.category?.includes('Won'));
       if (doneStatus) {
         await client.updateIssue(issue.id, { status: doneStatus.name });
@@ -1589,7 +1589,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     });
 
     it('list_issues does not throw on orphaned parent', async () => {
-      const issues = await client.listIssues(AUDIT_PROJECT);
+      const issues = (await client.listIssues(AUDIT_PROJECT)).items;
       // Child may or may not survive parent deletion depending on Huly behavior
       // The key assertion: listIssues itself must not throw
       assert.ok(Array.isArray(issues), 'list_issues should return array');
@@ -1632,7 +1632,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     });
 
     it('list_issues does not throw on orphaned component', async () => {
-      const issues = await client.listIssues(AUDIT_PROJECT);
+      const issues = (await client.listIssues(AUDIT_PROJECT)).items;
       const issue = issues.find(i => i.id === issueId);
       assert.ok(issue, 'Issue should be in list');
       assert.equal(issue.component, null, 'Orphaned component should be null');
@@ -1665,7 +1665,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     });
 
     it('list_issues does not throw on orphaned milestone', async () => {
-      const issues = await client.listIssues(AUDIT_PROJECT);
+      const issues = (await client.listIssues(AUDIT_PROJECT)).items;
       const issue = issues.find(i => i.id === issueId);
       assert.ok(issue, 'Issue should be in list');
       assert.equal(issue.milestone, null, 'Orphaned milestone should be null');
@@ -2380,7 +2380,8 @@ describe('Streamable HTTP MCP Server Tests', { timeout: 120_000 }, () => {
       });
       assert.ok(res.body.result.content);
       const data = JSON.parse(res.body.result.content[0].text);
-      assert.ok(Array.isArray(data));
+      assert.ok(data.items, 'Response should have items array');
+      assert.ok(Array.isArray(data.items));
     });
   });
 
@@ -2392,8 +2393,8 @@ describe('Streamable HTTP MCP Server Tests', { timeout: 120_000 }, () => {
       });
       assert.ok(res.body.result.content);
       const data = JSON.parse(res.body.result.content[0].text);
-      assert.ok(Array.isArray(data));
-      assert.ok(data.length > 0);
+      assert.ok(data.items, 'Response should have items array');
+      assert.ok(data.items.length > 0);
     });
   });
 

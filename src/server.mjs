@@ -279,7 +279,7 @@ function shutdown(signal) {
   timeout.unref();
 
   // Close all sessions
-  for (const [sid, session] of sessions) {
+  for (const session of sessions.values()) {
     session.transport.close().catch(() => {});
     session.server.close().catch(() => {});
   }

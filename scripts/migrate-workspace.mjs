@@ -73,7 +73,13 @@ async function main() {
 
   // ── Step 1: Read all issues from source ─────────────────────
   log('Reading source issues...');
-  const sourceIssues = await src.listIssues(PROJECT, null, null, null, null, 1000, true);
+  const sourceIssues = [];
+  let cursor;
+  do {
+    const page = await src.listIssues(PROJECT, null, null, null, null, 100, true, cursor);
+    sourceIssues.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
   ok(`Found ${sourceIssues.length} issues`);
 
   // Sort by issue number to preserve ordering

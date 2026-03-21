@@ -100,6 +100,30 @@ export const PAGE_SIZE = 500;
 export const MAX_BATCH_SIZE = 500;
 export const AUTH_CACHE_TTL_MS = 600000;
 export const DEFAULT_MILESTONE_DAYS = 30;
+export const DEFAULT_PAGE_SIZE = 50;
+export const DEFAULT_DETAIL_PAGE_SIZE = 20;
+
+/**
+ * Encode a pagination cursor from a createdOn timestamp.
+ * Returns an opaque base64url string.
+ */
+export function encodeCursor(createdOn) {
+  return Buffer.from(JSON.stringify({ createdOn })).toString('base64url');
+}
+
+/**
+ * Decode a pagination cursor back to { createdOn }.
+ * Throws on invalid input.
+ */
+export function decodeCursor(cursor) {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString());
+    if (typeof parsed.createdOn !== 'number') throw new Error();
+    return parsed;
+  } catch {
+    throw new Error('Invalid pagination cursor');
+  }
+}
 
 /**
  * Resolve a color value: name ("blue"), palette index (9), or RGB (0x5E6AD2).
