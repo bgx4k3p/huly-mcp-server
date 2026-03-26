@@ -105,6 +105,23 @@ const tgzSrc = join(tmp, tgzName);
 const tgzDst = join(root, tgzName);
 cpSync(tgzSrc, tgzDst);
 
+// Rewrite the tarball's package.json to remove @hcengineering/* from
+// dependencies. npm resolves deps from registry metadata BEFORE extracting
+// bundled packages — keeping them in dependencies causes npm to fetch
+// Huly SDK versions with broken workspace: protocol references.
+const rewriteDir = join(root, '.pack-rewrite');
+if (existsSync(rewriteDir)) rmSync(rewriteDir, { recursive: true });
+mkdirSync(rewriteDir, { recursive: true });
+execSync(`tar xzf "${tgzDst}" -C "${rewriteDir}"`);
+const innerPkgPath = join(rewriteDir, 'package', 'package.json');
+const innerPkg = JSON.parse(readFileSync(innerPkgPath, 'utf8'));
+for (const dep of Object.keys(innerPkg.dependencies || {})) {
+  if (dep.startsWith('@hcengineering/')) delete innerPkg.dependencies[dep];
+}
+writeFileSync(innerPkgPath, JSON.stringify(innerPkg, null, 2) + '\n');
+execSync(`tar czf "${tgzDst}" -C "${rewriteDir}" package`);
+rmSync(rewriteDir, { recursive: true });
+
 // Clean up
 rmSync(tmp, { recursive: true });
 
