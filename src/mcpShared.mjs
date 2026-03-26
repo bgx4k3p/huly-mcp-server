@@ -482,12 +482,12 @@ function getToolDefinitions() {
     {
       name: 'create_component',
       description: 'Create a new component in a project.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Component name' }, description: { type: 'string', description: 'Component description' }, ...workspaceProp }, required: ['project', 'name'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Component name' }, description: { type: 'string', description: 'Component description' }, lead: { type: 'string', description: 'Lead member name' }, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'update_component',
-      description: 'Update a component\'s name or description.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current component name' }, newName: { type: 'string', description: 'New component name' }, description: { type: 'string', description: 'New description' }, ...workspaceProp }, required: ['project', 'name'] }
+      description: 'Update a component\'s name, description, or lead.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current component name' }, newName: { type: 'string', description: 'New component name' }, description: { type: 'string', description: 'New description' }, lead: { type: 'string', description: 'Lead member name (empty string to clear)' }, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'delete_component',
