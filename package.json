@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
@@ -54,11 +54,25 @@
     "jsdom": "^29.0.0"
   },
   "bundleDependencies": [
+    "@hcengineering/account-client",
+    "@hcengineering/analytics",
     "@hcengineering/api-client",
     "@hcengineering/chunter",
+    "@hcengineering/client",
+    "@hcengineering/client-resources",
+    "@hcengineering/collaborator-client",
+    "@hcengineering/contact",
     "@hcengineering/core",
+    "@hcengineering/measurements",
+    "@hcengineering/platform",
+    "@hcengineering/rank",
+    "@hcengineering/rpc",
     "@hcengineering/tags",
     "@hcengineering/task",
+    "@hcengineering/text",
+    "@hcengineering/text-core",
+    "@hcengineering/text-html",
+    "@hcengineering/text-markdown",
     "@hcengineering/tracker"
   ],
   "devDependencies": {

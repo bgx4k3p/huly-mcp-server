@@ -9,7 +9,7 @@
  * Svelte, etc.) that are never used in a Node.js MCP server. This script
  * produces a ~6MB tarball instead.
  */
-import { cpSync, mkdirSync, rmSync, existsSync } from 'fs';
+import { cpSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 
@@ -47,6 +47,32 @@ for (const pkg of hulyNeeded) {
   }
 }
 
+// Strip @hcengineering/* deps from bundled packages so npm doesn't try
+// to fetch them from the registry (some published versions use workspace:
+// protocol which npm can't resolve). All needed packages are already
+// co-located in node_modules so Node.js resolves them via the file system.
+const hulySet = new Set(hulyNeeded);
+for (const pkg of hulyNeeded) {
+  const pkgJsonPath = join(tmp, 'node_modules', '@hcengineering', pkg, 'package.json');
+  if (!existsSync(pkgJsonPath)) continue;
+  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
+  if (!pkgJson.dependencies) continue;
+  let changed = false;
+  for (const dep of Object.keys(pkgJson.dependencies)) {
+    if (dep.startsWith('@hcengineering/')) {
+      const short = dep.replace('@hcengineering/', '');
+      if (!hulySet.has(short)) {
+        // Not bundled — remove to prevent npm from fetching it
+        delete pkgJson.dependencies[dep];
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    writeFileSync(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + '\n');
+  }
+}
+
 // Copy non-Huly dependencies that the SDK needs
 // (everything in node_modules except @hcengineering and known bloat)
 // Only prune packages confirmed not needed at runtime
@@ -78,6 +104,23 @@ const tgzName = result.trim();
 const tgzSrc = join(tmp, tgzName);
 const tgzDst = join(root, tgzName);
 cpSync(tgzSrc, tgzDst);
+
+// Rewrite the tarball's package.json to remove @hcengineering/* from
+// dependencies. npm resolves deps from registry metadata BEFORE extracting
+// bundled packages — keeping them in dependencies causes npm to fetch
+// Huly SDK versions with broken workspace: protocol references.
+const rewriteDir = join(root, '.pack-rewrite');
+if (existsSync(rewriteDir)) rmSync(rewriteDir, { recursive: true });
+mkdirSync(rewriteDir, { recursive: true });
+execSync(`tar xzf "${tgzDst}" -C "${rewriteDir}"`);
+const innerPkgPath = join(rewriteDir, 'package', 'package.json');
+const innerPkg = JSON.parse(readFileSync(innerPkgPath, 'utf8'));
+for (const dep of Object.keys(innerPkg.dependencies || {})) {
+  if (dep.startsWith('@hcengineering/')) delete innerPkg.dependencies[dep];
+}
+writeFileSync(innerPkgPath, JSON.stringify(innerPkg, null, 2) + '\n');
+execSync(`tar czf "${tgzDst}" -C "${rewriteDir}" package`);
+rmSync(rewriteDir, { recursive: true });
 
 // Clean up
 rmSync(tmp, { recursive: true });
