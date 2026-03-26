@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
