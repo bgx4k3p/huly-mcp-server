@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
@@ -40,7 +40,8 @@
     "test:rest": "HULY_TRANSPORT=rest node --test test/integration.test.mjs",
     "lint": "eslint src/ scripts/",
     "postinstall": "node scripts/patch-sdk.mjs",
-    "pack": "node scripts/pack.mjs"
+    "pack": "node scripts/pack.mjs",
+    "version:sync": "node -e \"const{readFileSync:r,writeFileSync:w}=require('fs');const v=r('VERSION','utf-8').trim();const f='package.json';const j=JSON.parse(r(f,'utf-8'));j.version=v;w(f,JSON.stringify(j,null,2)+'\\n');console.log('Synced version '+v+' to package.json')\""
   },
   "dependencies": {
     "@hcengineering/api-client": "^0.7.3",

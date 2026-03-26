@@ -121,7 +121,7 @@ export const workspaceTools = {
   // Relations
   add_relation: (a, c) => c.addRelation(a.issueId, a.relatedToIssueId),
   add_blocked_by: (a, c) => c.addBlockedBy(a.issueId, a.blockedByIssueId),
-  set_parent: (a, c) => c.setParent(a.issueId, a.parentIssueId),
+  set_parent: (a, c) => c.setParent(a.issueId, a.parentId),
 
   // Task types & statuses
   list_task_types: (a, c) => c.listTaskTypes(a.project, { cursor: a.cursor, limit: a.limit }),

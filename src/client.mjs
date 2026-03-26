@@ -751,7 +751,11 @@ export class HulyClient {
     if (projectType?.tasks?.length) {
       const taskTypes = await client.findAll(task.class.TaskType, {});
       const scoped = taskTypes.filter(tt => projectType.tasks.includes(tt._id));
-      if (scoped.length) return scoped[0]._id;
+      if (scoped.length) {
+        // Prefer the type named "Task" (the common default), not the first in list (often Epic)
+        const taskType = scoped.find(tt => nameMatch(tt.name || tt._id.split(':').pop(), 'Task'));
+        return (taskType || scoped[0])._id;
+      }
     }
 
     throw new Error(
