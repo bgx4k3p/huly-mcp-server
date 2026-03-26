@@ -301,6 +301,14 @@ describe('Workspace tool dispatch — param forwarding', () => {
         assert.deepEqual(call.args[1], { newName: 'defect', color: 'blue', description: 'Updated' });
       }
     },
+    {
+      name: 'delete_label',
+      args: { name: 'obsolete' },
+      expectMethod: 'deleteLabel',
+      validate: (call) => {
+        assert.equal(call.args[0], 'obsolete');
+      }
+    },
     // Relations
     {
       name: 'add_relation',
@@ -322,7 +330,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'set_parent',
-      args: { issueId: 'P-2', parentIssueId: 'P-1' },
+      args: { issueId: 'P-2', parentId: 'P-1' },
       expectMethod: 'setParent',
       validate: (call) => {
         assert.equal(call.args[0], 'P-2');
@@ -746,7 +754,8 @@ describe('Required param coverage — no undefined forwarding', () => {
       remove_label: { issueId: 'P-1', label: 'bug' },
       add_relation: { issueId: 'P-1', relatedToIssueId: 'P-2' },
       add_blocked_by: { issueId: 'P-1', blockedByIssueId: 'P-2' },
-      set_parent: { issueId: 'P-1', parentIssueId: 'P-2' },
+      set_parent: { issueId: 'P-1', parentId: 'P-2' },
+      delete_label: { name: 'L' },
       add_comment: { issueId: 'P-1', text: 'Hi' },
       log_time: { issueId: 'P-1', hours: 2 },
       move_issue: { issueId: 'P-1', targetProject: 'Q' },

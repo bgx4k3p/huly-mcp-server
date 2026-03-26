@@ -117,6 +117,7 @@ export const workspaceTools = {
   create_label: (a, c) => c.createLabel(a.name, a.color, a.description),
   update_label: (a, c) =>
     c.updateLabel(a.name, { newName: a.newName, color: a.color, description: a.description }),
+  delete_label: (a, c) => c.deleteLabel(a.name),
 
   // Relations
   add_relation: (a, c) => c.addRelation(a.issueId, a.relatedToIssueId),

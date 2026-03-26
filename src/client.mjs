@@ -1782,6 +1782,17 @@ export class HulyClient {
     };
   }
 
+  async deleteLabel(name) {
+    const client = await this._getClient();
+    const tagElement = await client.findOne(tags.class.TagElement, {
+      title: name,
+      targetClass: tracker.class.Issue
+    });
+    if (!tagElement) throw new Error(`Label "${name}" not found`);
+    await client.removeDoc(tags.class.TagElement, tagElement.space, tagElement._id);
+    return { message: `Label "${name}" deleted`, id: tagElement._id };
+  }
+
   /**
    * Add a "related to" relationship between two issues.
    * @param {string} issueId - Issue identifier
