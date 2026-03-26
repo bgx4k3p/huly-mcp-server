@@ -425,6 +425,7 @@ Full list of all MCP tools available through this server.
 | `get_label` | Find a label by name |
 | `create_label` | Create a new label with optional color |
 | `update_label` | Update label name, color, or description |
+| `delete_label` | Permanently delete a label |
 | `add_label` | Add a label to an issue |
 | `remove_label` | Remove a label from an issue |
 
@@ -442,8 +443,8 @@ Full list of all MCP tools available through this server.
 | --- | --- | --- |
 | `list_components` | List components in a project | -- |
 | `get_component` | Find a component by name | -- |
-| `create_component` | Create a new component | `descriptionFormat`: md/html/plain |
-| `update_component` | Update component fields | `descriptionFormat`: md/html/plain |
+| `create_component` | Create a new component (optional lead) | `descriptionFormat`: md/html/plain |
+| `update_component` | Update component name, description, or lead | `descriptionFormat`: md/html/plain |
 | `delete_component` | Delete a component | -- |
 
 ### Milestones
@@ -517,7 +518,7 @@ fetches related data in a single call:
 | --- | --- | --- | --- | --- | --- |
 | Project | `create_project` | `get_project` | `list_projects` | `update_project` | `delete_project` |
 | Issue | `create_issue` | `get_issue` | `list_issues` | `update_issue` | `delete_issue` |
-| Label | `create_label` | `get_label` | `list_labels` | `update_label` | `remove_label` |
+| Label | `create_label` | `get_label` | `list_labels` | `update_label` | `delete_label` |
 | Component | `create_component` | `get_component` | `list_components` | `update_component` | `delete_component` |
 | Milestone | `create_milestone` | `get_milestone` | `list_milestones` | `update_milestone` | `delete_milestone` |
 | Comment | `add_comment` | `get_comment` | `list_comments` | `update_comment` | `delete_comment` |

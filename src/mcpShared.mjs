@@ -389,6 +389,11 @@ function getToolDefinitions() {
       inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Current label name to find' }, newName: { type: 'string', description: 'New label name' }, color: { type: ['string', 'number'], description: 'New color: name (red, salmon, pink, hotpink, magenta, purple, indigo, violet, navy, blue, sky, cyan, teal, ocean, mint, green, olive, lime, gold, orange, brown, silver, gray, slate), palette index (0-23), or RGB hex (e.g., 0xBB83FC)' }, description: { type: 'string', description: 'New description' }, ...workspaceProp }, required: ['name'] }
     },
     {
+      name: 'delete_label',
+      description: 'Permanently delete a label. Irreversible — confirm with the user before proceeding.',
+      inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Label name to delete' }, ...workspaceProp }, required: ['name'] }
+    },
+    {
       name: 'get_label',
       description: 'Get details for a specific label by name.',
       inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Label name' }, ...workspaceProp }, required: ['name'] }

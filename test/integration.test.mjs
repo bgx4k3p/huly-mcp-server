@@ -841,6 +841,24 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
+  // ── delete_label ─────────────────────────────────────────
+
+  describe('delete_label', () => {
+    const labelName = `${TEST_PREFIX}-del-label-${Date.now()}`;
+
+    it('creates and then deletes a label', async () => {
+      const created = await client.createLabel(labelName);
+      assert.ok(created.id);
+      const deleted = await client.deleteLabel(labelName);
+      assert.ok(deleted.message.includes('deleted'));
+      await assert.rejects(() => client.getLabel(labelName), /not found/i);
+    });
+
+    it('throws for nonexistent label', async () => {
+      await assert.rejects(() => client.deleteLabel('NoSuchLabel999'), /not found/i);
+    });
+  });
+
   // ── milestone lifecycle ───────────────────────────────────
 
   describe('Milestone lifecycle (create, get, set, clear)', () => {
