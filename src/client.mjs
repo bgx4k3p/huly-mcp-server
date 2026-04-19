@@ -15,7 +15,7 @@ import {
   encodeCursor, decodeCursor,
   nameMatch, strictGet, withExtra,
   toCollaboratorMarkup, fromCollaboratorMarkup,
-  toMarkup, fromMarkup
+  toMarkup, toMarkupString, fromMarkup
 } from './helpers.mjs';
 
 export { PRIORITY_MAP, PRIORITY_NAMES, MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES };
@@ -2378,7 +2378,7 @@ export class HulyClient {
       issue._id,
       tracker.class.Issue,
       'comments',
-      { message: toMarkup(text, format), attachments: 0 },
+      { message: toMarkupString(text, format), attachments: 0 },
       commentId
     );
 
@@ -3597,7 +3597,7 @@ export class HulyClient {
     if (!comment) throw new Error(`Comment not found: ${commentId}`);
 
     await client.updateDoc(chunter.class.ChatMessage, project._id, commentId, {
-      message: toMarkup(text, format)
+      message: toMarkupString(text, format)
     });
 
     return {

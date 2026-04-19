@@ -246,6 +246,36 @@ export function toMarkup(text, format = 'markdown') {
 }
 
 /**
+ * Convert text to a Huly markup STRING (ProseMirror JSON stringified).
+ *
+ * Use this for fields stored inline on a doc (e.g. ChatMessage.message)
+ * where the UI expects a markup string, NOT a MarkupContent object.
+ * Fields stored as collaborator blobs (e.g. Issue.description) should
+ * keep using `toMarkup` so the api-client's uploadMarkup pipeline runs.
+ */
+export function toMarkupString(text, format = 'markdown') {
+  const emptyDoc = { type: 'doc', content: [] };
+  if (!text) return jsonToMarkup(emptyDoc);
+  let json;
+  switch (format) {
+    case 'html':
+      json = htmlToMarkup(text);
+      break;
+    case 'plain':
+      json = {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text }] }]
+      };
+      break;
+    case 'markdown':
+    default:
+      json = markdownToMarkup(text);
+      break;
+  }
+  return jsonToMarkup(json);
+}
+
+/**
  * Extract text from a Huly description/message field.
  * Handles: MarkupContent objects, ProseMirror JSON strings, plain strings,
  * and collaborator reference strings.
