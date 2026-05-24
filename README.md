@@ -17,8 +17,18 @@ May also work with [Huly Cloud](https://app.huly.io) (not yet tested).
 
 Huly has no public API. The only programmatic access is through their JavaScript SDK,
 which connects via WebSocket. This server wraps that SDK and exposes **MCP tools**
-over both stdio and **Streamable HTTP** transports — compatible with Claude Code,
-VS Code, n8n, and any MCP client.
+over both stdio and **Streamable HTTP** transports — compatible with Codex,
+Claude Code, VS Code, n8n, and any MCP client.
+
+## Documentation Map
+
+- **Install**: add the package to a project or run it with `npx`.
+- **Quick Start**: configure Huly authentication.
+- **Integrations**: connect Codex, Claude Code, HTTP clients, or Docker.
+- **Configuration Reference**: environment variables and workspace behavior.
+- **Network Configurations**: local, remote, and Cloudflare tunnel notes.
+- **Development and Publishing**: tests, linting, and package publishing.
+- **API Reference**: available MCP tools and response conventions.
 
 ## Install
 
@@ -42,23 +52,13 @@ cd huly-mcp-server
 npm install
 ```
 
-### Publishing
-
-The Huly SDK has `workspace:` protocol references in transitive
-dependencies on the npm registry. The custom pack script bundles
-only the needed SDK packages and prunes UI bloat (32MB to 4MB):
-
-```bash
-npm run pack
-npm publish bgx4k3p-huly-mcp-server-<version>.tgz --access public
-```
-
 ---
 
 ## Quick Start
 
 ### Authentication
 
+Configure Huly access first, then choose one integration in the next section.
 You can authenticate with either **email/password** or a **token**.
 
 #### Email and Password
@@ -75,8 +75,14 @@ export HULY_WORKSPACE=your-workspace
 Get a token from your Huly credentials — no env vars needed beforehand:
 
 ```bash
-node src/index.mjs --get-token -e your@email.com -p your-password -u https://your-huly-instance.com
+npx -y @bgx4k3p/huly-mcp-server --get-token \
+  -e your@email.com \
+  -p your-password \
+  -u https://your-huly-instance.com
 ```
+
+From a source checkout, use `node src/index.mjs --get-token` with the same
+flags.
 
 Then use it:
 
@@ -89,19 +95,80 @@ export HULY_WORKSPACE=your-workspace
 The token does not expire. You can store it in a secrets manager
 and stop exposing your password in environment variables.
 
+For local stdio clients, the project config examples below set
+`HULY_WORKSPACE` per repo. Optionally set `HULY_PROJECT` when a repository maps
+cleanly to one Huly project. After connecting a client, call
+`get_huly_context` first to verify that the workspace, project, URL host, and
+auth mode are what you expect.
+
 ---
 
 ## Integrations
 
-### Claude Code (stdio)
+Use stdio for local coding agents and Streamable HTTP for remote clients or
+automation systems.
 
-After cloning and running `npm install`, register the server:
+### Codex (project-scoped stdio)
+
+Codex supports MCP servers from `config.toml`. For project-specific Huly
+workspaces, generate a repo-local Codex config layer:
+
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-codex --workspace my-workspace
+```
+
+Optionally set a default project identifier for project-scoped tools:
+
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-codex --workspace my-workspace --project PROJ
+```
+
+This creates `.codex/config.toml`:
+
+```toml
+[mcp_servers.huly]
+command = "npx"
+args = ["-y", "@bgx4k3p/huly-mcp-server"]
+env_vars = ["HULY_URL", "HULY_TOKEN"]
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+
+[mcp_servers.huly.env]
+HULY_WORKSPACE = "my-workspace"
+HULY_PROJECT = "PROJ"
+```
+
+Keep secrets like `HULY_URL` and `HULY_TOKEN` in your user environment.
+Set `HULY_WORKSPACE` literally in each Codex or Claude project config so every
+repo, workspace folder, or editor project points to the intended Huly
+workspace. `HULY_PROJECT` is optional; when present, tools that naturally
+operate inside one project can omit the `project` argument. Explicit tool
+arguments still win.
+
+After starting a fresh Codex session in the project, run `get_huly_context`.
+It returns sanitized runtime context: default workspace, default project,
+Huly URL host, auth mode, and package version.
+
+Codex may show local stdio MCP servers as `unauthenticated` in `/mcp`.
+That label refers to MCP-level authentication, not Huly authentication.
+Use `get_huly_context` to confirm the downstream Huly auth mode is `token`
+or `email_password`.
+
+### Claude Code (project-scoped stdio)
+
+Generate `.mcp.json` for Claude Code:
+
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-claude --workspace my-workspace
+```
+
+Or add the server manually from a local source checkout:
 
 ```bash
 claude mcp add huly \
   -e HULY_URL=https://your-huly-instance.com \
   -e HULY_TOKEN=your-token \
-  -e HULY_WORKSPACE=your-workspace \
+  -e HULY_WORKSPACE=my-workspace \
   -- node /absolute/path/to/huly-mcp-server/src/index.mjs
 ```
 
@@ -114,12 +181,25 @@ Or add to your `.mcp.json` manually (token auth — recommended):
       "command": "node",
       "args": ["/path/to/huly-mcp-server/src/index.mjs"],
       "env": {
-        "HULY_URL": "https://your-huly-instance.com",
+        "HULY_URL": "${HULY_URL}",
         "HULY_TOKEN": "${HULY_TOKEN}",
-        "HULY_WORKSPACE": "${HULY_WORKSPACE}"
+        "HULY_WORKSPACE": "my-workspace"
       }
     }
   }
+}
+```
+
+For project-specific workspaces, keep secrets in environment variables and set
+the workspace slug literally in each repo. `HULY_PROJECT` is optional; set it
+only when the repo maps cleanly to one Huly project:
+
+```json
+"env": {
+  "HULY_URL": "${HULY_URL}",
+  "HULY_TOKEN": "${HULY_TOKEN}",
+  "HULY_WORKSPACE": "my-workspace",
+  "HULY_PROJECT": "PROJ"
 }
 ```
 
@@ -132,25 +212,32 @@ Or with email/password:
       "command": "node",
       "args": ["/path/to/huly-mcp-server/src/index.mjs"],
       "env": {
-        "HULY_URL": "https://your-huly-instance.com",
+        "HULY_URL": "${HULY_URL}",
         "HULY_EMAIL": "${HULY_EMAIL}",
         "HULY_PASSWORD": "${HULY_PASSWORD}",
-        "HULY_WORKSPACE": "${HULY_WORKSPACE}"
+        "HULY_WORKSPACE": "my-workspace"
       }
     }
   }
 }
 ```
 
-Then ask Claude things like:
+### Generate Both Project Configs
 
-- "List my issues in the OPS project"
-- "Create a bug report for the login page crash"
-- "Summarize the PROJ project — what's overdue?"
-- "Break down this feature into subtasks using the feature template"
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-all --workspace my-workspace
+```
 
-All tools have detailed descriptions optimized for AI agents.
-MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{id}`.
+With an optional default project:
+
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-all --workspace my-workspace --project PROJ
+```
+
+`--init-claude` creates or updates `.mcp.json` while preserving other MCP
+servers. `--init-codex` creates `.codex/config.toml` for trusted Codex
+projects while preserving unrelated Codex settings. Existing Huly entries are
+not replaced unless `--force` is passed.
 
 ### Streamable HTTP (n8n, VS Code, remote clients)
 
@@ -195,9 +282,25 @@ docker run -i \
   huly-mcp-server node src/mcp.mjs
 ```
 
+### Verify the Connection
+
+In any MCP client, call `get_huly_context` first. It confirms the active
+workspace, optional project, Huly URL host, auth mode, and package version
+without exposing secrets.
+
+Then ask your MCP client things like:
+
+- "List my issues in the PROJ project"
+- "Create a bug report for the login page crash"
+- "Summarize the PROJ project — what's overdue?"
+- "Break down this feature into subtasks using the feature template"
+
+All tools have detailed descriptions optimized for AI agents.
+MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{id}`.
+
 ---
 
-## Server Configuration
+## Configuration Reference
 
 ### Environment Variables
 
@@ -209,6 +312,7 @@ docker run -i \
 | `HULY_EMAIL` | No | - | Huly login email (required if no token) |
 | `HULY_PASSWORD` | No | - | Huly login password (required if no token) |
 | `HULY_WORKSPACE` | Yes* | - | Default workspace slug |
+| `HULY_PROJECT` | No | - | Optional default project identifier for project-scoped tools |
 | `HULY_TRANSPORT` | No | `ws` | SDK transport: `ws` (WebSocket) or `rest` (REST API) |
 | `HULY_POOL_TTL_MS` | No | `1800000` | Connection pool TTL in ms (30 min) |
 | **HTTP Server** | | | |
@@ -235,7 +339,7 @@ MCP_AUTH_TOKEN=your-token-here npm run start:server
 
 If `MCP_AUTH_TOKEN` is not set, auth is disabled (fine for local-only usage).
 
-MCP stdio mode (Claude Code) does not use this token — stdio is inherently local.
+MCP stdio mode does not use this token — stdio is inherently local.
 
 ### Multi-Workspace
 
@@ -247,33 +351,6 @@ caches clients by workspace slug with configurable TTL:
 ```
 
 If omitted, the `HULY_WORKSPACE` env var is used as the default.
-
----
-
-## Testing
-
-Uses Node.js built-in `node:test` and `node:assert` — no test framework dependencies.
-Tests run twice: once with WebSocket transport, once with REST transport.
-
-```bash
-npm test              # Both transports (ws + rest)
-npm run test:ws       # WebSocket only
-npm run test:rest     # REST only
-```
-
-194 tests across 101 suites:
-
-| Suite | Tests | Description |
-| --- | --- | --- |
-| **Unit** | 28 | Constants, ID parsing, rate limiting, auth logic |
-| **Integration** | 55 | Full CRUD lifecycle against live Huly |
-| **Dispatch** | 45 | Schema to dispatch to client param forwarding for all tools |
-| **Account-level** | 11 | Workspaces, profile, social IDs |
-| **Mock** | 44 | Destructive ops, token auth via mocks |
-| **Streamable HTTP** | 11 | MCP protocol over HTTP: init, tools, resources, auth, rate limiting |
-
-**100% dispatch coverage** — every tool's params are traced end-to-end
-through the dispatch table to the client method.
 
 ---
 
@@ -296,6 +373,57 @@ bypass Application for `/_*` or these individual paths:
 
 ---
 
+## Testing
+
+Uses Node.js built-in `node:test` and `node:assert` — no test framework dependencies.
+The live integration suite runs twice: once with WebSocket transport and once
+with REST transport. Focused unit suites cover dispatch, MCP tool metadata, and
+project config generation.
+
+```bash
+npm test              # Both transports (ws + rest)
+npm run test:ws       # WebSocket only
+npm run test:rest     # REST only
+```
+
+Test coverage:
+
+| Suite | Description |
+| --- | --- |
+| **Unit** | Constants, ID parsing, rate limiting, auth logic |
+| **Integration** | Full CRUD lifecycle against live Huly |
+| **Dispatch** | Schema to dispatch to client param forwarding for all tools |
+| **MCP metadata** | Tool registration, `get_huly_context`, default project schemas |
+| **Project config** | `--init-claude`, `--init-codex`, `--init-all` helpers |
+| **Account-level** | Workspaces, profile, social IDs |
+| **Mock** | Destructive ops, token auth via mocks |
+| **Streamable HTTP** | MCP protocol over HTTP: init, tools, resources, auth, rate limiting |
+
+**100% dispatch coverage** — every tool's params are traced end-to-end
+through the dispatch table to the client method.
+
+---
+
+## Development and Publishing
+
+For local development:
+
+```bash
+npm install
+npm run lint
+node --test test/initCodex.test.mjs test/mcpShared.test.mjs
+```
+
+The custom pack script bundles only the Huly SDK packages needed at runtime
+and prunes UI/frontend bloat from the published tarball:
+
+```bash
+npm run pack
+npm publish bgx4k3p-huly-mcp-server-<version>.tgz --access public
+```
+
+---
+
 ## Architecture
 
 ```text
@@ -305,14 +433,15 @@ src/
   dispatch.mjs  # Tool-to-method dispatch table
   pool.mjs      # Connection pool — caches clients by workspace with TTL
   mcpShared.mjs # Shared MCP server factory — tool definitions + resources
-  mcp.mjs       # MCP stdio entry point (Claude Code)
+  mcp.mjs       # MCP stdio entry point (Codex, Claude Code)
   server.mjs    # MCP Streamable HTTP entry point (n8n, VS Code, remote)
-  index.mjs     # CLI entry point — --get-token mode + MCP re-export
+  initCodex.mjs # Project config helpers for Codex and Claude Code
+  index.mjs     # CLI entry point — --get-token, --init-* modes + MCP re-export
 ```
 
 ```text
-Claude Code  -> stdio           -> mcp.mjs    -> mcpShared.mjs -> pool -> client -> Huly SDK
-n8n / remote -> Streamable HTTP -> server.mjs -> mcpShared.mjs -> pool -> client -> Huly SDK
+Claude / Codex -> stdio           -> mcp.mjs    -> mcpShared.mjs -> pool -> client -> Huly SDK
+n8n / remote   -> Streamable HTTP -> server.mjs -> mcpShared.mjs -> pool -> client -> Huly SDK
 ```
 
 ---
@@ -360,6 +489,7 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description |
 | --- | --- |
+| `get_huly_context` | Show sanitized runtime context: default workspace, default project, Huly URL host, auth mode, and package version |
 | `list_workspaces` | List all accessible workspaces |
 | `get_workspace_info` | Get workspace details by slug |
 | `create_workspace` | Create a new workspace |

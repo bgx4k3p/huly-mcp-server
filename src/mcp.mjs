@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Huly MCP Server - stdio transport entry point for Claude Code.
+ * Huly MCP Server - stdio transport entry point for local MCP clients.
  *
  * Uses the shared MCP server factory from mcpShared.mjs.
  *

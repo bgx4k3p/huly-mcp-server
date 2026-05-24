@@ -8,6 +8,7 @@ export const HULY_TOKEN = process.env.HULY_TOKEN;
 export const HULY_EMAIL = process.env.HULY_EMAIL;
 export const HULY_PASSWORD = process.env.HULY_PASSWORD;
 export const HULY_WORKSPACE = process.env.HULY_WORKSPACE;
+export const HULY_PROJECT = process.env.HULY_PROJECT;
 export const HULY_CREDS = HULY_TOKEN
   ? { token: HULY_TOKEN }
   : { email: HULY_EMAIL, password: HULY_PASSWORD };
