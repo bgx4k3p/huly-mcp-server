@@ -2378,7 +2378,7 @@ export class HulyClient {
       issue._id,
       tracker.class.Issue,
       'comments',
-      { message: toMarkup(text, format), attachments: 0 },
+      { message: toCollaboratorMarkup(text, format), attachments: 0 },
       commentId
     );
 
@@ -3597,7 +3597,7 @@ export class HulyClient {
     if (!comment) throw new Error(`Comment not found: ${commentId}`);
 
     await client.updateDoc(chunter.class.ChatMessage, project._id, commentId, {
-      message: toMarkup(text, format)
+      message: toCollaboratorMarkup(text, format)
     });
 
     return {
