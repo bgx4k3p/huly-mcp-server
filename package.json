@@ -16,6 +16,7 @@
     "model-context-protocol",
     "issue-tracker",
     "rest-api",
+    "codex",
     "claude",
     "ai-agent"
   ],
@@ -44,12 +45,12 @@
     "version:sync": "node -e \"const{readFileSync:r,writeFileSync:w}=require('fs');const v=r('VERSION','utf-8').trim();const f='package.json';const j=JSON.parse(r(f,'utf-8'));j.version=v;w(f,JSON.stringify(j,null,2)+'\\n');console.log('Synced version '+v+' to package.json')\""
   },
   "dependencies": {
-    "@hcengineering/api-client": "^0.7.3",
-    "@hcengineering/chunter": "^0.7.0",
-    "@hcengineering/core": "^0.7.4",
-    "@hcengineering/tags": "^0.7.0",
-    "@hcengineering/task": "^0.7.0",
-    "@hcengineering/tracker": "^0.7.0",
+    "@hcengineering/api-client": "^0.7.423",
+    "@hcengineering/chunter": "^0.7.423",
+    "@hcengineering/core": "^0.7.423",
+    "@hcengineering/tags": "^0.7.423",
+    "@hcengineering/task": "^0.7.423",
+    "@hcengineering/tracker": "^0.7.423",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "jsdom": "^29.0.0"
   },

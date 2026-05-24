@@ -47,10 +47,10 @@ for (const pkg of hulyNeeded) {
   }
 }
 
-// Strip @hcengineering/* deps from bundled packages so npm doesn't try
-// to fetch them from the registry (some published versions use workspace:
-// protocol which npm can't resolve). All needed packages are already
-// co-located in node_modules so Node.js resolves them via the file system.
+// Strip @hcengineering/* deps from bundled packages so the published tarball
+// stays self-contained and npm does not fetch unused SDK/frontend packages.
+// All needed packages are already co-located in node_modules, so Node.js
+// resolves them via the file system.
 const hulySet = new Set(hulyNeeded);
 for (const pkg of hulyNeeded) {
   const pkgJsonPath = join(tmp, 'node_modules', '@hcengineering', pkg, 'package.json');
@@ -107,8 +107,8 @@ cpSync(tgzSrc, tgzDst);
 
 // Rewrite the tarball's package.json to remove @hcengineering/* from
 // dependencies. npm resolves deps from registry metadata BEFORE extracting
-// bundled packages — keeping them in dependencies causes npm to fetch
-// Huly SDK versions with broken workspace: protocol references.
+// bundled packages; keeping them here makes npm fetch SDK packages that are
+// already bundled and may pull in unused frontend dependencies.
 const rewriteDir = join(root, '.pack-rewrite');
 if (existsSync(rewriteDir)) rmSync(rewriteDir, { recursive: true });
 mkdirSync(rewriteDir, { recursive: true });

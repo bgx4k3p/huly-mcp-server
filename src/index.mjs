@@ -6,11 +6,41 @@
  *   node src/index.mjs                          → Start MCP stdio server
  *   node src/index.mjs --get-token              → Print JWT (uses HULY_EMAIL/HULY_PASSWORD env vars)
  *   node src/index.mjs --get-token -e EMAIL -p PASS -u URL
+ *   node src/index.mjs --init-codex             → Generate project .codex/config.toml
+ *   node src/index.mjs --init-claude            → Generate project .mcp.json
+ *   node src/index.mjs --init-all               → Generate Claude and Codex project config
  */
 
 const args = process.argv.slice(2);
 
-if (args.includes('--get-token')) {
+if (args.includes('--init-all')) {
+  const { initAllConfigs } = await import('./initCodex.mjs');
+  try {
+    const result = initAllConfigs(args.filter(arg => arg !== '--init-all'));
+    console.log(result.message);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+} else if (args.includes('--init-claude')) {
+  const { initClaudeConfig } = await import('./initCodex.mjs');
+  try {
+    const result = initClaudeConfig(args.filter(arg => arg !== '--init-claude'));
+    console.log(result.message);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+} else if (args.includes('--init-codex')) {
+  const { initCodexConfig } = await import('./initCodex.mjs');
+  try {
+    const result = initCodexConfig(args.filter(arg => arg !== '--init-codex'));
+    console.log(result.message);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+} else if (args.includes('--get-token')) {
   const flag = (name) => {
     const i = args.indexOf(name);
     return i !== -1 && i + 1 < args.length ? args[i + 1] : undefined;

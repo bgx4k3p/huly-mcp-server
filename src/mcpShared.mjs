@@ -16,12 +16,38 @@ import {
 import { createRequire } from 'module';
 import { pool } from './pool.mjs';
 import { accountTools, workspaceTools } from './dispatch.mjs';
-import { HULY_URL, HULY_CREDS } from './config.mjs';
+import { HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, HULY_WORKSPACE, HULY_PROJECT, HULY_CREDS } from './config.mjs';
 
 const require = createRequire(import.meta.url);
 const { name: PKG_NAME, version: PKG_VERSION } = require('../package.json');
 
 export { PKG_NAME, PKG_VERSION };
+
+const PROJECT_DEFAULT_TOOLS = new Set([
+  'get_project',
+  'list_issues',
+  'create_issue',
+  'update_project',
+  'delete_project',
+  'archive_project',
+  'batch_create_issues',
+  'summarize_project',
+  'create_issues_from_template',
+  'list_components',
+  'get_component',
+  'create_component',
+  'update_component',
+  'delete_component',
+  'list_milestones',
+  'get_milestone',
+  'create_milestone',
+  'update_milestone',
+  'delete_milestone',
+  'list_statuses',
+  'get_status',
+  'list_task_types',
+  'get_task_type'
+]);
 
 // Optional workspace property added to every tool
 const workspaceProp = {
@@ -47,18 +73,51 @@ const paginationProps = {
 
 export { workspaceProp };
 
+function hulyUrlHost() {
+  try {
+    return new URL(HULY_URL).host;
+  } catch {
+    return HULY_URL || null;
+  }
+}
+
+function authMode() {
+  if (HULY_TOKEN) return 'token';
+  if (HULY_EMAIL && HULY_PASSWORD) return 'email_password';
+  if (HULY_EMAIL || HULY_PASSWORD) return 'incomplete_email_password';
+  return 'none';
+}
+
+function getHulyContext() {
+  return {
+    defaultWorkspace: HULY_WORKSPACE || null,
+    defaultProject: HULY_PROJECT || null,
+    hulyUrlHost: hulyUrlHost(),
+    authMode: authMode(),
+    packageName: PKG_NAME,
+    packageVersion: PKG_VERSION
+  };
+}
+
 /**
  * Route a tool call to the appropriate HulyClient method.
  */
-export async function handleToolCall(name, args) {
+export async function handleToolCall(name, args = {}) {
+  if (name === 'get_huly_context') {
+    return getHulyContext();
+  }
+
   if (accountTools[name]) {
     return await accountTools[name](args, HULY_URL, HULY_CREDS);
   }
 
   if (workspaceTools[name]) {
-    const workspace = args.workspace || process.env.HULY_WORKSPACE;
+    const toolArgs = PROJECT_DEFAULT_TOOLS.has(name) && HULY_PROJECT && !args.project
+      ? { ...args, project: HULY_PROJECT }
+      : args;
+    const workspace = toolArgs.workspace || process.env.HULY_WORKSPACE;
     const client = await pool.getClient(workspace);
-    return await client.withReconnect(() => workspaceTools[name](args, client));
+    return await client.withReconnect(() => workspaceTools[name](toolArgs, client));
   }
 
   throw new Error(`Unknown tool: ${name}`);
@@ -71,7 +130,7 @@ export async function handleToolCall(name, args) {
  */
 export function createMcpServer(capabilities = {}) {
   // Import TOOLS inline to keep this module self-contained
-  const TOOLS = getToolDefinitions();
+  const TOOLS = applyDefaultProject(getToolDefinitions());
 
   const server = new Server(
     { name: PKG_NAME, version: PKG_VERSION },
@@ -185,6 +244,11 @@ export function createMcpServer(capabilities = {}) {
 
 function getToolDefinitions() {
   return [
+    {
+      name: 'get_huly_context',
+      description: 'Return sanitized runtime context for this Huly MCP server: default workspace, default project, Huly URL host, auth mode, package name, and package version. Does not return secrets.',
+      inputSchema: { type: 'object', properties: {}, required: [] }
+    },
     // ── Account & Workspace Management ──────────────────────
     {
       name: 'list_workspaces',
@@ -615,4 +679,30 @@ function getToolDefinitions() {
       inputSchema: { type: 'object', properties: { reportId: { type: 'string', description: 'Time report ID' }, ...workspaceProp }, required: ['reportId'] }
     },
   ];
+}
+
+function applyDefaultProject(tools) {
+  if (!HULY_PROJECT) return tools;
+
+  return tools.map(tool => {
+    if (!PROJECT_DEFAULT_TOOLS.has(tool.name)) return tool;
+
+    const schema = tool.inputSchema;
+    if (!schema?.properties?.project || !schema.required?.includes('project')) return tool;
+
+    return {
+      ...tool,
+      inputSchema: {
+        ...schema,
+        properties: {
+          ...schema.properties,
+          project: {
+            ...schema.properties.project,
+            description: `${schema.properties.project.description} Optional when HULY_PROJECT is set; defaults to "${HULY_PROJECT}".`
+          }
+        },
+        required: schema.required.filter(name => name !== 'project')
+      }
+    };
+  });
 }
