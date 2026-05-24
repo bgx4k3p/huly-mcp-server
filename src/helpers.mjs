@@ -232,8 +232,8 @@ export function fromCollaboratorMarkup(markup, format = 'markdown') {
 }
 
 /**
- * Convert text to MarkupContent for non-collaborator fields
- * (milestones, comments, components, projects).
+ * Convert text to MarkupContent for SDK fields that expect MarkupContent
+ * instead of serialized ProseMirror markup strings.
  */
 export function toMarkup(text, format = 'markdown') {
   if (!text) return new MarkupContent('');

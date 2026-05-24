@@ -105,6 +105,64 @@ describe('Unit Tests', () => {
     });
   });
 
+  // ── Comment markup serialization ────────────────────────────
+
+  describe('Comment markup serialization', () => {
+    let HulyClient, fromCollaboratorMarkup;
+
+    before(async () => {
+      const clientMod = await import('../src/client.mjs');
+      const helpersMod = await import('../src/helpers.mjs');
+      HulyClient = clientMod.HulyClient;
+      fromCollaboratorMarkup = helpersMod.fromCollaboratorMarkup;
+    });
+
+    function createHarness(fakeSdk) {
+      const client = new HulyClient({
+        url: HULY_URL,
+        token: 'test-token',
+        workspace: 'test-workspace'
+      });
+      client._getClient = async () => fakeSdk;
+      client._parseAndFindIssue = async () => ({
+        project: { _id: 'project-space' },
+        issue: { _id: 'issue-id' }
+      });
+      return client;
+    }
+
+    it('serializes added comments as ProseMirror markup strings', async () => {
+      let payload;
+      const fakeSdk = {
+        addCollection: async (_classRef, _space, _attachedTo, _attachedToClass, _collection, data) => {
+          payload = data;
+        }
+      };
+
+      const client = createHarness(fakeSdk);
+      await client.addComment('TEST-1', '**Hello** comment', 'markdown');
+
+      assert.equal(typeof payload.message, 'string');
+      assert.equal(fromCollaboratorMarkup(payload.message), '**Hello** comment');
+    });
+
+    it('serializes updated comments as ProseMirror markup strings', async () => {
+      let updates;
+      const fakeSdk = {
+        findOne: async () => ({ _id: 'comment-id' }),
+        updateDoc: async (_classRef, _space, _id, data) => {
+          updates = data;
+        }
+      };
+
+      const client = createHarness(fakeSdk);
+      await client.updateComment('TEST-1', 'comment-id', 'Updated comment', 'plain');
+
+      assert.equal(typeof updates.message, 'string');
+      assert.equal(fromCollaboratorMarkup(updates.message), 'Updated comment');
+    });
+  });
+
   // ── Issue ID regex parsing ──────────────────────────────────
 
   describe('Issue ID regex parsing', () => {
