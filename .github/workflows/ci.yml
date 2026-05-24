@@ -54,21 +54,23 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - name: Build slim package
         run: npm run pack
-      - name: Publish with provenance
+      - name: Publish to npm
         run: |
+          PACKAGE=$(node -e "console.log(require('./package.json').name)")
           VERSION=$(node -e "console.log(require('./package.json').version)")
           TARBALL="bgx4k3p-huly-mcp-server-${VERSION}.tgz"
-          if [ -f "$TARBALL" ]; then
-            npm publish "$TARBALL" --access public --provenance || echo "Version already published"
-          else
+          if [ ! -f "$TARBALL" ]; then
             echo "Tarball not found: $TARBALL"
             exit 1
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          if npm view "${PACKAGE}@${VERSION}" version --silent >/dev/null 2>&1; then
+            echo "${PACKAGE}@${VERSION} is already published"
+            exit 0
+          fi
+          npm publish "$TARBALL" --access public
