@@ -11,8 +11,9 @@
  * proxy → assert the client method received every expected argument.
  */
 
-import { describe, it, before } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { accountTools, workspaceTools } from '../src/dispatch.mjs';
 
 // ════════════════════════════════════════════════════════════════
 // Test helpers
@@ -58,25 +59,6 @@ function createRecorder() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// Load modules
-// ════════════════════════════════════════════════════════════════
-
-let TOOLS, accountTools, workspaceTools;
-
-before(async () => {
-  // Import TOOLS from mcp.mjs — need to handle the env setup
-  process.env.HULY_URL = process.env.HULY_URL || 'http://localhost:8087';
-  process.env.HULY_TOKEN = process.env.HULY_TOKEN || 'test-token';
-  process.env.HULY_WORKSPACE = process.env.HULY_WORKSPACE || 'test-ws';
-
-  const mcp = await import('../src/mcp.mjs');
-  // TOOLS is not exported, so we extract from the dispatch module and schemas
-  const dispatch = await import('../src/dispatch.mjs');
-  accountTools = dispatch.accountTools;
-  workspaceTools = dispatch.workspaceTools;
-});
-
-// ════════════════════════════════════════════════════════════════
 // 1. Dispatch table completeness
 // ════════════════════════════════════════════════════════════════
 
@@ -119,7 +101,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
       args: { include_details: true },
       expectMethod: 'listProjects',
       validate: (call) => {
-        assert.deepEqual(call.args[0], { include_details: true });
+        assert.deepEqual(call.args[0], { include_details: true, cursor: undefined, limit: undefined });
       }
     },
     {
@@ -280,7 +262,9 @@ describe('Workspace tool dispatch — param forwarding', () => {
       name: 'list_labels',
       args: {},
       expectMethod: 'listLabels',
-      validate: (call) => assert.equal(call.args.length, 0)
+      validate: (call) => {
+        assert.deepEqual(call.args[0], { cursor: undefined, limit: undefined });
+      }
     },
     {
       name: 'create_label',
@@ -361,7 +345,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
       validate: (call) => {
         assert.equal(call.args[0], 'P');
         assert.equal(call.args[1], 'Planned');
-        assert.deepEqual(call.args[2], { include_details: true });
+        assert.deepEqual(call.args[2], { include_details: true, cursor: undefined, limit: undefined });
       }
     },
     {
@@ -425,7 +409,9 @@ describe('Workspace tool dispatch — param forwarding', () => {
       name: 'list_members',
       args: {},
       expectMethod: 'listMembers',
-      validate: (call) => assert.equal(call.args.length, 0)
+      validate: (call) => {
+        assert.deepEqual(call.args[0], { cursor: undefined, limit: undefined });
+      }
     },
     // Comments
     {
