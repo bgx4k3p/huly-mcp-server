@@ -6,9 +6,9 @@
  *   node src/index.mjs                          → Start MCP stdio server
  *   node src/index.mjs --get-token              → Print JWT (uses HULY_EMAIL/HULY_PASSWORD env vars)
  *   node src/index.mjs --get-token -e EMAIL -p PASS -u URL
- *   node src/index.mjs --init-codex             → Generate project .codex/config.toml
- *   node src/index.mjs --init-claude            → Generate project .mcp.json
- *   node src/index.mjs --init-all               → Generate Claude and Codex project config
+ *   node src/index.mjs --init-codex --url URL --workspace WS
+ *   node src/index.mjs --init-claude --url URL --workspace WS
+ *   node src/index.mjs --init-all --url URL --workspace WS
  */
 
 const args = process.argv.slice(2);

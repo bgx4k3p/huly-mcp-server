@@ -111,16 +111,22 @@ automation systems.
 ### Codex (project-scoped stdio)
 
 Codex supports MCP servers from `config.toml`. For project-specific Huly
-workspaces, generate a repo-local Codex config layer:
+workspaces, generate a repo-local Codex config layer with literal routing
+values:
 
 ```bash
-npx -y @bgx4k3p/huly-mcp-server --init-codex --workspace my-workspace
+npx -y @bgx4k3p/huly-mcp-server --init-codex \
+  --url https://your-huly-instance.com \
+  --workspace my-workspace
 ```
 
 Optionally set a default project identifier for project-scoped tools:
 
 ```bash
-npx -y @bgx4k3p/huly-mcp-server --init-codex --workspace my-workspace --project PROJ
+npx -y @bgx4k3p/huly-mcp-server --init-codex \
+  --url https://your-huly-instance.com \
+  --workspace my-workspace \
+  --project PROJ
 ```
 
 This creates `.codex/config.toml`:
@@ -129,21 +135,45 @@ This creates `.codex/config.toml`:
 [mcp_servers.huly]
 command = "npx"
 args = ["-y", "@bgx4k3p/huly-mcp-server"]
-env_vars = ["HULY_URL", "HULY_TOKEN"]
+env_vars = ["HULY_TOKEN"]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
 
 [mcp_servers.huly.env]
+HULY_URL = "https://your-huly-instance.com"
 HULY_WORKSPACE = "my-workspace"
 HULY_PROJECT = "PROJ"
 ```
 
-Keep secrets like `HULY_URL` and `HULY_TOKEN` in your user environment.
-Set `HULY_WORKSPACE` literally in each Codex or Claude project config so every
-repo, workspace folder, or editor project points to the intended Huly
-workspace. `HULY_PROJECT` is optional; when present, tools that naturally
-operate inside one project can omit the `project` argument. Explicit tool
-arguments still win.
+Keep secrets like `HULY_TOKEN` in your user environment. Write non-secret
+routing values (`HULY_URL`, `HULY_WORKSPACE`, and optionally `HULY_PROJECT`)
+literally in each Codex project config so every repo, workspace folder, or
+editor project points to the intended Huly instance. This avoids accidentally
+inheriting a stale editor environment such as `HULY_URL=http://localhost:8087`.
+`HULY_PROJECT` is optional; when present, tools that naturally operate inside
+one project can omit the `project` argument. Explicit tool arguments still win.
+
+If you intentionally want project routing to come from environment variables,
+use the matching `*-env` flags instead:
+
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-codex \
+  --url-env HULY_URL \
+  --workspace-env HULY_WORKSPACE \
+  --project-env HULY_PROJECT
+```
+
+That writes the routing variables to Codex `env_vars` instead of literal values
+under `[mcp_servers.huly.env]`.
+
+For backward compatibility, omitting `--url` also leaves `HULY_URL` as a runtime
+environment reference. The generator does not read and copy the current shell's
+`HULY_URL` value into the project config unless you pass it explicitly with
+`--url`.
+
+`.codex/` is local machine configuration and should not be committed to a
+public repository. Keep project-specific Codex config private unless you have
+intentionally sanitized it for sharing.
 
 After starting a fresh Codex session in the project, run `get_huly_context`.
 It returns sanitized runtime context: default workspace, default project,
@@ -156,11 +186,25 @@ or `email_password`.
 
 ### Claude Code (project-scoped stdio)
 
-Generate `.mcp.json` for Claude Code:
+Generate `.mcp.json` for Claude Code with literal routing values:
 
 ```bash
-npx -y @bgx4k3p/huly-mcp-server --init-claude --workspace my-workspace
+npx -y @bgx4k3p/huly-mcp-server --init-claude \
+  --url https://your-huly-instance.com \
+  --workspace my-workspace
 ```
+
+Or route through environment variables instead:
+
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-claude \
+  --url-env HULY_URL \
+  --workspace-env HULY_WORKSPACE \
+  --project-env HULY_PROJECT
+```
+
+For backward compatibility, `--init-claude --workspace my-workspace` still
+writes `HULY_URL` as `${HULY_URL}`.
 
 Or add the server manually from a local source checkout:
 
@@ -190,9 +234,11 @@ Or add to your `.mcp.json` manually (token auth — recommended):
 }
 ```
 
-For project-specific workspaces, keep secrets in environment variables and set
-the workspace slug literally in each repo. `HULY_PROJECT` is optional; set it
-only when the repo maps cleanly to one Huly project:
+For project-specific workspaces, keep secrets in environment variables. Use
+literal routing values when the repo maps to one Huly instance/workspace, or
+`*-env` flags when you want the runtime environment to select them.
+`HULY_PROJECT` is optional; set it only when the repo maps cleanly to one Huly
+project:
 
 ```json
 "env": {
@@ -225,13 +271,28 @@ Or with email/password:
 ### Generate Both Project Configs
 
 ```bash
-npx -y @bgx4k3p/huly-mcp-server --init-all --workspace my-workspace
+npx -y @bgx4k3p/huly-mcp-server --init-all \
+  --url https://your-huly-instance.com \
+  --workspace my-workspace
 ```
 
 With an optional default project:
 
 ```bash
-npx -y @bgx4k3p/huly-mcp-server --init-all --workspace my-workspace --project PROJ
+npx -y @bgx4k3p/huly-mcp-server --init-all \
+  --url https://your-huly-instance.com \
+  --workspace my-workspace \
+  --project PROJ
+```
+
+Or generate both configs with routing values read from runtime environment
+variables:
+
+```bash
+npx -y @bgx4k3p/huly-mcp-server --init-all \
+  --url-env HULY_URL \
+  --workspace-env HULY_WORKSPACE \
+  --project-env HULY_PROJECT
 ```
 
 `--init-claude` creates or updates `.mcp.json` while preserving other MCP

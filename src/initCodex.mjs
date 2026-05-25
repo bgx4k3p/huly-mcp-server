@@ -9,16 +9,17 @@ const DEFAULT_SERVER_NAME = 'huly';
 
 function usage(command = 'all') {
   const commands = {
-    codex: 'huly-mcp-server --init-codex [--workspace <slug>] [--project <identifier>] [--server-name <name>] [--force]',
-    claude: 'huly-mcp-server --init-claude --workspace <slug> [--project <identifier>] [--server-name <name>] [--force]',
-    all: 'huly-mcp-server --init-all --workspace <slug> [--project <identifier>] [--server-name <name>] [--force]'
+    codex: 'huly-mcp-server --init-codex [--url <url>|--url-env <var>] [--workspace <slug>|--workspace-env <var>] [--project <id>|--project-env <var>] [--server-name <name>] [--force]',
+    claude: 'huly-mcp-server --init-claude [--url <url>|--url-env <var>] [--workspace <slug>|--workspace-env <var>] [--project <id>|--project-env <var>] [--server-name <name>] [--force]',
+    all: 'huly-mcp-server --init-all [--url <url>|--url-env <var>] [--workspace <slug>|--workspace-env <var>] [--project <id>|--project-env <var>] [--server-name <name>] [--force]'
   };
   return [
     `Usage: ${commands[command] || commands.all}`,
     '',
-    'Secrets are referenced from the user environment.',
-    'HULY_WORKSPACE is written literally per project.',
-    'HULY_PROJECT is optional and written only when --project is provided or inferable.'
+    'Secrets are referenced from the user environment by default.',
+    'Use --url/--workspace/--project to write literal routing values.',
+    'Use --url-env/--workspace-env/--project-env to reference routing values from environment variables.',
+    'HULY_PROJECT is optional and written only when --project, --project-env, or an existing config provides it.'
   ].join('\n');
 }
 
@@ -63,52 +64,122 @@ function readMcpJson(mcpPath) {
   return JSON.parse(raw);
 }
 
-function inferLiteralEnv(hulyConfig, key, explicitValue) {
-  if (explicitValue) return explicitValue;
+function envRefName(value) {
+  return isEnvReference(value) ? value.slice(2, -1) : null;
+}
 
-  const value = hulyConfig?.env?.[key];
-  if (typeof value === 'string' && value.length > 0 && !isEnvReference(value)) {
-    return value;
+function normalizeEnvName(value) {
+  if (!value) return null;
+  return envRefName(value) || value;
+}
+
+function resolveRoutingValue(hulyConfig, key, literalValue, envValue, defaultEnvName = null) {
+  if (literalValue) return { kind: 'literal', value: literalValue };
+
+  const explicitEnv = normalizeEnvName(envValue);
+  if (explicitEnv) return { kind: 'env', name: explicitEnv };
+
+  const existing = hulyConfig?.env?.[key];
+  const existingEnv = envRefName(existing);
+  if (existingEnv) return { kind: 'env', name: existingEnv };
+  if (typeof existing === 'string' && existing.length > 0) {
+    return { kind: 'literal', value: existing };
   }
+
+  if (defaultEnvName) return { kind: 'env', name: defaultEnvName };
 
   return null;
 }
 
-function inferEnvVars(hulyConfig) {
-  const env = hulyConfig?.env || {};
-  const vars = [];
+function resolveRouting(args, projectDir, serverName) {
+  const hulyConfig = existingHulyConfig(projectDir, serverName);
+  const url = resolveRoutingValue(
+    hulyConfig,
+    'HULY_URL',
+    flagValue(args, ['--url', '-u']),
+    flagValue(args, ['--url-env']),
+    'HULY_URL'
+  );
+  const workspace = resolveRoutingValue(
+    hulyConfig,
+    'HULY_WORKSPACE',
+    flagValue(args, ['--workspace', '-w']),
+    flagValue(args, ['--workspace-env'])
+  );
+  const project = resolveRoutingValue(
+    hulyConfig,
+    'HULY_PROJECT',
+    flagValue(args, ['--project', '-p']),
+    flagValue(args, ['--project-env'])
+  );
 
-  for (const key of ['HULY_URL', 'HULY_TOKEN', 'HULY_EMAIL', 'HULY_PASSWORD']) {
+  if (!workspace) {
+    throw new Error('Could not determine HULY_WORKSPACE. Re-run with --workspace <slug> or --workspace-env <env-var>.');
+  }
+
+  return { hulyConfig, routing: { url, workspace, project } };
+}
+
+function inferCredentialEnvVars(hulyConfig) {
+  return credentialRefs(hulyConfig).map(({ ref }) => ref);
+}
+
+function credentialRefs(hulyConfig) {
+  const env = hulyConfig?.env || {};
+  const refs = [];
+
+  for (const key of ['HULY_TOKEN', 'HULY_EMAIL', 'HULY_PASSWORD']) {
     const value = env[key];
     if (isEnvReference(value)) {
-      const name = value.slice(2, -1);
-      if (!vars.includes(name)) vars.push(name);
+      refs.push({ key, ref: value.slice(2, -1) });
     }
   }
 
-  return vars.length > 0 ? vars : ['HULY_URL', 'HULY_TOKEN'];
+  return refs.length > 0 ? refs : [{ key: 'HULY_TOKEN', ref: 'HULY_TOKEN' }];
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function tomlString(value) {
   return JSON.stringify(value);
 }
 
-function renderCodexConfig({ serverName, envVars, workspace, project }) {
+function routingLiteral(routingValue) {
+  return routingValue?.kind === 'literal' ? routingValue.value : null;
+}
+
+function routingEnvName(routingValue) {
+  return routingValue?.kind === 'env' ? routingValue.name : null;
+}
+
+function renderCodexConfig({ serverName, credentialEnvVars, routing }) {
   const args = ['-y', '@bgx4k3p/huly-mcp-server'];
+  const envVars = unique([
+    ...credentialEnvVars,
+    routingEnvName(routing.url),
+    routingEnvName(routing.workspace),
+    routingEnvName(routing.project)
+  ]);
+  const envLines = [
+    ['HULY_URL', routingLiteral(routing.url)],
+    ['HULY_WORKSPACE', routingLiteral(routing.workspace)],
+    ['HULY_PROJECT', routingLiteral(routing.project)]
+  ]
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key} = ${tomlString(value)}`);
   const lines = [
     `[mcp_servers.${serverName}]`,
     'command = "npx"',
     `args = [${args.map(tomlString).join(', ')}]`,
     `env_vars = [${envVars.map(tomlString).join(', ')}]`,
     'startup_timeout_sec = 20',
-    'tool_timeout_sec = 120',
-    '',
-    `[mcp_servers.${serverName}.env]`,
-    `HULY_WORKSPACE = ${tomlString(workspace)}`
+    'tool_timeout_sec = 120'
   ];
 
-  if (project) {
-    lines.push(`HULY_PROJECT = ${tomlString(project)}`);
+  if (envLines.length > 0) {
+    lines.push('', `[mcp_servers.${serverName}.env]`, ...envLines);
   }
 
   lines.push('');
@@ -163,13 +234,26 @@ function mergeCodexConfig(existing, serverName, serverConfig, force) {
   return `${base}\n\n${serverConfig}`;
 }
 
-function renderClaudeServer({ workspace, project }) {
+function claudeRoutingValue(routingValue) {
+  if (!routingValue) return undefined;
+  return routingValue.kind === 'env' ? `\${${routingValue.name}}` : routingValue.value;
+}
+
+function routingDisplayValue(routingValue) {
+  return claudeRoutingValue(routingValue);
+}
+
+function renderClaudeServer({ credentials, routing }) {
   const env = {
-    HULY_URL: '${HULY_URL}',
-    HULY_TOKEN: '${HULY_TOKEN}',
-    HULY_WORKSPACE: workspace
+    HULY_URL: claudeRoutingValue(routing.url),
+    HULY_WORKSPACE: claudeRoutingValue(routing.workspace)
   };
 
+  for (const { key, ref } of credentials) {
+    env[key] = `\${${ref}}`;
+  }
+
+  const project = claudeRoutingValue(routing.project);
   if (project) {
     env.HULY_PROJECT = project;
   }
@@ -192,18 +276,6 @@ function existingHulyConfig(projectDir, serverName) {
   return existsSync(mcpPath) ? readHulyMcpConfig(mcpPath, serverName) : null;
 }
 
-function resolveWorkspaceAndProject(args, projectDir, serverName) {
-  const hulyConfig = existingHulyConfig(projectDir, serverName);
-  const workspace = inferLiteralEnv(hulyConfig, 'HULY_WORKSPACE', flagValue(args, ['--workspace', '-w']));
-  const project = inferLiteralEnv(hulyConfig, 'HULY_PROJECT', flagValue(args, ['--project', '-p']));
-
-  if (!workspace) {
-    throw new Error('Could not determine HULY_WORKSPACE. Re-run with --workspace <slug>.');
-  }
-
-  return { hulyConfig, workspace, project };
-}
-
 export function initCodexConfig(args = process.argv.slice(2), cwd = process.cwd()) {
   if (hasFlag(args, ['--help', '-h'])) {
     return { ok: true, message: usage('codex') };
@@ -212,7 +284,7 @@ export function initCodexConfig(args = process.argv.slice(2), cwd = process.cwd(
   const serverName = flagValue(args, ['--server-name']) || DEFAULT_SERVER_NAME;
   const force = hasFlag(args, ['--force']);
   const projectDir = projectDirFromCwd(cwd);
-  const { hulyConfig, workspace, project } = resolveWorkspaceAndProject(args, projectDir, serverName);
+  const { hulyConfig, routing } = resolveRouting(args, projectDir, serverName);
 
   const codexDir = join(projectDir, '.codex');
   const configPath = join(codexDir, 'config.toml');
@@ -220,9 +292,8 @@ export function initCodexConfig(args = process.argv.slice(2), cwd = process.cwd(
   mkdirSync(codexDir, { recursive: true });
   const serverConfig = renderCodexConfig({
     serverName,
-    envVars: inferEnvVars(hulyConfig),
-    workspace,
-    project
+    credentialEnvVars: inferCredentialEnvVars(hulyConfig),
+    routing
   });
   const existing = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
   const content = mergeCodexConfig(existing, serverName, serverConfig, force);
@@ -231,7 +302,7 @@ export function initCodexConfig(args = process.argv.slice(2), cwd = process.cwd(
   return {
     ok: true,
     path: configPath,
-    message: `Wrote ${configPath} for Huly workspace "${workspace}".`
+    message: `Wrote ${configPath} for Huly workspace "${routingDisplayValue(routing.workspace)}".`
   };
 }
 
@@ -248,8 +319,8 @@ export function initClaudeConfig(args = process.argv.slice(2), cwd = process.cwd
   parsed.mcpServers ||= {};
 
   const existing = parsed.mcpServers[serverName];
-  const { workspace, project } = resolveWorkspaceAndProject(args, projectDir, serverName);
-  const nextServer = renderClaudeServer({ workspace, project });
+  const { hulyConfig, routing } = resolveRouting(args, projectDir, serverName);
+  const nextServer = renderClaudeServer({ credentials: credentialRefs(hulyConfig), routing });
 
   if (existing && !force && JSON.stringify(existing) !== JSON.stringify(nextServer)) {
     throw new Error(`${mcpPath} already has mcpServers.${serverName}. Re-run with --force to replace it.`);
@@ -261,7 +332,7 @@ export function initClaudeConfig(args = process.argv.slice(2), cwd = process.cwd
   return {
     ok: true,
     path: mcpPath,
-    message: `Wrote ${mcpPath} for Huly workspace "${workspace}".`
+    message: `Wrote ${mcpPath} for Huly workspace "${routingDisplayValue(routing.workspace)}".`
   };
 }
 
