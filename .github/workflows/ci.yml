@@ -67,7 +67,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v6
@@ -95,3 +95,35 @@ jobs:
             exit 0
           fi
           npm publish "$TARBALL" --access public
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PACKAGE=$(node -e "console.log(require('./package.json').name)")
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          TAG="v${VERSION}"
+          NPM_URL="https://www.npmjs.com/package/${PACKAGE}/v/${VERSION}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "GitHub release ${TAG} already exists"
+            exit 0
+          fi
+
+          cat > release-notes.md <<EOF
+          Published to npm:
+
+          ${NPM_URL}
+
+          Install:
+
+          \`\`\`sh
+          npx -y ${PACKAGE}@${VERSION}
+          \`\`\`
+
+          This release was validated by the packed-package smoke test on Node.js 22, 24, and 26.
+          EOF
+
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes-file release-notes.md \
+            --target "${GITHUB_SHA}"
