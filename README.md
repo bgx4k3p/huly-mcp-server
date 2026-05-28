@@ -26,7 +26,7 @@ Claude Code, VS Code, n8n, and any MCP client.
 - **Quick Start**: configure Huly authentication.
 - **Integrations**: connect Codex, Claude Code, HTTP clients, or Docker.
 - **Configuration Reference**: environment variables and workspace behavior.
-- **Network Configurations**: local, remote, and Cloudflare tunnel notes.
+- **Network Configurations**: local, remote, proxy, and access-gateway setups.
 - **Development and Publishing**: tests, linting, and package publishing.
 - **API Reference**: available MCP tools and response conventions.
 
@@ -376,6 +376,8 @@ MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{i
 | `HULY_PROJECT` | No | - | Optional default project identifier for project-scoped tools |
 | `HULY_TRANSPORT` | No | `ws` | SDK transport: `ws` (WebSocket) or `rest` (REST API) |
 | `HULY_POOL_TTL_MS` | No | `1800000` | Connection pool TTL in ms (30 min) |
+| `HULY_OUTBOUND_HEADERS_JSON` | No | - | JSON object of extra headers for protected Huly origins |
+| `HULY_OUTBOUND_HEADER_*` | No | - | One extra outbound header per env var, with `_` converted to `-` |
 | **HTTP Server** | | | |
 | `PORT` | No | `3001` | HTTP server port (auto-assigns if taken) |
 | `MCP_AUTH_TOKEN` | No | - | Bearer token for HTTP auth (disabled if unset) |
@@ -421,16 +423,69 @@ If omitted, the `HULY_WORKSPACE` env var is used as the default.
 - **Remote:** `HULY_URL=https://huly.example.com`
 - **Behind nginx proxy:** Point to the proxy port
 
-### Cloudflare Access / Tunnel
+### Protected deployments and access gateways
 
-If Huly is behind Cloudflare Access with MFA, create a
-bypass Application for `/_*` or these individual paths:
+If your Huly deployment sits behind an identity-aware proxy or access gateway
+that expects extra request headers, configure those headers with environment
+variables. This works for Cloudflare Access service tokens, oauth2-proxy,
+Authelia, GCP IAP, and custom API gateways.
 
+The configured headers are added to Huly-bound HTTP requests and to the
+WebSocket upgrade. Huly authentication is still separate: keep using
+`HULY_TOKEN` or `HULY_EMAIL`/`HULY_PASSWORD` for Huly itself.
+
+**JSON form:**
+
+```bash
+HULY_OUTBOUND_HEADERS_JSON='{"X-Service-Token":"abc123","X-Tenant":"team-foo"}'
+```
+
+**Discrete form** (one env var per header — easier for secret managers):
+
+```bash
+HULY_OUTBOUND_HEADER_X_SERVICE_TOKEN=abc123
+HULY_OUTBOUND_HEADER_X_TENANT=team-foo
+```
+
+Header names from discrete env vars are normalized by stripping the prefix
+and replacing `_` with `-` (`HULY_OUTBOUND_HEADER_X_API_KEY` → `X-API-KEY`).
+HTTP header names are case-insensitive, so the wire result is equivalent to
+any pretty-cased form your gateway documents.
+
+#### Example: Cloudflare Access service token
+
+```bash
+HULY_OUTBOUND_HEADER_CF_ACCESS_CLIENT_ID=xxx.access
+HULY_OUTBOUND_HEADER_CF_ACCESS_CLIENT_SECRET=yyy
+```
+
+#### Scope and operator responsibility
+
+Headers are sent to `HULY_URL` and to every origin advertised in Huly's own
+`/config.json` response (accounts, collaborator, transactor, files, upload,
+rekoni, etc.). You are responsible for ensuring those advertised origins are
+services you control and trust to receive these headers.
+
+Outbound header values are bearer-style credentials. If `/config.json`
+advertises a `*_URL` pointing at a third-party origin you do not control, such
+as a public CDN or vendor SaaS, the configured headers will be transmitted
+there. Review your Huly server's `/config.json` before enabling this feature.
+
+`Authorization`, `Cookie`, and `Proxy-Authorization` are rejected at
+startup — they would collide with Huly's own bearer token. Use a gateway
+that signals identity via a separate header.
+
+#### Fallback for gateways without service-token support
+
+Prefer header-based service authentication. Use bypass policies only as a
+last resort, scoped narrowly to Huly API paths, and only when you accept
+that those paths are reachable without the gateway's identity check:
+
+- `/config.json`
 - `/_accounts`
 - `/_transactor`
 - `/_collaborator`
 - `/_rekoni`
-- `/config.json`
 
 ---
 

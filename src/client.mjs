@@ -21,6 +21,12 @@ import {
 export { PRIORITY_MAP, PRIORITY_NAMES, MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES };
 
 import { createRequire } from 'module';
+import {
+  createOutboundSocketFactory,
+  ensureOutboundHeaders,
+  registerOriginsFromServerConfig,
+  registerOutboundOrigin
+} from './outboundHeaders.mjs';
 const require = createRequire(import.meta.url);
 
 // Direct file requires to bypass package.json exports restrictions
@@ -84,7 +90,9 @@ export class HulyClient {
       };
     }
 
+    ensureOutboundHeaders(url);
     const config = await loadConfig(url);
+    registerOriginsFromServerConfig(config, url);
     const accountsUrl = config.ACCOUNTS_URL;
     let token, accountId;
 
@@ -472,11 +480,21 @@ export class HulyClient {
         ? { token: this.token, workspace: this.workspace }
         : { email: this.email, password: this.password, workspace: this.workspace };
 
+      ensureOutboundHeaders(this.url);
       this._serverConfig = await loadConfig(this.url);
+      registerOriginsFromServerConfig(this._serverConfig, this.url);
 
       if (transport === 'ws') {
+        // Resolve and register the transactor endpoint before connectWs opens
+        // the socket; the SDK resolves it internally too, but too late for us
+        // to update the outbound header allowlist.
+        const { workspaceId, token, endpoint } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
+        registerOutboundOrigin(endpoint, this.url);
+
         // WebSocket transport — full SDK support including Space creation
-        const platformClient = await connectWs(this.url, authOpts);
+        const socketFactory = createOutboundSocketFactory();
+        const wsOpts = socketFactory ? { ...authOpts, socketFactory } : authOpts;
+        const platformClient = await connectWs(this.url, wsOpts);
         this._client = platformClient.client;
         this._platformClient = platformClient;
 
@@ -484,13 +502,12 @@ export class HulyClient {
         const account = await platformClient.getAccount();
         this._accountUuid = account.uuid;
 
-        // Get workspace ID from server config for collaborator client
-        const { workspaceId, token } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
         this._workspaceId = workspaceId;
         this._wsToken = token;
       } else {
         // REST transport — lightweight, no WebSocket dependency
         const { endpoint, token, workspaceId } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
+        registerOutboundOrigin(endpoint, this.url);
         this._workspaceId = workspaceId;
         this._wsToken = token;
 
