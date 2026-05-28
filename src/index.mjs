@@ -62,8 +62,11 @@ if (args.includes('--init-all')) {
   const { loadServerConfig } = require(
     require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/config.js')
   );
+  const { ensureOutboundHeaders, registerOriginsFromServerConfig } = await import('./outboundHeaders.mjs');
 
+  ensureOutboundHeaders(url);
   const config = await loadServerConfig(url);
+  registerOriginsFromServerConfig(config, url);
   const client = getClient(config.ACCOUNTS_URL);
   const loginInfo = await client.login(email, password);
 

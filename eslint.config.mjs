@@ -14,6 +14,8 @@ export default [
         globalThis: 'readonly',
         Buffer: 'readonly',
         URL: 'readonly',
+        Request: 'readonly',
+        Blob: 'readonly',
         fetch: 'readonly',
         Event: 'readonly',
       }
