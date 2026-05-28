@@ -11,10 +11,16 @@
  */
 import { cpSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 
 const root = process.cwd();
 const tmp = join(root, '.pack-tmp');
+const npmCache = process.env.HULY_MCP_NPM_CACHE ?? join(tmp, '.npm-cache');
+const npmEnv = {
+  ...process.env,
+  npm_config_cache: npmCache,
+  NPM_CONFIG_CACHE: npmCache
+};
 
 // Clean previous
 if (existsSync(tmp)) rmSync(tmp, { recursive: true });
@@ -99,7 +105,7 @@ for (const entry of readdirSync(join(root, 'node_modules'))) {
 
 // Pack from temp dir
 console.log('Packing...');
-const result = execSync('npm pack', { cwd: tmp, encoding: 'utf8' });
+const result = execFileSync('npm', ['pack', '--cache', npmCache], { cwd: tmp, encoding: 'utf8', env: npmEnv });
 const tgzName = result.trim();
 const tgzSrc = join(tmp, tgzName);
 const tgzDst = join(root, tgzName);
