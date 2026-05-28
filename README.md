@@ -452,14 +452,14 @@ and replacing `_` with `-` (`HULY_OUTBOUND_HEADER_X_API_KEY` → `X-API-KEY`).
 HTTP header names are case-insensitive, so the wire result is equivalent to
 any pretty-cased form your gateway documents.
 
-**Example: Cloudflare Access service token**
+#### Example: Cloudflare Access service token
 
 ```bash
 HULY_OUTBOUND_HEADER_CF_ACCESS_CLIENT_ID=xxx.access
 HULY_OUTBOUND_HEADER_CF_ACCESS_CLIENT_SECRET=yyy
 ```
 
-**Scope and operator responsibility**
+#### Scope and operator responsibility
 
 Headers are sent to `HULY_URL` and to every origin advertised in Huly's own
 `/config.json` response (accounts, collaborator, transactor, files, upload,
@@ -475,7 +475,7 @@ there. Review your Huly server's `/config.json` before enabling this feature.
 startup — they would collide with Huly's own bearer token. Use a gateway
 that signals identity via a separate header.
 
-**Fallback for gateways without service-token support**
+#### Fallback for gateways without service-token support
 
 Prefer header-based service authentication. Use bypass policies only as a
 last resort, scoped narrowly to Huly API paths, and only when you accept
