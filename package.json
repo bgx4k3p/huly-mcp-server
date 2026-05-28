@@ -40,6 +40,7 @@
     "test:ws": "HULY_TRANSPORT=ws node --test test/integration.test.mjs",
     "test:rest": "HULY_TRANSPORT=rest node --test test/integration.test.mjs",
     "lint": "eslint src/ scripts/",
+    "test:package": "npm run pack && node scripts/smoke-packed-package.mjs",
     "postinstall": "node scripts/patch-sdk.mjs",
     "pack": "node scripts/pack.mjs",
     "version:sync": "node -e \"const{readFileSync:r,writeFileSync:w}=require('fs');const v=r('VERSION','utf-8').trim();const f='package.json';const j=JSON.parse(r(f,'utf-8'));j.version=v;w(f,JSON.stringify(j,null,2)+'\\n');console.log('Synced version '+v+' to package.json')\""

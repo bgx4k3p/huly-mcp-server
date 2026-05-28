@@ -42,9 +42,28 @@ jobs:
       - name: Mock tests
         run: node --test --test-name-pattern="Mock Tests" test/integration.test.mjs
 
+  package-smoke:
+    name: Packed Package Smoke (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 26]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - name: Build slim package
+        run: npm run pack
+      - name: Install and start packed MCP server
+        run: node scripts/smoke-packed-package.mjs
+
   publish:
     name: Publish to npm
-    needs: ci
+    needs: [ci, package-smoke]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -60,6 +79,8 @@ jobs:
       - run: npm ci
       - name: Build slim package
         run: npm run pack
+      - name: Install and start packed MCP server
+        run: node scripts/smoke-packed-package.mjs
       - name: Publish to npm
         run: |
           PACKAGE=$(node -e "console.log(require('./package.json').name)")
