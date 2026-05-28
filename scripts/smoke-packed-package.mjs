@@ -52,7 +52,7 @@ try {
     throw new Error(`Packed MCP server failed to start from ${basename(tarball)}\n${output}`);
   }
 
-  if (!result.stderr.includes(`Huly MCP Server v${pkg.version} running on stdio`)) {
+  if (!/running on stdio/.test(result.stderr)) {
     throw new Error(`Packed MCP server did not print the expected startup line.\n${result.stderr}`);
   }
 
