@@ -5,6 +5,8 @@ import { join } from 'path';
 
 import { initAllConfigs, initClaudeConfig, initCodexConfig } from '../src/initCodex.mjs';
 
+const PINNED_PACKAGE_RE = /@bgx4k3p\/huly-mcp-server@\d/;
+
 function tempProject() {
   return mkdtempSync('/private/tmp/huly-mcp-init-');
 }
@@ -48,6 +50,7 @@ describe('initCodexConfig', () => {
     assert.match(config, /env_vars = \["HULY_TOKEN"\]/);
     assert.match(config, /HULY_URL = "https:\/\/huly\.example\.test"/);
     assert.match(config, /HULY_WORKSPACE = "my-workspace"/);
+    assert.doesNotMatch(config, PINNED_PACKAGE_RE);
   });
 
   it('supports --url when no .mcp.json exists', () => {
@@ -202,6 +205,7 @@ describe('initCodexConfig', () => {
         HULY_PROJECT: 'PROJ'
       }
     });
+    assert.doesNotMatch(JSON.stringify(parsed.mcpServers.huly), PINNED_PACKAGE_RE);
   });
 
   it('keeps default Claude URL routing as an env ref', () => {
