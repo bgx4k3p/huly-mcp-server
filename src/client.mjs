@@ -13,7 +13,7 @@ import {
   PAGE_SIZE, MAX_BATCH_SIZE, AUTH_CACHE_TTL_MS, DEFAULT_MILESTONE_DAYS,
   DEFAULT_PAGE_SIZE, DEFAULT_DETAIL_PAGE_SIZE,
   encodeCursor, decodeCursor,
-  nameMatch, strictGet, withExtra,
+  nameMatch, strictGet, toHours, issueTimeFields, withExtra,
   toCollaboratorMarkup, fromCollaboratorMarkup,
   toMarkup, fromMarkup
 } from './helpers.mjs';
@@ -49,6 +49,10 @@ const task = require('@hcengineering/task').default;
  * HulyClient encapsulates all business logic for a single workspace connection.
  */
 export class HulyClient {
+  _issueTimeFields(issue) {
+    return issueTimeFields(issue);
+  }
+
   /**
    * List all workspaces accessible to the authenticated user.
    * This is an account-level operation, not workspace-specific.
@@ -1275,8 +1279,7 @@ export class HulyClient {
         childCount: issue.subIssues || 0,
         milestone: issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
-        estimation: issue.estimation || 0,
-        reportedTime: issue.reportedTime || 0,
+        ...this._issueTimeFields(issue),
         createdOn: issue.createdOn,
         modifiedOn: issue.modifiedOn,
         completedAt: doneStatuses.has(issue.status) ? issue.modifiedOn : null
@@ -1401,8 +1404,7 @@ export class HulyClient {
       childCount: issue.subIssues || 0,
       milestone: milestoneInfo,
       dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
-      estimation: issue.estimation || 0,
-      reportedTime: issue.reportedTime || 0,
+      ...this._issueTimeFields(issue),
       createdOn: issue.createdOn,
       modifiedOn: issue.modifiedOn,
       completedAt: doneStatuses.has(issue.status) ? issue.modifiedOn : null
@@ -1542,7 +1544,7 @@ export class HulyClient {
         assignee: assigneeId,
         component: componentId,
         milestone: milestoneId,
-        estimation: extra.estimation || 0,
+        estimation: toHours(extra.estimation),
         dueDate: extra.dueDate ? new Date(extra.dueDate).getTime() : null,
         remainingTime: 0,
         reportedTime: 0,
@@ -1649,7 +1651,7 @@ export class HulyClient {
     }
 
     if (extra.estimation !== undefined) {
-      updates.estimation = extra.estimation;
+      updates.estimation = toHours(extra.estimation);
       updatedFields.push('estimation');
     }
 
@@ -1936,8 +1938,7 @@ export class HulyClient {
 
     const childInfo = {
       childId: issue._id,
-      estimation: issue.estimation || 0,
-      reportedTime: issue.reportedTime || 0
+      ...this._issueTimeFields(issue)
     };
 
     const currentChildInfo = parentIssue.childInfo || [];
@@ -2465,11 +2466,13 @@ export class HulyClient {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
+    const normalizedHours = toHours(hours);
+
     await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
-      estimation: hours
+      estimation: normalizedHours
     });
 
-    return { message: `Estimation set to ${hours}h on ${issueId}`, issueId, estimation: hours };
+    return { message: `Estimation set to ${normalizedHours}h on ${issueId}`, issueId, estimation: normalizedHours };
   }
 
   /**
@@ -2489,6 +2492,7 @@ export class HulyClient {
       employeeId = await this._findEmployeeByName(client, employeeName);
     }
 
+    const normalizedHours = toHours(hours);
     const reportId = generateId();
     await client.addCollection(
       tracker.class.TimeSpendReport,
@@ -2499,19 +2503,19 @@ export class HulyClient {
       {
         employee: employeeId,
         date: date ? new Date(date).getTime() : Date.now(),
-        value: hours,
+        value: normalizedHours,
         description: description || ''
       },
       reportId
     );
 
-    const newReported = (issue.reportedTime || 0) + hours;
+    const newReported = toHours(issue.reportedTime) + normalizedHours;
     await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
       reportedTime: newReported
     });
 
     return {
-      message: `Logged ${hours}h on ${issueId}`,
+      message: `Logged ${normalizedHours}h on ${issueId}`,
       issueId,
       reportedTime: newReported,
       id: reportId
@@ -2711,8 +2715,7 @@ export class HulyClient {
         childCount: issue.subIssues || 0,
         milestone: issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null,
         dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
-        estimation: issue.estimation || 0,
-        reportedTime: issue.reportedTime || 0,
+        ...this._issueTimeFields(issue),
         createdOn: issue.createdOn,
         modifiedOn: issue.modifiedOn,
         completedAt: doneStatuses.has(issue.status) ? issue.modifiedOn : null
@@ -2841,7 +2844,7 @@ export class HulyClient {
           assignee: assigneeId,
           component: componentId,
           milestone: milestoneId,
-          estimation: item.estimation || 0,
+          estimation: toHours(item.estimation),
           dueDate: item.dueDate ? new Date(item.dueDate).getTime() : null,
           remainingTime: 0,
           reportedTime: 0,
@@ -3011,8 +3014,8 @@ export class HulyClient {
     const unassigned = issues.filter(i => !i.assignee).length;
 
     // Estimation stats
-    const totalEstimation = issues.reduce((sum, i) => sum + (i.estimation || 0), 0);
-    const totalReported = issues.reduce((sum, i) => sum + (i.reportedTime || 0), 0);
+    const totalEstimation = issues.reduce((sum, i) => sum + toHours(i.estimation), 0);
+    const totalReported = issues.reduce((sum, i) => sum + toHours(i.reportedTime), 0);
 
     return {
       project: {
@@ -3579,7 +3582,7 @@ export class HulyClient {
 
     const enriched = reports.map(r => withExtra(r, {
       id: r._id,
-      hours: r.value,
+      hours: toHours(r.value),
       description: fromMarkup(r.description),
       date: r.date ? new Date(r.date).toISOString() : null
     }));
@@ -3600,7 +3603,7 @@ export class HulyClient {
     return {
       message: `Time report deleted`,
       id: reportId,
-      hours: report.value
+      hours: toHours(report.value)
     };
   }
 
@@ -3822,7 +3825,7 @@ export class HulyClient {
 
     return withExtra(report, {
       id: report._id,
-      hours: report.value,
+      hours: toHours(report.value),
       description: fromMarkup(report.description),
       date: report.date ? new Date(report.date).toISOString() : null
     });

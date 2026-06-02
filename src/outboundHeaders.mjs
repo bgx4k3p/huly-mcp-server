@@ -132,12 +132,12 @@ function registerOriginPair(origin) {
 }
 
 export function registerOutboundOrigin(url, baseUrl) {
-  if (getOutboundHeaders().isEmpty || !url) return;
+  if (!url) return;
   registerOriginPair(originFor(url, baseUrl));
 }
 
 export function registerOriginsFromServerConfig(config, hulyUrl) {
-  if (getOutboundHeaders().isEmpty || !config || typeof config !== 'object') return;
+  if (!config || typeof config !== 'object') return;
 
   for (const [key, value] of Object.entries(config)) {
     if (!key.endsWith('_URL') || typeof value !== 'string' || value.trim() === '') continue;
@@ -152,6 +152,9 @@ function requestOrigin(input) {
 
 function withOutboundHeaders(request) {
   const { headers } = getOutboundHeaders();
+  if (!request.headers.has('Accept-Encoding')) {
+    request.headers.set('Accept-Encoding', 'identity');
+  }
   for (const [name, value] of headers) {
     if (!request.headers.has(name)) {
       request.headers.set(name, value);
@@ -161,8 +164,7 @@ function withOutboundHeaders(request) {
 }
 
 function installOutboundFetchWrapper() {
-  const parsed = getOutboundHeaders();
-  if (parsed.isEmpty || _wrapperInstalled) return;
+  if (_wrapperInstalled) return;
   if (globalThis.fetch?.[FETCH_WRAPPER_SYMBOL]) {
     _wrapperInstalled = true;
     return;
@@ -193,11 +195,11 @@ function installOutboundFetchWrapper() {
 }
 
 export function ensureOutboundHeaders(hulyUrl) {
-  if (getOutboundHeaders().isEmpty) return;
+  const parsed = getOutboundHeaders();
   installOutboundFetchWrapper();
   registerOutboundOrigin(hulyUrl);
-  if (!_startupLogged) {
-    const headerNames = [...getOutboundHeaders().headers.keys()].join(', ');
+  if (!parsed.isEmpty && !_startupLogged) {
+    const headerNames = [...parsed.headers.keys()].join(', ');
     process.stderr.write(`[huly-mcp] outbound headers configured: [${headerNames}]; seeded origin: ${originFor(hulyUrl)}\n`);
     _startupLogged = true;
   }

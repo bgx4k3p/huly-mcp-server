@@ -36,6 +36,9 @@ jobs:
       - name: Markdown lint
         run: npx markdownlint-cli2 README.md
 
+      - name: Unit test files
+        run: npm run test:unit
+
       - name: Unit tests
         run: node --test --test-name-pattern="Unit Tests" test/integration.test.mjs
 

@@ -27,6 +27,7 @@ Claude Code, VS Code, n8n, and any MCP client.
 - **Integrations**: connect Codex, Claude Code, HTTP clients, or Docker.
 - **Configuration Reference**: environment variables and workspace behavior.
 - **Network Configurations**: local, remote, proxy, and access-gateway setups.
+- **Maintenance**: repair scripts for known data consistency issues.
 - **Development and Publishing**: tests, linting, and package publishing.
 - **API Reference**: available MCP tools and response conventions.
 
@@ -517,6 +518,41 @@ Test coverage:
 
 **100% dispatch coverage** — every tool's params are traced end-to-end
 through the dispatch table to the client method.
+
+---
+
+## Maintenance
+
+Maintenance scripts live in the repository `scripts/` directory. They are
+source-checkout tools and are not included in the published npm package.
+
+### Repair Reported Time Totals
+
+Versions before `2.4.3` could write string-concatenated `reportedTime` values
+when logging time against issues that already had string numeric fields. The
+repair script recomputes each issue's `reportedTime` from its
+`TimeSpendReport` records, which are the source of truth.
+
+Always review the dry-run first:
+
+```bash
+node scripts/repair-reported-time.mjs
+```
+
+Apply after reviewing the output:
+
+```bash
+node scripts/repair-reported-time.mjs --apply
+```
+
+Optional filters:
+
+```bash
+node scripts/repair-reported-time.mjs --workspace=my-workspace
+node scripts/repair-reported-time.mjs --workspace=my-workspace --project=PROJ
+```
+
+Back up Huly data before applying repairs in production.
 
 ---
 

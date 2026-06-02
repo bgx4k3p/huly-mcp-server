@@ -26,8 +26,15 @@ const npmEnv = {
 if (existsSync(tmp)) rmSync(tmp, { recursive: true });
 mkdirSync(tmp, { recursive: true });
 
-// Copy project files (same as "files" in package.json)
-for (const item of ['src', 'scripts/patch-sdk.mjs', 'LICENSE', 'README.md', 'package.json', 'package-lock.json']) {
+// Copy project files (same as "files" in package.json, plus package-lock.json for reproducible smoke installs)
+for (const item of [
+  'src',
+  'scripts/patch-sdk.mjs',
+  'LICENSE',
+  'README.md',
+  'package.json',
+  'package-lock.json'
+]) {
   const src = join(root, item);
   const dst = join(tmp, item);
   if (existsSync(src)) {

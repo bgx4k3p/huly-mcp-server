@@ -103,6 +103,18 @@ export const DEFAULT_MILESTONE_DAYS = 30;
 export const DEFAULT_PAGE_SIZE = 50;
 export const DEFAULT_DETAIL_PAGE_SIZE = 20;
 
+export function toHours(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+export function issueTimeFields(issue) {
+  return {
+    estimation: toHours(issue?.estimation),
+    reportedTime: toHours(issue?.reportedTime)
+  };
+}
+
 /**
  * Encode a pagination cursor from a createdOn timestamp.
  * Returns an opaque base64url string.
