@@ -161,6 +161,38 @@ describe('outbound header parsing', () => {
 });
 
 describe('outbound origin registration and fetch wrapping', () => {
+  it('adds identity accept-encoding for registered origins even without custom headers', async () => {
+    const { calls } = spyFetch();
+    ensureOutboundHeaders('https://x.example.com');
+
+    await fetch('https://x.example.com/config.json');
+
+    const request = calls[0][0];
+    assert.ok(request instanceof Request);
+    assert.equal(request.headers.get('Accept-Encoding'), 'identity');
+  });
+
+  it('does not add identity accept-encoding for unregistered origins', async () => {
+    const { calls } = spyFetch();
+    ensureOutboundHeaders('https://x.example.com');
+
+    await fetch('https://other.example.com/config.json');
+
+    assert.equal(calls[0][0], 'https://other.example.com/config.json');
+    assert.equal(calls[0][1], undefined);
+  });
+
+  it('preserves caller-provided accept-encoding', async () => {
+    const { calls } = spyFetch();
+    ensureOutboundHeaders('https://x.example.com');
+
+    await fetch('https://x.example.com/config.json', {
+      headers: { 'Accept-Encoding': 'gzip' }
+    });
+
+    assert.equal(calls[0][0].headers.get('Accept-Encoding'), 'gzip');
+  });
+
   it('registers absolute origins and injects headers for string URLs', async () => {
     setHeadersEnv();
     const { calls } = spyFetch();
@@ -359,12 +391,15 @@ describe('outbound origin registration and fetch wrapping', () => {
     assert.equal(request.headers.get('X-API-Key'), 'secret');
   });
 
-  it('does not install a wrapper when no outbound headers are configured', () => {
-    const { fetch: original } = spyFetch();
+  it('installs the wrapper without custom headers for identity encoding only', async () => {
+    const { calls } = spyFetch();
 
     ensureOutboundHeaders('https://x.example.com');
+    await fetch('https://x.example.com/config.json');
 
-    assert.equal(globalThis.fetch, original);
+    assert.equal(globalThis.fetch[Symbol.for('huly.outboundFetchWrapper')], true);
+    assert.equal(calls[0][0].headers.get('Accept-Encoding'), 'identity');
+    assert.equal(calls[0][0].headers.has('X-API-Key'), false);
   });
 
   it('supports multiple client origins through the same global wrapper', async () => {

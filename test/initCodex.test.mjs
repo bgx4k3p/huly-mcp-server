@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { initAllConfigs, initClaudeConfig, initCodexConfig } from '../src/initCodex.mjs';
@@ -8,7 +9,7 @@ import { initAllConfigs, initClaudeConfig, initCodexConfig } from '../src/initCo
 const PINNED_PACKAGE_RE = /@bgx4k3p\/huly-mcp-server@\d/;
 
 function tempProject() {
-  return mkdtempSync('/private/tmp/huly-mcp-init-');
+  return mkdtempSync(join(tmpdir(), 'huly-mcp-init-'));
 }
 
 function writeMcp(projectDir, workspaceValue = 'my-workspace', tokenValue = '${HULY_TOKEN}') {
