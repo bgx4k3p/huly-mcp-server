@@ -125,6 +125,7 @@ export const workspaceTools = {
   set_parent: (a, c) => c.setParent(a.issueId, a.parentId),
 
   // Task types & statuses
+  list_project_types: (a, c) => c.listProjectTypes({ cursor: a.cursor, limit: a.limit }),
   list_task_types: (a, c) => c.listTaskTypes(a.project, { cursor: a.cursor, limit: a.limit }),
   list_statuses: (a, c) => c.listStatuses(a.project, a.taskType, { cursor: a.cursor, limit: a.limit }),
 
@@ -151,16 +152,16 @@ export const workspaceTools = {
   delete_comment: (a, c) => c.deleteComment(a.issueId, a.commentId),
 
   // Time tracking
-  log_time: (a, c) => c.logTime(a.issueId, a.hours, a.description, a.descriptionFormat, a.date, a.employee),
+  log_time: (a, c) => c.logTime(a.issueId, a.hours, a.description, a.date, a.employee),
   list_time_reports: (a, c) => c.listTimeReports(a.issueId, { cursor: a.cursor, limit: a.limit }),
   delete_time_report: (a, c) => c.deleteTimeReport(a.reportId),
 
   // Projects
   create_project: (a, c) =>
-    c.createProject(a.identifier, a.name, a.description, a.private, a.descriptionFormat, a.projectType),
+    c.createProject(a.identifier, a.name, a.description, a.private, a.projectType),
   update_project: (a, c) =>
     c.updateProject(a.project, {
-      name: a.name, description: a.description, descriptionFormat: a.descriptionFormat,
+      name: a.name, description: a.description,
       isPrivate: a.private, defaultAssignee: a.defaultAssignee
     }),
   archive_project: (a, c) => c.archiveProject(a.project, a.archived),

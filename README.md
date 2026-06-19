@@ -678,8 +678,8 @@ Full list of all MCP tools available through this server.
 | --- | --- | --- |
 | `list_projects` | List all projects (supports `include_details`) | -- |
 | `get_project` | Get project by identifier (supports `include_details`) | -- |
-| `create_project` | Create a new project | `descriptionFormat`: md/html/plain |
-| `update_project` | Update project name, description, privacy, default assignee | `descriptionFormat`: md/html/plain |
+| `create_project` | Create a new project | `projectType`: name/id (required only if the workspace has multiple) |
+| `update_project` | Update project name, description, privacy, default assignee | -- |
 | `archive_project` | Archive or unarchive a project | -- |
 | `delete_project` | Permanently delete a project | -- |
 | `summarize_project` | Aggregated project metrics and health | -- |
@@ -761,7 +761,7 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `log_time` | Log actual time spent | `descriptionFormat`: md/html/plain |
+| `log_time` | Log actual time spent | -- |
 | `list_time_reports` | List time reports for an issue | -- |
 | `get_time_report` | Get a specific time report by ID | -- |
 | `delete_time_report` | Delete a time report | -- |
@@ -770,6 +770,7 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description |
 | --- | --- |
+| `list_project_types` | List workspace project types (valid `projectType` values for `create_project`) |
 | `list_task_types` | List task types for a project |
 | `get_task_type` | Find a task type by name |
 | `list_statuses` | List issue statuses |
@@ -808,6 +809,7 @@ fetches related data in a single call:
 | Member | -- | `get_member` | `list_members` | -- | -- |
 | Status | -- | `get_status` | `list_statuses` | -- | -- |
 | Task Type | -- | `get_task_type` | `list_task_types` | -- | -- |
+| Project Type | -- | -- | `list_project_types` | -- | -- |
 
 ### Issue Templates
 

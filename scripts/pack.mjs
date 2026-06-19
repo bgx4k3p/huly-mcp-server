@@ -29,7 +29,6 @@ mkdirSync(tmp, { recursive: true });
 // Copy project files (same as "files" in package.json, plus package-lock.json for reproducible smoke installs)
 for (const item of [
   'src',
-  'scripts/patch-sdk.mjs',
   'LICENSE',
   'README.md',
   'package.json',

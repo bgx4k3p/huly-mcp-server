@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
@@ -25,7 +25,6 @@
   },
   "files": [
     "src/",
-    "scripts/patch-sdk.mjs",
     "LICENSE",
     "README.md"
   ],
@@ -43,7 +42,6 @@
     "lint": "eslint src/ scripts/",
     "test:package": "npm run pack && node scripts/smoke-packed-package.mjs",
     "preflight": "npm run lint && npm run test:unit && npm run test:package",
-    "postinstall": "node scripts/patch-sdk.mjs",
     "pack": "node scripts/pack.mjs",
     "version:sync": "node -e \"const{readFileSync:r,writeFileSync:w}=require('fs');const v=r('VERSION','utf-8').trim();const f='package.json';const j=JSON.parse(r(f,'utf-8'));j.version=v;w(f,JSON.stringify(j,null,2)+'\\n');console.log('Synced version '+v+' to package.json')\""
   },
@@ -81,6 +79,6 @@
     "@hcengineering/tracker"
   ],
   "devDependencies": {
-    "eslint": "^10.4.1"
+    "eslint": "^10.5.0"
   }
 }

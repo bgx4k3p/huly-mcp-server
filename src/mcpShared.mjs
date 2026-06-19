@@ -470,12 +470,12 @@ function getToolDefinitions() {
     {
       name: 'create_project',
       description: 'Create a new project in the workspace. Returns the project identifier and details.',
-      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (2-5 uppercase letters, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, ...workspaceProp }, required: ['identifier', 'name'] }
+      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (2-5 uppercase letters, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, projectType: { type: 'string', description: 'Project type name or id (e.g., "Classic"). Required only when the workspace has multiple project types; otherwise the single available type is used.' }, ...workspaceProp }, required: ['identifier', 'name'] }
     },
     {
       name: 'update_project',
       description: 'Update a project\'s name, description, privacy, or default assignee.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, name: { type: 'string', description: 'New display name' }, description: { type: 'string', description: 'New description' }, descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Description format' }, isPrivate: { type: 'boolean', description: 'Privacy setting' }, defaultAssignee: { type: 'string', description: 'Default assignee name (empty string to clear)' }, ...workspaceProp }, required: ['project'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, name: { type: 'string', description: 'New display name' }, description: { type: 'string', description: 'New description' }, isPrivate: { type: 'boolean', description: 'Privacy setting' }, defaultAssignee: { type: 'string', description: 'Default assignee name (empty string to clear)' }, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'delete_project',
@@ -645,6 +645,11 @@ function getToolDefinitions() {
       name: 'get_status',
       description: 'Get details for a specific status by name.',
       inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Status name' }, ...workspaceProp }, required: ['project', 'name'] }
+    },
+    {
+      name: 'list_project_types',
+      description: 'List the project types configured in the workspace. These are the valid values for the projectType argument of create_project. Returns { items, nextCursor? }.',
+      inputSchema: { type: 'object', properties: { ...paginationProps, ...workspaceProp }, required: [] }
     },
     {
       name: 'list_task_types',

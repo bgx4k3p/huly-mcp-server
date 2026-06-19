@@ -2014,6 +2014,31 @@ export class HulyClient {
   }
 
   /**
+   * List the project types configured in the workspace. These are the valid
+   * values for the `projectType` argument of createProject. Returns the names
+   * of the task types scoped to each, for convenience.
+   * @returns {Promise<Object>} { items, nextCursor? }
+   */
+  async listProjectTypes(options = {}) {
+    const client = await this._getClient();
+
+    const projectTypes = await client.findAll(task.class.ProjectType, {});
+    const allTaskTypes = await client.findAll(task.class.TaskType, {});
+    const taskTypeById = new Map(allTaskTypes.map(tt => [tt._id, tt]));
+
+    const enriched = projectTypes.map(pt => ({
+      id: pt._id,
+      name: pt.name || pt._id.split(':').pop(),
+      description: fromMarkup(pt.description) || pt.shortDescription || null,
+      taskTypes: (pt.tasks || [])
+        .map(id => taskTypeById.get(id))
+        .filter(Boolean)
+        .map(tt => tt.name || tt._id.split(':').pop())
+    }));
+    return this._cursoredFindAll(enriched, options);
+  }
+
+  /**
    * List available issue statuses, optionally scoped to a project or task type.
    * @param {string} [projectIdent] - Project identifier to scope statuses
    * @param {string} [taskTypeName] - Task type name to scope statuses (e.g., "Task", "Epic")
@@ -2482,7 +2507,7 @@ export class HulyClient {
    * @param {string} [description] - Description of work done
    * @returns {Promise<Object>}
    */
-  async logTime(issueId, hours, description, _format, date, employeeName) {
+  async logTime(issueId, hours, description, date, employeeName) {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
@@ -3226,7 +3251,7 @@ export class HulyClient {
 
   // ── Project Management ──────────────────────────────────────
 
-  async createProject(identifier, name, description, isPrivate = false, _format, projectType) {
+  async createProject(identifier, name, description, isPrivate = false, projectType) {
     const client = await this._getClient();
 
     identifier = identifier.toUpperCase();
