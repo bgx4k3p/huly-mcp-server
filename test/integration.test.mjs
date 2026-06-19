@@ -430,7 +430,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     // Create dedicated test project
     try {
-      await client.createProject(PROJECT, 'MCP Test Project', 'Automated test project', false, undefined, 'Classic project');
+      await client.createProject(PROJECT, 'MCP Test Project', 'Automated test project', false, 'Classic project');
     } catch (e) {
       // Already exists from a prior run — that's fine
       if (!e.message.includes('already exists')) throw e;
@@ -965,7 +965,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     const tempProj = 'TPRJ';
 
     it('creates a new project', async () => {
-      const result = await client.createProject(tempProj, 'Temp Project', 'For testing', false, undefined, 'Classic project');
+      const result = await client.createProject(tempProj, 'Temp Project', 'For testing', false, 'Classic project');
       assert.ok(result.id);
       assert.equal(result.identifier, tempProj);
     });
@@ -985,7 +985,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     it('deletes the project (create fresh for delete)', async () => {
       // Create a new one to delete since TPRJ is now archived and invisible
       const tempProj2 = 'TPR2';
-      await client.createProject(tempProj2, 'Temp 2', 'For delete test', false, undefined, 'Classic project');
+      await client.createProject(tempProj2, 'Temp 2', 'For delete test', false, 'Classic project');
       const result = await client.deleteProject(tempProj2);
       assert.ok(result.message.includes('deleted'));
     });
@@ -1437,7 +1437,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     const projId = `TP${Date.now().toString(36).slice(-3).toUpperCase()}`;
 
     before(async () => {
-      await client.createProject(projId, 'Update Test Project', 'Original desc', false, undefined, 'Classic project');
+      await client.createProject(projId, 'Update Test Project', 'Original desc', false, 'Classic project');
     });
 
     it('updates name and description', async () => {
@@ -1469,7 +1469,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     HulyClient = mod.HulyClient;
     client = new HulyClient({ url: HULY_URL, workspace: WORKSPACE, ...HULY_CREDS });
     await client.connect();
-    await client.createProject(AUDIT_PROJECT, 'Audit Test Project', 'Automated audit tests', false, undefined, 'Classic project');
+    await client.createProject(AUDIT_PROJECT, 'Audit Test Project', 'Automated audit tests', false, 'Classic project');
   });
 
   after(async () => {

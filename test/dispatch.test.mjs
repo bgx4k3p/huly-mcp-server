@@ -453,15 +453,14 @@ describe('Workspace tool dispatch — param forwarding', () => {
     // Time tracking
     {
       name: 'log_time',
-      args: { issueId: 'P-1', hours: 2, description: 'Work', descriptionFormat: 'markdown', date: '2026-03-01', employee: 'Alice' },
+      args: { issueId: 'P-1', hours: 2, description: 'Work', date: '2026-03-01', employee: 'Alice' },
       expectMethod: 'logTime',
       validate: (call) => {
         assert.equal(call.args[0], 'P-1');
         assert.equal(call.args[1], 2);
         assert.equal(call.args[2], 'Work');
-        assert.equal(call.args[3], 'markdown');
-        assert.equal(call.args[4], '2026-03-01');
-        assert.equal(call.args[5], 'Alice');
+        assert.equal(call.args[3], '2026-03-01');
+        assert.equal(call.args[4], 'Alice');
       }
     },
     {
@@ -479,27 +478,25 @@ describe('Workspace tool dispatch — param forwarding', () => {
     // Projects
     {
       name: 'create_project',
-      args: { identifier: 'PROJ', name: 'My Project', description: 'Desc', private: true, descriptionFormat: 'markdown', projectType: 'Classic' },
+      args: { identifier: 'PROJ', name: 'My Project', description: 'Desc', private: true, projectType: 'Classic' },
       expectMethod: 'createProject',
       validate: (call) => {
         assert.equal(call.args[0], 'PROJ');
         assert.equal(call.args[1], 'My Project');
         assert.equal(call.args[2], 'Desc');
         assert.equal(call.args[3], true);
-        assert.equal(call.args[4], 'markdown');
-        assert.equal(call.args[5], 'Classic');
+        assert.equal(call.args[4], 'Classic');
       }
     },
     {
       name: 'update_project',
-      args: { project: 'P', name: 'New', description: 'D2', descriptionFormat: 'html', private: false, defaultAssignee: 'Bob' },
+      args: { project: 'P', name: 'New', description: 'D2', private: false, defaultAssignee: 'Bob' },
       expectMethod: 'updateProject',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
         const updates = call.args[1];
         assert.equal(updates.name, 'New');
         assert.equal(updates.description, 'D2');
-        assert.equal(updates.descriptionFormat, 'html');
         assert.equal(updates.isPrivate, false);
         assert.equal(updates.defaultAssignee, 'Bob');
       }
