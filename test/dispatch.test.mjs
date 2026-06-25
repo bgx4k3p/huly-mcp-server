@@ -296,7 +296,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
     // Relations
     {
       name: 'add_relation',
-      args: { issueId: 'P-1', relatedToIssueId: 'P-2' },
+      args: { issueId: 'P-1', relatedIssueId: 'P-2' },
       expectMethod: 'addRelation',
       validate: (call) => {
         assert.equal(call.args[0], 'P-1');
@@ -305,7 +305,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'add_blocked_by',
-      args: { issueId: 'P-1', blockedByIssueId: 'P-2' },
+      args: { issueId: 'P-1', blockerIssueId: 'P-2' },
       expectMethod: 'addBlockedBy',
       validate: (call) => {
         assert.equal(call.args[0], 'P-1');
@@ -735,8 +735,8 @@ describe('Required param coverage — no undefined forwarding', () => {
       delete_issue: { issueId: 'P-1' },
       add_label: { issueId: 'P-1', label: 'bug' },
       remove_label: { issueId: 'P-1', label: 'bug' },
-      add_relation: { issueId: 'P-1', relatedToIssueId: 'P-2' },
-      add_blocked_by: { issueId: 'P-1', blockedByIssueId: 'P-2' },
+      add_relation: { issueId: 'P-1', relatedIssueId: 'P-2' },
+      add_blocked_by: { issueId: 'P-1', blockerIssueId: 'P-2' },
       set_parent: { issueId: 'P-1', parentId: 'P-2' },
       delete_label: { name: 'L' },
       add_comment: { issueId: 'P-1', text: 'Hi' },
@@ -774,7 +774,7 @@ describe('Dispatch table integrity', () => {
     for (const [name, handler] of Object.entries(workspaceTools)) {
       calls.length = 0;
       const args = { project: 'P', issueId: 'P-1', name: 'N', label: 'L',
-                      relatedToIssueId: 'P-2', blockedByIssueId: 'P-2',
+                      relatedIssueId: 'P-2', blockerIssueId: 'P-2',
                       parentIssueId: 'P-2', assignee: 'A', text: 'T',
                       hours: 1, query: 'q', template: 'feature',
                       issues: [{ title: 'T' }], targetProject: 'Q',

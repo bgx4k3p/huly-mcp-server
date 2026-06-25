@@ -644,6 +644,10 @@ export class HulyClient {
    * @returns {Promise<{project: Object, issue: Object}>}
    */
   async _parseAndFindIssue(client, issueId) {
+    if (typeof issueId !== 'string' || issueId.trim() === '') {
+      throw new Error('Issue ID is required (expected format: PROJECT-NUMBER)');
+    }
+
     const match = issueId.match(/^([A-Z0-9]+)-(\d+)$/i);
     if (!match) {
       throw new Error(`Invalid issue ID format: ${issueId}. Expected format: PROJECT-NUMBER`);

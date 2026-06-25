@@ -37,7 +37,7 @@ const tarball = resolve(process.argv[2] ?? tarballName());
 const installDir = mkdtempSync(join(tmpdir(), 'huly-mcp-package-smoke-'));
 
 try {
-  run('npm', ['install', '--cache', npmCache, '--prefix', installDir, tarball]);
+  run('npm', ['install', '--ignore-scripts', '--cache', npmCache, '--prefix', installDir, tarball]);
 
   const packageDir = join(installDir, 'node_modules', pkg.name);
   const entrypoint = join(packageDir, pkg.bin['huly-mcp-server']);
