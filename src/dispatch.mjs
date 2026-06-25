@@ -120,8 +120,8 @@ export const workspaceTools = {
   delete_label: (a, c) => c.deleteLabel(a.name),
 
   // Relations
-  add_relation: (a, c) => c.addRelation(a.issueId, a.relatedToIssueId),
-  add_blocked_by: (a, c) => c.addBlockedBy(a.issueId, a.blockedByIssueId),
+  add_relation: (a, c) => c.addRelation(a.issueId, a.relatedIssueId),
+  add_blocked_by: (a, c) => c.addBlockedBy(a.issueId, a.blockerIssueId),
   set_parent: (a, c) => c.setParent(a.issueId, a.parentId),
 
   // Task types & statuses

@@ -44,3 +44,22 @@ describe('time numeric normalization', () => {
     assert.equal(result.reportedTime, 1.75);
   });
 });
+
+describe('issue id validation', () => {
+  it('rejects missing issue IDs before regex parsing', async () => {
+    const client = new HulyClient({
+      url: 'https://huly.example.test',
+      token: 'test-token',
+      workspace: 'test-workspace'
+    });
+
+    await assert.rejects(
+      () => client._parseAndFindIssue({}, undefined),
+      /Issue ID is required/
+    );
+    await assert.rejects(
+      () => client._parseAndFindIssue({}, ''),
+      /Issue ID is required/
+    );
+  });
+});
