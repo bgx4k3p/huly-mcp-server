@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "ai-agent"
   ],
   "engines": {
-    "node": ">=22"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "files": [
     "src/",
@@ -38,7 +38,7 @@
     "test": "HULY_TRANSPORT=ws node --test test/integration.test.mjs && HULY_TRANSPORT=rest node --test test/integration.test.mjs",
     "test:ws": "HULY_TRANSPORT=ws node --test test/integration.test.mjs",
     "test:rest": "HULY_TRANSPORT=rest node --test test/integration.test.mjs",
-    "test:unit": "node --test test/outboundHeaders.test.mjs test/dispatch.test.mjs test/initCodex.test.mjs test/mcpShared.test.mjs test/timeNormalization.test.mjs",
+    "test:unit": "node --test test/outboundHeaders.test.mjs test/dispatch.test.mjs test/initCodex.test.mjs test/mcpShared.test.mjs test/projectCreation.test.mjs test/timeNormalization.test.mjs",
     "lint": "eslint src/ scripts/",
     "test:package": "npm run pack && node scripts/smoke-packed-package.mjs",
     "preflight": "npm run lint && npm run test:unit && npm run test:package",
@@ -52,9 +52,9 @@
     "@hcengineering/tags": "^0.7.423",
     "@hcengineering/task": "^0.7.423",
     "@hcengineering/tracker": "^0.7.423",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "jsdom": "^29.1.1",
-    "ws": "^8.21.0"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "jsdom": "^30.0.1",
+    "ws": "^8.21.3"
   },
   "bundleDependencies": [
     "@hcengineering/account-client",
@@ -79,6 +79,6 @@
     "@hcengineering/tracker"
   ],
   "devDependencies": {
-    "eslint": "^10.5.0"
+    "eslint": "^10.8.1"
   }
 }

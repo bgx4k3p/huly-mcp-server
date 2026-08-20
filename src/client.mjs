@@ -35,7 +35,9 @@ const { createRestTxOperations } = require(require.resolve('@hcengineering/api-c
 const { connect: connectWs } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/client.js'));
 const { getClient: getAccountClient } = require('@hcengineering/account-client');
 const { loadServerConfig: loadConfig } = require(require.resolve('@hcengineering/api-client').replace(/lib[/\\]index\.js$/, 'lib/config.js'));
-const { generateId } = require('@hcengineering/core');
+const coreSdk = require('@hcengineering/core');
+const { generateId } = coreSdk;
+const core = coreSdk.default;
 const { makeRank } = require('@hcengineering/rank');
 const { getClient: getCollaboratorClient } = require('@hcengineering/collaborator-client');
 
@@ -3298,23 +3300,83 @@ export class HulyClient {
       defaultStatusId = allStatuses.find(s => s.name === 'Todo')?._id || allStatuses[0]._id;
     }
 
-    const owners = this._accountUuid ? [this._accountUuid] : [];
+    if (!this._accountUuid) {
+      throw new Error('Cannot create project: authenticated account UUID is unavailable');
+    }
+
+    // Huly's project creation flow always makes the creator both a member and
+    // an owner. Private spaces are invisible when owners is populated but
+    // members is empty.
+    const members = [this._accountUuid];
+    const owners = [this._accountUuid];
 
     const projectId = generateId();
-    await client.createDoc(tracker.class.Project, projectId, {
-      identifier,
-      name: name || identifier,
-      description: description || '',
-      private: isPrivate,
-      members: [],
-      owners,
-      archived: false,
-      autoJoin: !isPrivate,
-      sequence: 0,
-      defaultIssueStatus: defaultStatusId,
-      defaultTimeReportDay: 0,
-      type: resolvedProjectType._id
-    }, projectId);
+    let projectCreated = false;
+
+    try {
+      await client.createDoc(tracker.class.Project, core.space.Space, {
+        identifier,
+        name: name || identifier,
+        description: description || '',
+        private: isPrivate,
+        members,
+        owners,
+        archived: false,
+        autoJoin: !isPrivate,
+        sequence: 0,
+        defaultIssueStatus: defaultStatusId,
+        defaultTimeReportDay: 0,
+        type: resolvedProjectType._id
+      }, projectId);
+      projectCreated = true;
+
+      // Project types may define a mixin for role assignments and custom
+      // fields. Match Huly's canonical creation flow even when no roles have
+      // been assigned yet.
+      if (resolvedProjectType.targetClass) {
+        await client.createMixin(
+          projectId,
+          tracker.class.Project,
+          core.space.Space,
+          resolvedProjectType.targetClass,
+          {}
+        );
+      }
+
+      // Never report success for a project the creating identity cannot read.
+      const createdProject = await client.findOne(tracker.class.Project, { identifier });
+      if (!createdProject || createdProject._id !== projectId) {
+        throw new Error('project is not readable by the creating account');
+      }
+      if (!createdProject.members?.includes(this._accountUuid) ||
+          !createdProject.owners?.includes(this._accountUuid)) {
+        throw new Error('creator membership or ownership was not persisted');
+      }
+    } catch (error) {
+      if (!projectCreated) throw error;
+
+      let rollbackError;
+      try {
+        await client.removeDoc(tracker.class.Project, core.space.Space, projectId);
+      } catch (cleanupError) {
+        rollbackError = cleanupError;
+      }
+
+      const reason = error instanceof Error ? error.message : String(error);
+      if (rollbackError) {
+        const cleanupReason = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        throw new Error(
+          `Project "${identifier}" creation failed after write (${reason}); ` +
+          `automatic rollback failed (${cleanupReason}). Manual cleanup may be required for internal ID ${projectId}.`,
+          { cause: error }
+        );
+      }
+
+      throw new Error(
+        `Project "${identifier}" creation failed after write (${reason}); partial project was rolled back.`,
+        { cause: error }
+      );
+    }
 
     return {
       id: projectId,
@@ -3720,11 +3782,29 @@ export class HulyClient {
   }
 
   /**
-   * Find a status by name.
-   * @param {string} name - Status name (fuzzy match)
+   * Find a status by name, optionally scoped to a project.
+   * @param {string} projectIdent - Project identifier, or status name for the legacy one-argument form
+   * @param {string} [name] - Status name (fuzzy match)
    * @returns {Promise<Object>}
    */
-  async getStatus(name) {
+  async getStatus(projectIdent, name) {
+    // Preserve direct-client compatibility while ensuring MCP's advertised
+    // project argument is honored by the two-argument form.
+    if (name === undefined) {
+      name = projectIdent;
+      projectIdent = undefined;
+    }
+
+    if (projectIdent) {
+      const result = await this.listStatuses(projectIdent);
+      const status = result.items.find(s => nameMatch(s.name, name));
+      if (!status) {
+        const names = result.items.map(s => s.name).join(', ');
+        throw new Error(`Status not found: "${name}". Available: ${names}`);
+      }
+      return status;
+    }
+
     const client = await this._getClient();
     const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
 

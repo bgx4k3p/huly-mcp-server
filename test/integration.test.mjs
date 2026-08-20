@@ -1,5 +1,6 @@
 import { describe, it, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { workspaceTools } from '../src/dispatch.mjs';
 const HULY_URL = process.env.HULY_URL || 'http://localhost:8087';
 const PROJECT = 'MCPT';          // Dedicated test project, created/deleted per run
 const EXISTING_PROJECT = process.env.HULY_TEST_PROJECT || 'START';  // Pre-existing project for read-only tests
@@ -864,7 +865,10 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     it('adds a relation between two issues', async () => {
       assert.ok(lifecycleIssueId && relatedIssueId);
-      const result = await client.addRelation(lifecycleIssueId, relatedIssueId);
+      const result = await workspaceTools.add_relation({
+        issueId: lifecycleIssueId,
+        relatedIssueId
+      }, client);
       assert.ok(result);
       assert.ok(result.message.includes('relation') || result.message.includes('↔'), `Expected relation message, got: ${result.message}`);
     });
@@ -883,7 +887,10 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     it('adds a blocked-by dependency', async () => {
       assert.ok(lifecycleIssueId && blockerIssueId);
-      const result = await client.addBlockedBy(lifecycleIssueId, blockerIssueId);
+      const result = await workspaceTools.add_blocked_by({
+        issueId: lifecycleIssueId,
+        blockerIssueId
+      }, client);
       assert.ok(result);
       assert.ok(result.message.includes('blocked by'));
     });
@@ -988,6 +995,40 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       await client.createProject(tempProj2, 'Temp 2', 'For delete test', false, 'Classic project');
       const result = await client.deleteProject(tempProj2);
       assert.ok(result.message.includes('deleted'));
+    });
+
+    it('creates a private project that the creator can list, read, and write', async () => {
+      const privateProj = `${TRANSPORT === 'rest' ? 'R' : 'W'}${String(Date.now()).slice(-4)}`;
+      let created = false;
+
+      try {
+        const result = await workspaceTools.create_project({
+          identifier: privateProj,
+          name: 'Private MCP Test Project',
+          description: 'Private project authorization regression test',
+          private: true,
+          projectType: 'Classic project'
+        }, client);
+        created = true;
+        assert.equal(result.identifier, privateProj);
+        assert.equal(result.private, true);
+
+        const listed = (await client.listProjects()).items.find(project => project.identifier === privateProj);
+        assert.ok(listed, 'Private project should be visible to its creator in listProjects');
+
+        const fetched = await client.getProject(privateProj);
+        assert.equal(fetched.private, true);
+        assert.ok(fetched.members > 0, 'Private project should retain creator membership');
+        assert.ok(fetched.owners > 0, 'Private project should retain creator ownership');
+
+        const issue = await client.createIssue(privateProj, `${TEST_PREFIX} private project issue`);
+        assert.match(issue.id, new RegExp(`^${privateProj}-\\d+$`));
+        assert.equal((await client.getIssue(issue.id)).id, issue.id);
+      } finally {
+        if (created) {
+          await client.deleteProject(privateProj);
+        }
+      }
     });
   });
 
@@ -1153,7 +1194,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
   describe('get_status', () => {
     it('finds a status by name', async () => {
-      const status = await client.getStatus('Backlog');
+      const status = await workspaceTools.get_status({ project: PROJECT, name: 'Backlog' }, client);
       assert.equal(status.name, 'Backlog');
       assert.ok(status.category, 'Should have a category');
     });
