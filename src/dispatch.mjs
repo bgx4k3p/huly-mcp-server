@@ -181,7 +181,7 @@ export const workspaceTools = {
   // Single-item lookups
   get_label: (a, c) => c.getLabel(a.name),
   get_member: (a, c) => c.getMember(a.name),
-  get_status: (a, c) => c.getStatus(a.name),
+  get_status: (a, c) => c.getStatus(a.project, a.name),
   get_component: (a, c) => c.getComponent(a.project, a.name),
   get_task_type: (a, c) => c.getTaskType(a.project, a.name),
   get_comment: (a, c) => c.getComment(a.issueId, a.commentId),

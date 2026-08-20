@@ -14,6 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { accountTools, workspaceTools } from '../src/dispatch.mjs';
+import { createMcpServer } from '../src/mcpShared.mjs';
 
 // ════════════════════════════════════════════════════════════════
 // Test helpers
@@ -56,6 +57,15 @@ function createRecorder() {
     }
   };
   return { proxy: new Proxy({}, handler), calls };
+}
+
+function containsValue(value, expected) {
+  if (Object.is(value, expected)) return true;
+  if (Array.isArray(value)) return value.some(item => containsValue(item, expected));
+  if (value && typeof value === 'object') {
+    return Object.values(value).some(item => containsValue(item, expected));
+  }
+  return false;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -573,9 +583,12 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'get_status',
-      args: { name: 'Todo' },
+      args: { project: 'P', name: 'Todo' },
       expectMethod: 'getStatus',
-      validate: (call) => assert.equal(call.args[0], 'Todo')
+      validate: (call) => {
+        assert.equal(call.args[0], 'P');
+        assert.equal(call.args[1], 'Todo');
+      }
     },
     {
       name: 'get_component',
@@ -725,6 +738,29 @@ describe('Account tool dispatch — structural validation', () => {
 // ════════════════════════════════════════════════════════════════
 
 describe('Required param coverage — no undefined forwarding', () => {
+
+  it('forwards every required advertised schema value through dispatch', async () => {
+    const { TOOLS } = createMcpServer();
+    const schemas = new Map(TOOLS.map(tool => [tool.name, tool.inputSchema]));
+
+    for (const [toolName, handler] of Object.entries(workspaceTools)) {
+      const schema = schemas.get(toolName);
+      assert.ok(schema, `${toolName}: missing advertised MCP schema`);
+
+      const args = buildArgs(schema);
+      const { proxy, calls } = createRecorder();
+      await handler(args, proxy);
+      assert.equal(calls.length, 1, `${toolName}: expected 1 client call`);
+
+      for (const requiredName of schema.required ?? []) {
+        if (requiredName === 'workspace') continue;
+        assert.ok(
+          containsValue(calls[0].args, args[requiredName]),
+          `${toolName}: required schema value "${requiredName}" was not forwarded by dispatch`
+        );
+      }
+    }
+  });
 
   it('workspace tools never forward undefined for required schema params', async () => {
     const requiredByTool = {
