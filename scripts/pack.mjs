@@ -1,144 +1,34 @@
 #!/usr/bin/env node
 /**
- * Custom pack script — creates a slim tarball by copying only the
- * Huly SDK packages needed at runtime, excluding UI/frontend bloat.
- *
- * Usage: node scripts/pack.mjs
- *
- * The Huly SDK pulls in ~32MB of transitive UI dependencies (theme, ui,
- * Svelte, etc.) that are never used in a Node.js MCP server. This script
- * produces a ~6MB tarball instead.
+ * Build the same dependency-free tarball npm publishes to the registry.
+ * Runtime dependencies are resolved by npm during installation instead of
+ * embedding a hand-flattened node_modules tree with conflicting transitive
+ * versions.
  */
-import { cpSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { execFileSync, execSync } from 'child_process';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const root = process.cwd();
-const tmp = join(root, '.pack-tmp');
-const npmCache = process.env.HULY_MCP_NPM_CACHE ?? join(tmp, '.npm-cache');
+const ownsCache = !process.env.HULY_MCP_NPM_CACHE;
+const npmCache = process.env.HULY_MCP_NPM_CACHE ?? mkdtempSync(join(tmpdir(), 'huly-mcp-pack-cache-'));
 const npmEnv = {
   ...process.env,
   npm_config_cache: npmCache,
   NPM_CONFIG_CACHE: npmCache
 };
 
-// Clean previous
-if (existsSync(tmp)) rmSync(tmp, { recursive: true });
-mkdirSync(tmp, { recursive: true });
-
-// Copy project files (same as "files" in package.json, plus package-lock.json for reproducible smoke installs)
-for (const item of [
-  'src',
-  'LICENSE',
-  'README.md',
-  'package.json',
-  'package-lock.json'
-]) {
-  const src = join(root, item);
-  const dst = join(tmp, item);
-  if (existsSync(src)) {
-    mkdirSync(join(dst, '..'), { recursive: true });
-    cpSync(src, dst, { recursive: true });
-  }
+try {
+  console.log('Packing...');
+  const result = execFileSync('npm', ['pack', '--cache', npmCache], {
+    cwd: root,
+    encoding: 'utf8',
+    env: npmEnv
+  });
+  const tgzName = result.trim();
+  const size = statSync(join(root, tgzName)).size;
+  console.log(`\n  ${tgzName} (${(size / 1048576).toFixed(1)}MB)`);
+} finally {
+  if (ownsCache) rmSync(npmCache, { recursive: true, force: true });
 }
-
-// Huly SDK packages needed at runtime
-const hulyNeeded = [
-  'account-client', 'analytics', 'api-client', 'chunter', 'client',
-  'client-resources', 'collaborator-client', 'contact', 'core',
-  'measurements', 'platform', 'rank', 'rpc', 'tags', 'task',
-  'text', 'text-core', 'text-html', 'text-markdown', 'tracker'
-];
-
-// Copy only needed @hcengineering packages
-for (const pkg of hulyNeeded) {
-  const src = join(root, 'node_modules', '@hcengineering', pkg);
-  const dst = join(tmp, 'node_modules', '@hcengineering', pkg);
-  if (existsSync(src)) {
-    cpSync(src, dst, { recursive: true });
-  }
-}
-
-// Strip @hcengineering/* deps from bundled packages so the published tarball
-// stays self-contained and npm does not fetch unused SDK/frontend packages.
-// All needed packages are already co-located in node_modules, so Node.js
-// resolves them via the file system.
-const hulySet = new Set(hulyNeeded);
-for (const pkg of hulyNeeded) {
-  const pkgJsonPath = join(tmp, 'node_modules', '@hcengineering', pkg, 'package.json');
-  if (!existsSync(pkgJsonPath)) continue;
-  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
-  if (!pkgJson.dependencies) continue;
-  let changed = false;
-  for (const dep of Object.keys(pkgJson.dependencies)) {
-    if (dep.startsWith('@hcengineering/')) {
-      const short = dep.replace('@hcengineering/', '');
-      if (!hulySet.has(short)) {
-        // Not bundled — remove to prevent npm from fetching it
-        delete pkgJson.dependencies[dep];
-        changed = true;
-      }
-    }
-  }
-  if (changed) {
-    writeFileSync(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + '\n');
-  }
-}
-
-// Copy non-Huly dependencies that the SDK needs
-// (everything in node_modules except @hcengineering and known bloat)
-// Only prune packages confirmed not needed at runtime
-const bloat = new Set(['svelte']);
-
-const { readdirSync } = await import('fs');
-for (const entry of readdirSync(join(root, 'node_modules'))) {
-  if (entry === '@hcengineering') continue;
-  if (entry === '.package-lock.json') continue;
-  if (bloat.has(entry)) continue;
-
-  const src = join(root, 'node_modules', entry);
-  const dst = join(tmp, 'node_modules', entry);
-
-  if (entry.startsWith('@')) {
-    // Scoped package — check subdirs
-    const skip = bloat.has(entry);
-    if (skip) continue;
-    cpSync(src, dst, { recursive: true });
-  } else {
-    cpSync(src, dst, { recursive: true });
-  }
-}
-
-// Pack from temp dir
-console.log('Packing...');
-const result = execFileSync('npm', ['pack', '--cache', npmCache], { cwd: tmp, encoding: 'utf8', env: npmEnv });
-const tgzName = result.trim();
-const tgzSrc = join(tmp, tgzName);
-const tgzDst = join(root, tgzName);
-cpSync(tgzSrc, tgzDst);
-
-// Rewrite the tarball's package.json to remove @hcengineering/* from
-// dependencies. npm resolves deps from registry metadata BEFORE extracting
-// bundled packages; keeping them here makes npm fetch SDK packages that are
-// already bundled and may pull in unused frontend dependencies.
-const rewriteDir = join(root, '.pack-rewrite');
-if (existsSync(rewriteDir)) rmSync(rewriteDir, { recursive: true });
-mkdirSync(rewriteDir, { recursive: true });
-execSync(`tar xzf "${tgzDst}" -C "${rewriteDir}"`);
-const innerPkgPath = join(rewriteDir, 'package', 'package.json');
-const innerPkg = JSON.parse(readFileSync(innerPkgPath, 'utf8'));
-for (const dep of Object.keys(innerPkg.dependencies || {})) {
-  if (dep.startsWith('@hcengineering/')) delete innerPkg.dependencies[dep];
-}
-writeFileSync(innerPkgPath, JSON.stringify(innerPkg, null, 2) + '\n');
-execSync(`tar czf "${tgzDst}" -C "${rewriteDir}" package`);
-rmSync(rewriteDir, { recursive: true });
-
-// Clean up
-rmSync(tmp, { recursive: true });
-
-// Report size
-const { statSync } = await import('fs');
-const size = statSync(tgzDst).size;
-const mb = (size / 1048576).toFixed(1);
-console.log(`\n  ${tgzName} (${mb}MB)`);
