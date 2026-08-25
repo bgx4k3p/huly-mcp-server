@@ -120,7 +120,7 @@ async function main() {
       parentChildPairs.push({ childId: id, parentId: issue.parent });
     }
 
-    // Relations and blocked-by from include_details
+    // Explicit relation and blocked-by expansions
     if (issue.relations) {
       for (const rel of issue.relations) {
         // Avoid duplicates (bidirectional)

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-25T02:24:54.934Z",
+  "counter": "claude-cli-differential",
+  "model": "claude-sonnet-5",
+  "measurements": [
+    {
+      "name": "get_issue_rich",
+      "tool": "get_issue",
+      "sha256": "4c5f8d3b34c0cda62adc42d689c51605b9a7504736c1d682a5e42ad7c33ca249",
+      "bytes": 1196,
+      "tokens": 546,
+      "maxBytes": 1196,
+      "maxTokens": 546,
+      "compactSha256": "e5f3fea94d39d8ae74d0d90c2cfc1fcf4595e5999316b1ced1ec1131054165e9",
+      "compactBytes": 751,
+      "maxCompactBytes": 751,
+      "compactTokens": 324,
+      "maxCompactTokens": 324
+    },
+    {
+      "name": "list_issues_page",
+      "tool": "list_issues",
+      "sha256": "5cb8148f23bb5d3c199085f8b49dc24541eb7d43572ec0a8ac7e9802b937fa7f",
+      "bytes": 1278,
+      "tokens": 542,
+      "maxBytes": 1278,
+      "maxTokens": 542,
+      "compactSha256": "c0e8acd2779bc3a7b542c56c2b4c507657bc2d658dd961c6398ebc7d8dab852d",
+      "compactBytes": 718,
+      "maxCompactBytes": 718,
+      "compactTokens": 324,
+      "maxCompactTokens": 324
+    },
+    {
+      "name": "project_summary",
+      "tool": "summarize_project",
+      "sha256": "6995c705925959bd7da5d731c4aa9ab00c149449bb3fdfe8227033946cd1d85a",
+      "bytes": 395,
+      "tokens": 212,
+      "maxBytes": 395,
+      "maxTokens": 212,
+      "compactSha256": "6338e6451594b89ef9a3779e43af3cdd2e1478b63c14ba45f479c12fa351c746",
+      "compactBytes": 269,
+      "maxCompactBytes": 269,
+      "compactTokens": 146,
+      "maxCompactTokens": 146
+    }
+  ]
+}

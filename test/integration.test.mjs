@@ -13,6 +13,7 @@ const HULY_CREDS = process.env.HULY_TOKEN
 process.env.HULY_URL = HULY_URL;
 process.env.HULY_WORKSPACE = process.env.HULY_WORKSPACE || 'default';
 const WORKSPACE = process.env.HULY_WORKSPACE;
+const ACCOUNT_WORKSPACE = process.env.HULY_ACCOUNT_TEST_WORKSPACE || WORKSPACE;
 const TRANSPORT = process.env.HULY_TRANSPORT || 'ws';
 console.log(`\n  Transport: ${TRANSPORT.toUpperCase()}\n`);
 
@@ -577,7 +578,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   describe('search_issues', () => {
     it('finds issues matching a search term', async () => {
       const results = await client.searchIssues('issue', PROJECT, 5);
-      assert.ok(Array.isArray(results));
+      assert.ok(Array.isArray(results.items));
       // Search may return results if any titles contain "issue"
     });
   });
@@ -587,7 +588,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   describe('get_my_issues', () => {
     it('returns issues assigned to the current user', async () => {
       const issues = await client.getMyIssues(undefined, undefined, 10);
-      assert.ok(Array.isArray(issues));
+      assert.ok(Array.isArray(issues.items));
       // May be empty if nothing is assigned to the user
     });
   });
@@ -1200,7 +1201,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('throws for nonexistent status', async () => {
-      await assert.rejects(() => client.getStatus('NoSuchStatus999'), /not found/i);
+      await assert.rejects(() => client.getStatus(PROJECT, 'NoSuchStatus999'), /not found/i);
     });
   });
 
@@ -1275,9 +1276,9 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  // ── include_details flag ──────────────────────────────────
+  // ── Granular read expansions ─────────────────────────────
 
-  describe('get_issue with include_details', () => {
+  describe('get_issue with explicit include', () => {
     let issueId;
 
     before(async () => {
@@ -1288,7 +1289,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       await client.logTime(issueId, 2, 'Detail work');
     });
 
-    it('returns basic fields without include_details', async () => {
+    it('returns basic fields without optional expansions', async () => {
       const issue = await client.getIssue(issueId);
       assert.ok(issue.title);
       assert.ok(issue.description);
@@ -1296,8 +1297,8 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       assert.equal(issue.timeReports, undefined);
     });
 
-    it('returns comments and timeReports with include_details', async () => {
-      const issue = await client.getIssue(issueId, { include_details: true });
+    it('returns comments and timeReports when explicitly requested', async () => {
+      const issue = await client.getIssue(issueId, { include: ['comments', 'timeReports'] });
       assert.ok(issue.title);
       assert.ok(Array.isArray(issue.comments), 'Should have comments array');
       assert.ok(issue.comments.length >= 1, 'Should have at least 1 comment');
@@ -1308,9 +1309,11 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  describe('list_issues with include_details', () => {
-    it('returns descriptions when include_details is true', async () => {
-      const issues = (await client.listIssues(PROJECT, null, null, null, null, 5, true)).items;
+  describe('list_issues with explicit include', () => {
+    it('returns descriptions when explicitly requested', async () => {
+      const issues = (await client.listIssues(
+        PROJECT, null, null, null, null, 5, undefined, { include: ['description'] }
+      )).items;
       assert.ok(issues.length > 0, 'Should have issues');
       const withDesc = issues.find(i => i.description && i.description.length > 0);
       assert.ok(withDesc, 'At least one issue should have a resolved description');
@@ -1324,9 +1327,11 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  describe('get_project with include_details', () => {
-    it('returns milestones and components with include_details', async () => {
-      const proj = await client.getProject(PROJECT, { include_details: true });
+  describe('get_project with explicit include', () => {
+    it('returns requested project expansions', async () => {
+      const proj = await client.getProject(PROJECT, {
+        include: ['milestones', 'components', 'labels', 'members']
+      });
       assert.ok(proj.identifier);
       assert.ok(Array.isArray(proj.milestones), 'Should have milestones array');
       assert.ok(Array.isArray(proj.components), 'Should have components array');
@@ -1341,9 +1346,9 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  describe('list_projects with include_details', () => {
-    it('returns enriched projects with include_details', async () => {
-      const projects = (await client.listProjects({ include_details: true })).items;
+  describe('list_projects with explicit include', () => {
+    it('returns requested project expansions', async () => {
+      const projects = (await client.listProjects({ include: ['milestones'] })).items;
       assert.ok(projects.length > 0);
       const proj = projects.find(p => p.identifier === PROJECT);
       assert.ok(proj, 'Should find test project');
@@ -1351,7 +1356,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  describe('get_milestone with include_details', () => {
+  describe('get_milestone with explicit include', () => {
     const msName = `${TEST_PREFIX}-ms-details-${Date.now()}`;
 
     before(async () => {
@@ -1361,8 +1366,8 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       await client.setMilestone(issue.id, msName);
     });
 
-    it('returns issues list with include_details', async () => {
-      const ms = await client.getMilestone(PROJECT, msName, { include_details: true });
+    it('returns issues list when explicitly requested', async () => {
+      const ms = await client.getMilestone(PROJECT, msName, { include: ['issues'] });
       assert.ok(ms.name === msName);
       assert.ok(Array.isArray(ms.issues), 'Should have issues array');
       assert.ok(ms.issues.length >= 1, 'Should have at least 1 issue');
@@ -1501,7 +1506,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 // 2a-2. V2.0.2 AUDIT TESTS — error paths, concurrency, workflows
 // ════════════════════════════════════════════════════════════════
 
-describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
+describe('Regression Audit Tests', { timeout: 120_000 }, () => {
   let HulyClient, client;
   const AUDIT_PROJECT = `AUD${Date.now().toString(36).slice(-4).toUpperCase()}`;
 
@@ -1598,9 +1603,9 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  // ── include_details round-trip ────────────────────────────
+  // ── Explicit expansion round-trip ────────────────────────
 
-  describe('include_details round-trip', () => {
+  describe('explicit expansion round-trip', () => {
     it('returns description, comments, timeReports via getIssue', async () => {
       const desc = 'This is a **test** description with markdown';
       const issue = await client.createIssue(AUDIT_PROJECT, 'Details test', desc);
@@ -1608,7 +1613,9 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
       await client.addComment(issue.id, 'Test comment body');
       await client.logTime(issue.id, 1.5, 'Test time entry');
 
-      const details = await client.getIssue(issue.id, { include_details: true });
+      const details = await client.getIssue(issue.id, {
+        include: ['description', 'comments', 'timeReports']
+      });
 
       assert.ok(details.description, 'Expected non-empty description');
       assert.ok(details.description.includes('test'), `Description should contain "test": ${details.description}`);
@@ -1725,7 +1732,7 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
 
     it('search_issues does not throw on orphaned parent', async () => {
       const issues = await client.searchIssues('Orphan child');
-      assert.ok(Array.isArray(issues), 'Search should return array');
+      assert.ok(Array.isArray(issues.items), 'Search should return a paginated item envelope');
     });
   });
 
@@ -1749,7 +1756,10 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
     });
 
     it('list_issues does not throw on orphaned component', async () => {
-      const issues = (await client.listIssues(AUDIT_PROJECT)).items;
+      const issues = (await client.listIssues(
+        AUDIT_PROJECT, undefined, undefined, undefined, undefined, undefined, undefined,
+        { fields: ['component'] }
+      )).items;
       const issue = issues.find(i => i.id === issueId);
       assert.ok(issue, 'Issue should be in list');
       assert.equal(issue.component, null, 'Orphaned component should be null');
@@ -1813,8 +1823,8 @@ describe('v2.0.2 Audit Tests', { timeout: 120_000 }, () => {
       try { await client.deleteIssue(issueId); } catch {}
     });
 
-    it('get_issue with include_details does not throw on orphaned relation', async () => {
-      const issue = await client.getIssue(issueId, true);
+    it('get_issue with relations does not throw on orphaned relation', async () => {
+      const issue = await client.getIssue(issueId, { include: ['relations'] });
       // The key assertion: get_issue must not throw even if related issue was deleted
       assert.ok(issue, 'get_issue should return the issue');
       if (issue.relations) {
@@ -1843,7 +1853,7 @@ describe('Account-Level Tests', { timeout: 120_000 }, () => {
       assert.ok(workspaces.length >= 1, `Expected at least 1 workspace, got ${workspaces.length}`);
 
       const slugs = workspaces.map(w => w.slug);
-      assert.ok(slugs.includes(WORKSPACE), `Should include ${WORKSPACE} workspace`);
+      assert.ok(slugs.includes(ACCOUNT_WORKSPACE), `Should include ${ACCOUNT_WORKSPACE} workspace`);
 
       for (const ws of workspaces) {
         assert.ok(typeof ws.slug === 'string');
@@ -1855,8 +1865,8 @@ describe('Account-Level Tests', { timeout: 120_000 }, () => {
 
   describe('get_workspace_info', () => {
     it('returns info for test workspace', async () => {
-      const info = await HulyClient.getWorkspaceInfo(HULY_URL, HULY_CREDS, WORKSPACE);
-      assert.equal(info.slug, WORKSPACE);
+      const info = await HulyClient.getWorkspaceInfo(HULY_URL, HULY_CREDS, ACCOUNT_WORKSPACE);
+      assert.equal(info.slug, ACCOUNT_WORKSPACE);
       assert.equal(info.mode, 'active');
       assert.ok(info.uuid, 'Should have a UUID');
       assert.ok(info.version, 'Should have a version');
@@ -1872,7 +1882,7 @@ describe('Account-Level Tests', { timeout: 120_000 }, () => {
 
   describe('get_workspace_members', () => {
     it('returns members for test workspace', async () => {
-      const members = await HulyClient.getWorkspaceMembers(HULY_URL, HULY_CREDS, WORKSPACE);
+      const members = await HulyClient.getWorkspaceMembers(HULY_URL, HULY_CREDS, ACCOUNT_WORKSPACE);
       assert.ok(Array.isArray(members));
       assert.ok(members.length >= 1, 'Should have at least one member');
       const owner = members.find(m => m.role === 'OWNER');
@@ -2398,6 +2408,47 @@ describe('Streamable HTTP MCP Server Tests', { timeout: 120_000 }, () => {
     };
   }
 
+  async function createIndependentSession(responseMode) {
+    let independentSessionId;
+    async function request(method, params = {}, headers = {}) {
+      const allHeaders = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        ...headers
+      };
+      if (independentSessionId) allHeaders['Mcp-Session-Id'] = independentSessionId;
+      if (!independentSessionId && responseMode) allHeaders['Huly-Response-Mode'] = responseMode;
+      const res = await fetch(`${baseUrl}/mcp`, {
+        method: 'POST',
+        headers: allHeaders,
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Math.floor(Math.random() * 100000),
+          method,
+          params
+        })
+      });
+      const sid = res.headers.get('mcp-session-id');
+      if (sid) independentSessionId = sid;
+      const text = await res.text();
+      const dataLine = text.split('\n').find(line => line.startsWith('data: '));
+      return dataLine ? JSON.parse(dataLine.slice(6)) : JSON.parse(text);
+    }
+    await request('initialize', {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: `response-${responseMode}`, version: '1.0' }
+    });
+    return {
+      request,
+      id: () => independentSessionId,
+      close: async () => fetch(`${baseUrl}/mcp`, {
+        method: 'DELETE',
+        headers: { 'Mcp-Session-Id': independentSessionId }
+      })
+    };
+  }
+
   /**
    * Make a plain HTTP request (for health check, etc.).
    */
@@ -2499,6 +2550,48 @@ describe('Streamable HTTP MCP Server Tests', { timeout: 120_000 }, () => {
       const data = JSON.parse(res.body.result.content[0].text);
       assert.ok(data.items, 'Response should have items array');
       assert.ok(Array.isArray(data.items));
+    });
+  });
+
+  describe('response mode session isolation', () => {
+    it('isolates concurrent HTTP sessions and keeps per-call overrides immutable', async () => {
+      const [compactSession, rawSession] = await Promise.all([
+        createIndependentSession('compact'),
+        createIndependentSession('raw')
+      ]);
+      try {
+        assert.notEqual(compactSession.id(), rawSession.id());
+        const call = (session, params, headers) => session.request('tools/call', params, headers);
+        const baseParams = { name: 'list_projects', arguments: { limit: 2 } };
+        const [compactResult, rawResult] = await Promise.all([
+          call(compactSession, baseParams),
+          call(rawSession, baseParams)
+        ]);
+        const compactText = compactResult.result.content[0].text;
+        const rawText = rawResult.result.content[0].text;
+        assert.doesNotMatch(compactText, /\n/);
+        assert.doesNotMatch(rawText, /\n/);
+        assert.equal(JSON.stringify(JSON.parse(compactText)).includes('"extra"'), false);
+        assert.equal(JSON.stringify(JSON.parse(rawText)).includes('"extra"'), true);
+
+        const overridden = await call(rawSession, {
+          ...baseParams,
+          _meta: { 'com.huly/responseMode': 'compact' }
+        });
+        assert.doesNotMatch(overridden.result.content[0].text, /\n/);
+
+        const rawAgain = await call(rawSession, baseParams);
+        assert.equal(rawAgain.result.content[0].text.includes('"extra"'), true);
+
+        const compactWithConflictingHeader = await call(
+          compactSession,
+          baseParams,
+          { 'Huly-Response-Mode': 'raw' }
+        );
+        assert.doesNotMatch(compactWithConflictingHeader.result.content[0].text, /\n/);
+      } finally {
+        await Promise.all([compactSession.close(), rawSession.close()]);
+      }
     });
   });
 

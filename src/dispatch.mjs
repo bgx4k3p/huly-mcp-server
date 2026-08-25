@@ -12,6 +12,34 @@
 import { HulyClient } from './client.mjs';
 
 /**
+ * Tool behavior policy used to generate MCP safety annotations.
+ *
+ * Keep this beside the dispatch tables so adding a handler without classifying
+ * its behavior fails the metadata regression test. MCP defaults are applied by
+ * mcpShared.mjs; these sets describe behavior, not merely naming conventions.
+ */
+export const READ_ONLY_TOOL_NAMES = new Set([
+  'get_huly_context',
+  'list_workspaces', 'get_workspace_info', 'get_workspace_members',
+  'get_account_info', 'get_user_profile', 'list_integrations',
+  'get_integration', 'list_mailboxes', 'find_person_by_social_key',
+  'get_social_ids', 'list_subscriptions',
+  'list_projects', 'get_project', 'list_issues', 'get_issue',
+  'search_issues', 'get_my_issues', 'summarize_project', 'list_labels',
+  'list_project_types', 'list_task_types', 'list_statuses',
+  'list_milestones', 'get_milestone', 'list_members', 'list_comments',
+  'list_time_reports', 'list_components', 'get_label', 'get_member',
+  'get_status', 'get_component', 'get_task_type', 'get_comment',
+  'get_time_report'
+]);
+
+export const DESTRUCTIVE_TOOL_NAMES = new Set([
+  'delete_workspace', 'delete_integration', 'delete_mailbox',
+  'delete_issue', 'delete_label', 'delete_milestone', 'delete_comment',
+  'delete_time_report', 'delete_project', 'delete_component'
+]);
+
+/**
  * Account-level tools — called as static methods on HulyClient.
  * Handler signature: (args, url, creds) => Promise<any>
  */
@@ -78,13 +106,23 @@ export const accountTools = {
  */
 export const workspaceTools = {
   list_projects: (a, c) =>
-    c.listProjects({ include_details: a.include_details, cursor: a.cursor, limit: a.limit }),
+    c.listProjects({ include: a.include, cursor: a.cursor, limit: a.limit }),
   get_project: (a, c) =>
-    c.getProject(a.project, { include_details: a.include_details }),
+    c.getProject(a.project, { include: a.include }),
   list_issues: (a, c) =>
-    c.listIssues(a.project, a.status, a.priority, a.label, a.milestone, a.limit, a.include_details, a.cursor),
+    c.listIssues(a.project, a.status, a.priority, a.label, a.milestone, a.limit, a.cursor, {
+      fields: a.fields, include: a.include, commentsLimit: a.comments_limit, activityLimit: a.activity_limit,
+      timeReportsLimit: a.time_reports_limit, relationsLimit: a.relations_limit,
+      childrenLimit: a.children_limit, descriptionPreviewChars: a.description_preview_chars,
+      responseMode: a.__responseMode
+    }),
   get_issue: (a, c) =>
-    c.getIssue(a.issueId, { include_details: a.include_details }),
+    c.getIssue(a.issueId, {
+      fields: a.fields, include: a.include,
+      commentsLimit: a.comments_limit, activityLimit: a.activity_limit, timeReportsLimit: a.time_reports_limit,
+      relationsLimit: a.relations_limit, childrenLimit: a.children_limit,
+      descriptionPreviewChars: a.description_preview_chars, responseMode: a.__responseMode
+    }),
   create_issue: (a, c) =>
     c.createIssue(a.project, a.title, a.description, a.priority, a.status, a.labels, a.type, {
       assignee: a.assignee, component: a.component, milestone: a.milestone,
@@ -98,9 +136,9 @@ export const workspaceTools = {
   delete_issue: (a, c) =>
     c.deleteIssue(a.issueId),
   search_issues: (a, c) =>
-    c.searchIssues(a.query, a.project, a.limit),
+    c.searchIssues(a.query, a.project, a.limit, a.cursor),
   get_my_issues: (a, c) =>
-    c.getMyIssues(a.project, a.status, a.limit),
+    c.getMyIssues(a.project, a.status, a.limit, a.cursor),
   batch_create_issues: (a, c) =>
     c.batchCreateIssues(a.project, a.issues),
   move_issue: (a, c) =>
@@ -130,8 +168,12 @@ export const workspaceTools = {
   list_statuses: (a, c) => c.listStatuses(a.project, a.taskType, { cursor: a.cursor, limit: a.limit }),
 
   // Milestones
-  list_milestones: (a, c) => c.listMilestones(a.project, a.status, { include_details: a.include_details, cursor: a.cursor, limit: a.limit }),
-  get_milestone: (a, c) => c.getMilestone(a.project, a.name, { include_details: a.include_details }),
+  list_milestones: (a, c) => c.listMilestones(a.project, a.status, {
+    include: a.include, issuesLimit: a.issues_limit, cursor: a.cursor, limit: a.limit
+  }),
+  get_milestone: (a, c) => c.getMilestone(a.project, a.name, {
+    include: a.include, issuesLimit: a.issues_limit
+  }),
   create_milestone: (a, c) =>
     c.createMilestone(a.project, a.name, a.description, a.targetDate, a.status, a.descriptionFormat),
   set_milestone: (a, c) => c.setMilestone(a.issueId, a.milestone),
