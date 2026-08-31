@@ -46,6 +46,7 @@ if (typeof globalThis.indexedDB === 'undefined') {
 }
 
 import { createRequire } from 'module';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 const require = createRequire(import.meta.url);
 
 const { markdown: markdownMarkup, html: htmlMarkup, MarkupContent } = require('@hcengineering/api-client');
@@ -102,6 +103,16 @@ export const AUTH_CACHE_TTL_MS = 600000;
 export const DEFAULT_MILESTONE_DAYS = 30;
 export const DEFAULT_PAGE_SIZE = 50;
 export const DEFAULT_DETAIL_PAGE_SIZE = 20;
+export const FILTER_ID_BATCH_SIZE = 100;
+export const FILTER_QUERY_CONCURRENCY = 4;
+export const MAX_LABEL_FILTER_ISSUES = 5000;
+export const LOOKUP_CACHE_TTL_MS = 60000;
+export const MAX_PAGE_SIZE = 100;
+export const MAX_DETAIL_PAGE_SIZE = 50;
+export const MAX_COMPACT_ARRAY_ITEMS = 100;
+export const CURSOR_TTL_MS = 24 * 60 * 60 * 1000;
+
+const processCursorSecret = randomBytes(32);
 
 export function toHours(value) {
   const number = Number(value);
@@ -115,26 +126,183 @@ export function issueTimeFields(issue) {
   };
 }
 
-/**
- * Encode a pagination cursor from a createdOn timestamp.
- * Returns an opaque base64url string.
- */
-export function encodeCursor(createdOn) {
-  return Buffer.from(JSON.stringify({ createdOn })).toString('base64url');
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableValue(value[key])]));
+}
+
+function cursorSecret(options = {}) {
+  return options.secret ?? process.env.HULY_CURSOR_SECRET ??
+    process.env.HULY_TOKEN ?? process.env.HULY_PASSWORD ?? processCursorSecret;
+}
+
+export function cursorScopeHash(scope) {
+  return createHash('sha256')
+    .update(JSON.stringify(stableValue(scope ?? {})))
+    .digest('base64url')
+    .slice(0, 16);
+}
+
+export function cursorTuple(value) {
+  const createdOn = Number(value?.createdOn ?? value?.extra?.createdOn ??
+    value?.modifiedOn ?? value?.extra?.modifiedOn ?? 0);
+  const id = String(value?._id ?? value?.id ?? value?.extra?._id ?? '');
+  if (!Number.isFinite(createdOn) || !id) throw new Error('Result cannot be paginated: missing stable cursor fields');
+  return { createdOn, id };
+}
+
+export function compareCursorTuple(left, right) {
+  if (right.createdOn !== left.createdOn) return right.createdOn - left.createdOn;
+  if (right.id === left.id) return 0;
+  return right.id < left.id ? -1 : 1;
+}
+
+export function isTupleAfter(value, boundary) {
+  const tuple = cursorTuple(value);
+  return tuple.createdOn < boundary.createdOn ||
+    (tuple.createdOn === boundary.createdOn && tuple.id < boundary.id);
+}
+
+/** Encode a signed, versioned, filter-bound pagination cursor. */
+export function encodeCursor(after, options = {}) {
+  const afterTuple = cursorTuple(after);
+  const watermarkTuple = cursorTuple(options.watermark ?? after);
+  const issuedAt = Math.floor((options.now ?? Date.now()) / 1000);
+  const payload = Buffer.from(JSON.stringify({
+    v: 1,
+    q: cursorScopeHash(options.scope),
+    w: [watermarkTuple.createdOn, watermarkTuple.id],
+    a: [afterTuple.createdOn, afterTuple.id],
+    i: issuedAt
+  })).toString('base64url');
+  const signature = createHmac('sha256', cursorSecret(options))
+    .update(payload)
+    .digest()
+    .subarray(0, 16)
+    .toString('base64url');
+  return `${payload}.${signature}`;
+}
+
+/** Decode and validate a signed pagination cursor. */
+export function decodeCursor(cursor, options = {}) {
+  try {
+    if (typeof cursor !== 'string' || cursor.length > 1024) throw new Error();
+    const parts = cursor.split('.');
+    if (parts.length !== 2) {
+      throw new Error('Unsupported pagination cursor format; restart pagination');
+    }
+    const [payload, suppliedSignature] = parts;
+    const encodedPart = /^[A-Za-z0-9_-]+$/;
+    if (!encodedPart.test(payload) || !encodedPart.test(suppliedSignature)) {
+      throw new Error('Pagination cursor signature is invalid');
+    }
+    const payloadBytes = Buffer.from(payload, 'base64url');
+    const supplied = Buffer.from(suppliedSignature, 'base64url');
+    if (payloadBytes.toString('base64url') !== payload ||
+        supplied.toString('base64url') !== suppliedSignature) {
+      throw new Error('Pagination cursor signature is invalid');
+    }
+    const expectedSignature = createHmac('sha256', cursorSecret(options))
+      .update(payload)
+      .digest()
+      .subarray(0, 16);
+    if (supplied.length !== expectedSignature.length || !timingSafeEqual(supplied, expectedSignature)) {
+      throw new Error('Pagination cursor signature is invalid');
+    }
+    const parsed = JSON.parse(payloadBytes.toString());
+    if (parsed.v !== 1 || parsed.q !== cursorScopeHash(options.scope) ||
+        !Array.isArray(parsed.w) || !Array.isArray(parsed.a) ||
+        parsed.w.length !== 2 || parsed.a.length !== 2 ||
+        !Number.isFinite(parsed.w[0]) || typeof parsed.w[1] !== 'string' ||
+        !Number.isFinite(parsed.a[0]) || typeof parsed.a[1] !== 'string' ||
+        !Number.isInteger(parsed.i)) {
+      if (parsed.q !== cursorScopeHash(options.scope)) {
+        throw new Error('Pagination cursor does not match this query');
+      }
+      throw new Error('Pagination cursor payload is invalid');
+    }
+    const now = options.now ?? Date.now();
+    const ttl = options.ttlMs ?? CURSOR_TTL_MS;
+    if ((parsed.i * 1000) > now + 300000 || now - (parsed.i * 1000) > ttl) {
+      throw new Error('Pagination cursor is stale; restart pagination');
+    }
+    return {
+      version: parsed.v,
+      watermark: { createdOn: parsed.w[0], id: parsed.w[1] },
+      after: { createdOn: parsed.a[0], id: parsed.a[1] }
+    };
+  } catch (error) {
+    if (error?.message?.startsWith('Pagination cursor') ||
+        error?.message?.startsWith('Unsupported pagination cursor')) throw error;
+    throw new Error('Invalid pagination cursor');
+  }
 }
 
 /**
- * Decode a pagination cursor back to { createdOn }.
- * Throws on invalid input.
+ * Build the v3 list envelope. Pagination metadata is stated by the producer,
+ * which knows whether a page was cut short, rather than inferred downstream
+ * from the shape of the payload.
  */
-export function decodeCursor(cursor) {
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString());
-    if (typeof parsed.createdOn !== 'number') throw new Error();
-    return parsed;
-  } catch {
-    throw new Error('Invalid pagination cursor');
+export function listEnvelope(items, nextCursor) {
+  return {
+    items,
+    count: items.length,
+    hasMore: Boolean(nextCursor),
+    truncated: Boolean(nextCursor),
+    ...(nextCursor ? { nextCursor } : {})
+  };
+}
+
+/**
+ * Resolve an optional due date. setDueDate already validated; createIssue,
+ * updateIssue, and batchCreateIssues did not, and stored NaN instead.
+ */
+export function toIsoDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const ms = typeof value === 'number' ? value : new Date(value).getTime();
+  // A stored NaN or unparseable string must not throw RangeError out of a read
+  // path and fail the whole page.
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+export function normalizeDueDate(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const parsed = new Date(value).getTime();
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid date: ${value}. Use ISO format, for example 2026-04-01.`);
   }
+  return parsed;
+}
+
+/**
+ * Map a priority name to its numeric code. An unrecognised name must fail:
+ * silently storing "none" while echoing the requested value back misreports
+ * the write. listIssues already rejects; the write paths did not.
+ */
+export function resolvePriority(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const mapped = PRIORITY_MAP[String(value).toLowerCase()];
+  if (mapped === undefined) throw new Error(`Priority not found: ${value}`);
+  return mapped;
+}
+
+/** Resolve a time-report date, rejecting values the SDK would store as NaN. */
+export function normalizeReportDate(value) {
+  if (value === undefined || value === null || value === '') return Date.now();
+  const parsed = new Date(value).getTime();
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid date: ${String(value)}. Use ISO format, for example 2026-04-01.`);
+  }
+  return parsed;
+}
+
+export function normalizePageLimit(value, fallback = DEFAULT_PAGE_SIZE, maximum = MAX_PAGE_SIZE) {
+  const limit = value === undefined || value === null ? fallback : value;
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > maximum) {
+    throw new Error(`Pagination limit must be an integer from 1 to ${maximum}`);
+  }
+  return limit;
 }
 
 /**

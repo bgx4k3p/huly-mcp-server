@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "2.4.7",
+  "version": "3.0.0",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
@@ -26,6 +26,7 @@
   "files": [
     "src/",
     "LICENSE",
+    "CHANGELOG.md",
     "README.md"
   ],
   "bin": {
@@ -38,25 +39,32 @@
     "test": "HULY_TRANSPORT=ws node --test test/integration.test.mjs && HULY_TRANSPORT=rest node --test test/integration.test.mjs",
     "test:ws": "HULY_TRANSPORT=ws node --test test/integration.test.mjs",
     "test:rest": "HULY_TRANSPORT=rest node --test test/integration.test.mjs",
-    "test:unit": "node --test test/outboundHeaders.test.mjs test/dispatch.test.mjs test/initCodex.test.mjs test/mcpShared.test.mjs test/projectCreation.test.mjs test/timeNormalization.test.mjs",
+    "test:unit": "node scripts/run-unit-tests.mjs",
+    "test:response-budgets": "node scripts/response-benchmark.mjs && node scripts/scan-response-fixtures.mjs",
+    "benchmark:live": "node scripts/live-response-benchmark.mjs",
+    "validate:pagination:live": "node scripts/live-pagination-validation.mjs",
+    "validate:projection:live": "node scripts/live-projection-validation.mjs",
+    "benchmark:workflows:live": "node scripts/live-workflow-benchmark.mjs",
     "lint": "eslint src/ scripts/",
     "test:package": "npm run pack && node scripts/smoke-packed-package.mjs",
-    "preflight": "npm run lint && npm run test:unit && npm run test:package",
+    "preflight": "npm run lint && npm run test:unit && npm run test:response-budgets && npm run test:package",
     "pack": "node scripts/pack.mjs",
-    "version:sync": "node -e \"const{readFileSync:r,writeFileSync:w}=require('fs');const v=r('VERSION','utf-8').trim();const f='package.json';const j=JSON.parse(r(f,'utf-8'));j.version=v;w(f,JSON.stringify(j,null,2)+'\\n');console.log('Synced version '+v+' to package.json')\""
+    "version:sync": "node -e \"const{readFileSync:r,writeFileSync:w}=require('fs');const v=r('VERSION','utf-8').trim();const f='package.json';const j=JSON.parse(r(f,'utf-8'));j.version=v;w(f,JSON.stringify(j,null,2)+'\\n');console.log('Synced version '+v+' to package.json')\"",
+    "coverage": "node scripts/run-unit-tests.mjs --coverage",
+    "coverage:live": "HULY_TRANSPORT=ws node --test --experimental-test-coverage test/integration.test.mjs"
   },
   "dependencies": {
-    "@hcengineering/api-client": "^0.7.423",
-    "@hcengineering/chunter": "^0.7.423",
-    "@hcengineering/core": "^0.7.423",
-    "@hcengineering/tags": "^0.7.423",
-    "@hcengineering/task": "^0.7.423",
-    "@hcengineering/tracker": "^0.7.423",
+    "@hcengineering/api-client": "0.7.423",
+    "@hcengineering/chunter": "0.7.423",
+    "@hcengineering/core": "0.7.423",
+    "@hcengineering/tags": "0.7.423",
+    "@hcengineering/task": "0.7.423",
+    "@hcengineering/tracker": "0.7.423",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "jsdom": "^30.0.1",
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "eslint": "^10.8.1"
+    "eslint": "^10.9.1"
   }
 }

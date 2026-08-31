@@ -167,8 +167,8 @@ npx -y @bgx4k3p/huly-mcp-server --init-codex \
 That writes the routing variables to Codex `env_vars` instead of literal values
 under `[mcp_servers.huly.env]`.
 
-For backward compatibility, omitting `--url` also leaves `HULY_URL` as a runtime
-environment reference. The generator does not read and copy the current shell's
+Omitting `--url` leaves `HULY_URL` as a runtime environment reference. The
+generator does not read and copy the current shell's
 `HULY_URL` value into the project config unless you pass it explicitly with
 `--url`.
 
@@ -204,8 +204,8 @@ npx -y @bgx4k3p/huly-mcp-server --init-claude \
   --project-env HULY_PROJECT
 ```
 
-For backward compatibility, `--init-claude --workspace my-workspace` still
-writes `HULY_URL` as `${HULY_URL}`.
+When `--url` is omitted, `--init-claude --workspace my-workspace` writes
+`HULY_URL` as `${HULY_URL}`.
 
 Or add the server manually from a local source checkout:
 
@@ -377,6 +377,11 @@ MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{i
 | `HULY_PROJECT` | No | - | Optional default project identifier for project-scoped tools |
 | `HULY_TRANSPORT` | No | `ws` | SDK transport: `ws` (WebSocket) or `rest` (REST API) |
 | `HULY_POOL_TTL_MS` | No | `1800000` | Connection pool TTL in ms (30 min) |
+| `HULY_RESPONSE_MODE` | No | `compact` | Result serializer: `compact` or diagnostic `raw` |
+| `HULY_TOOL_PROFILE` | No | `full` | Tool catalog: `full`, `project`, or read-only `read` |
+| `HULY_CURSOR_SECRET` | No | Derived from Huly credentials | Optional stable HMAC secret for signed cursors |
+| `HULY_METRICS` | No | `off` | Privacy-safe response metrics: `off`, `stderr`, or `file` |
+| `HULY_METRICS_FILE` | No | - | Mode-0600 JSONL destination when metrics mode is `file` |
 | `HULY_OUTBOUND_HEADERS_JSON` | No | - | JSON object of extra headers for protected Huly origins |
 | `HULY_OUTBOUND_HEADER_*` | No | - | One extra outbound header per env var, with `_` converted to `-` |
 | **HTTP Server** | | | |
@@ -387,6 +392,19 @@ MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{i
 
 *`HULY_WORKSPACE` is required for MCP stdio mode. For HTTP mode it can
 be omitted if every request specifies a workspace via the tool arguments.
+
+Compact responses are minified and omit unreviewed raw SDK fields under
+`extra`, while preserving documented null and empty values. Set
+`_meta["com.huly/responseMode"]` on one tool call to override its mode. HTTP
+clients can set `Huly-Response-Mode` while creating a session; this is captured
+for that session only. `raw` returns full SDK fields as minified JSON.
+
+Tool profiles reduce the catalog sent to the model at session startup. `full`
+exposes all 82 tools, `project` exposes the 55 workspace/project tools, and
+`read` exposes 36 read-only tools. For Claude research/review sessions, set
+`HULY_TOOL_PROFILE=read`; use `project` when the session must edit issues, and
+use `full` only for workspace/account administration. Calls outside the active
+profile fail instead of being silently routed.
 
 ### HTTP Server Authentication
 
@@ -676,8 +694,8 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_projects` | List all projects (supports `include_details`) | -- |
-| `get_project` | Get project by identifier (supports `include_details`) | -- |
+| `list_projects` | List projects with optional `milestones`, `components`, `labels`, and `members` expansions | -- |
+| `get_project` | Get project by identifier with optional granular expansions | -- |
 | `create_project` | Create a new project | `projectType`: name/id (required only if the workspace has multiple) |
 | `update_project` | Update project name, description, privacy, default assignee | -- |
 | `archive_project` | Archive or unarchive a project | -- |
@@ -688,8 +706,8 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_issues` | List issues with filters (supports `include_details`) | -- |
-| `get_issue` | Get full issue details (supports `include_details`) | -- |
+| `list_issues` | List issues with filters, projections, and granular expansions | -- |
+| `get_issue` | Get an issue with projections and granular expansions | -- |
 | `create_issue` | Create a new issue | `descriptionFormat`: md/html/plain |
 | `update_issue` | Update issue fields | `descriptionFormat`: md/html/plain |
 | `delete_issue` | Permanently delete an issue | -- |
@@ -733,8 +751,8 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_milestones` | List milestones (supports `include_details`) | -- |
-| `get_milestone` | Get milestone details (supports `include_details`) | -- |
+| `list_milestones` | List milestones with optional bounded `issues` expansion | -- |
+| `get_milestone` | Get milestone details with optional bounded `issues` expansion | -- |
 | `create_milestone` | Create a new milestone | `descriptionFormat`: md/html/plain |
 | `update_milestone` | Update milestone fields | `descriptionFormat`: md/html/plain |
 | `delete_milestone` | Delete a milestone | -- |
@@ -781,19 +799,30 @@ Full list of all MCP tools available through this server.
 > `"markdown"`, `"html"`, or `"plain"`. Content is passed
 > through unmodified -- the format tells Huly how to render it.
 
-### include\_details Flag
+### Projections and explicit expansions
 
-Several read tools support an `include_details` boolean parameter that
-fetches related data in a single call:
+`list_issues` and `get_issue` accept `fields` for base-field projection and
+`include` for granular expansions. Supported expansions are `description`,
+`comments`, `activity`, `timeReports`, `relations`, `blockedBy`, and `children`.
+Each collection has an independent limit (default 20, maximum 100) and returns
+`*Count`/`*Truncated` metadata. List description previews default to 500
+characters; use `description_preview_chars: 0` for full list descriptions.
+`get_issue` returns the complete description by default and never silently
+truncates it.
 
-| Tool | Extra data when `include_details=true` |
-| --- | --- |
-| `get_issue` | Comments, time reports, relations, children |
-| `list_issues` | Descriptions, comments, time reports, relations, children (limit reduced to 50) |
-| `get_project` | Milestones, components, labels, members |
-| `list_projects` | Milestones, components, labels, members per project (limit 20) |
-| `get_milestone` | Full list of issues in the milestone |
-| `list_milestones` | Issues list per milestone |
+Compact issue lists use a concise default field projection, while raw lists
+retain the complete base-field set. `include` is the only expansion mechanism;
+there is no broad-detail boolean shortcut.
+
+Projects accept `include: [milestones, components, labels, members]` and fetch
+only the selected related collections. Milestones accept `include: [issues]`;
+`issues_limit` defaults to 20 and caps at 100, with `issuesCount` and
+`issuesTruncated` in the result.
+
+For measured Claude parent/subagent patterns, optional MCP tool scoping, and
+prompt examples, see [Token-efficient Claude workflows](docs/CLAUDE_WORKFLOWS.md).
+For the breaking v3 API changes, see the [v3 upgrade guide](docs/V3_UPGRADE.md);
+the [release validation matrix](docs/RELEASE_VALIDATION.md) records the regression gates.
 
 ### CRUD Coverage
 

@@ -1,0 +1,148 @@
+[
+  {
+    "name": "get_issue_rich",
+    "tool": "get_issue",
+    "result": {
+      "id": "FIX-42",
+      "title": "Synthetic response fixture",
+      "description": "## Fixture\n\nSynthetic content used only for deterministic response-size testing.",
+      "status": "In Progress",
+      "priority": "High",
+      "type": "Task",
+      "assignee": "Fixture User",
+      "component": "API",
+      "labels": [
+        "Performance",
+        "Testing"
+      ],
+      "parent": null,
+      "childCount": 1,
+      "milestone": {
+        "id": "fixture-milestone-0001",
+        "name": "Fixture Milestone",
+        "status": "Planned"
+      },
+      "estimation": 8,
+      "reportedTime": 2,
+      "createdOn": 1700000000000,
+      "modifiedOn": 1700000100000,
+      "completedAt": null,
+      "comments": [
+        {
+          "id": "fixture-comment-0001",
+          "text": "Synthetic comment",
+          "createdBy": "fixture-user-0001",
+          "createdOn": 1700000050000
+        }
+      ],
+      "relations": [],
+      "blockedBy": [],
+      "children": [
+        {
+          "id": "FIX-43",
+          "title": "Synthetic child",
+          "status": "Todo",
+          "type": "Task"
+        }
+      ],
+      "extra": {
+        "_id": "fixture-issue-internal-0001",
+        "_class": "tracker:class:Issue",
+        "space": "fixture-project-space-0001",
+        "rank": "0|fixture-rank",
+        "modifiedBy": "fixture-user-0001",
+        "collection": "issues"
+      }
+    }
+  },
+  {
+    "name": "list_issues_page",
+    "tool": "list_issues",
+    "result": {
+      "items": [
+        {
+          "id": "FIX-41",
+          "title": "First synthetic issue",
+          "status": "Todo",
+          "priority": "Medium",
+          "type": "Task",
+          "assignee": null,
+          "component": null,
+          "labels": [
+            "Testing"
+          ],
+          "parent": null,
+          "childCount": 0,
+          "milestone": null,
+          "estimation": 3,
+          "reportedTime": 0,
+          "createdOn": 1700000000000,
+          "modifiedOn": 1700000000000,
+          "completedAt": null,
+          "extra": {
+            "_id": "fixture-issue-internal-0041",
+            "space": "fixture-project-space-0001",
+            "rank": "0|fixture-a"
+          }
+        },
+        {
+          "id": "FIX-40",
+          "title": "Second synthetic issue",
+          "status": "Done",
+          "priority": "Low",
+          "type": "Task",
+          "assignee": "Fixture User",
+          "component": "API",
+          "labels": [],
+          "parent": null,
+          "childCount": 0,
+          "milestone": "Fixture Milestone",
+          "estimation": 1,
+          "reportedTime": 1,
+          "createdOn": 1699999900000,
+          "modifiedOn": 1700000000000,
+          "completedAt": 1700000000000,
+          "extra": {
+            "_id": "fixture-issue-internal-0040",
+            "space": "fixture-project-space-0001",
+            "rank": "0|fixture-b"
+          }
+        }
+      ],
+      "count": 2,
+      "hasMore": true,
+      "truncated": true,
+      "nextCursor": "fixture-opaque-cursor"
+    }
+  },
+  {
+    "name": "project_summary",
+    "tool": "summarize_project",
+    "result": {
+      "project": "FIX",
+      "totalIssues": 24,
+      "byStatus": {
+        "Backlog": 4,
+        "Todo": 8,
+        "In Progress": 5,
+        "Done": 7
+      },
+      "byPriority": {
+        "Urgent": 1,
+        "High": 5,
+        "Medium": 10,
+        "Low": 6,
+        "No Priority": 2
+      },
+      "overdue": 2,
+      "unassigned": 3,
+      "milestones": [
+        {
+          "name": "Fixture Milestone",
+          "status": "Planned",
+          "issueCount": 6
+        }
+      ]
+    }
+  }
+]

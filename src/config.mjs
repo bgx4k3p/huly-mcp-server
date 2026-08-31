@@ -14,7 +14,11 @@ export const HULY_CREDS = HULY_TOKEN
   : { email: HULY_EMAIL, password: HULY_PASSWORD };
 
 // ── Pool ─────────────────────────────────────────────────────
-export const POOL_TTL_MS = parseInt(process.env.HULY_POOL_TTL_MS || '1800000', 10);
+const DEFAULT_POOL_TTL_MS = 1800000;
+const parsedPoolTtl = parseInt(process.env.HULY_POOL_TTL_MS || String(DEFAULT_POOL_TTL_MS), 10);
+export const POOL_TTL_MS = Number.isFinite(parsedPoolTtl) && parsedPoolTtl > 0
+  ? parsedPoolTtl
+  : DEFAULT_POOL_TTL_MS;
 export const POOL_CLEANUP_INTERVAL_MS = 300000; // 5 min
 
 // ── HTTP Server ──────────────────────────────────────────────

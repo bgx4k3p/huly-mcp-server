@@ -62,12 +62,12 @@ const sessions = new Map();
  * Get or create a session for a given session ID.
  * Stateful mode: each client gets a persistent session.
  */
-function getOrCreateSession(sessionId) {
+function getOrCreateSession(sessionId, responseMode) {
   if (sessionId && sessions.has(sessionId)) {
     return sessions.get(sessionId);
   }
 
-  const { server, TOOLS } = createMcpServer();
+  const { server, TOOLS } = createMcpServer({ }, { responseMode });
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
   });
@@ -101,7 +101,7 @@ function setCorsHeaders(req, res) {
     }
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Huly-Response-Mode');
   res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -197,7 +197,7 @@ async function handleRequest(req, res) {
 
     if (method === 'POST') {
       const body = await parseBody(req);
-      const session = getOrCreateSession(sessionId);
+      const session = getOrCreateSession(sessionId, req.headers['huly-response-mode']);
       await session.transport.handleRequest(req, res, body);
 
       // Store session after first request (transport now has a session ID)

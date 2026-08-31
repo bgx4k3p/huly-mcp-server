@@ -108,24 +108,30 @@ describe('Workspace tool dispatch — param forwarding', () => {
   const toolTests = [
     {
       name: 'list_projects',
-      args: { include_details: true },
+      args: { include: ['members'] },
       expectMethod: 'listProjects',
       validate: (call) => {
-        assert.deepEqual(call.args[0], { include_details: true, cursor: undefined, limit: undefined });
+        assert.deepEqual(call.args[0], { include: ['members'], cursor: undefined, limit: undefined });
       }
     },
     {
       name: 'get_project',
-      args: { project: 'PROJ', include_details: true },
+      args: { project: 'PROJ', include: ['milestones', 'labels'] },
       expectMethod: 'getProject',
       validate: (call) => {
         assert.equal(call.args[0], 'PROJ');
-        assert.deepEqual(call.args[1], { include_details: true });
+        assert.deepEqual(call.args[1], { include: ['milestones', 'labels'] });
       }
     },
     {
       name: 'list_issues',
-      args: { project: 'P', status: 'Todo', priority: 'high', label: 'bug', milestone: 'v1', limit: 10, include_details: true },
+      args: {
+        project: 'P', status: 'Todo', priority: 'high', label: 'bug', milestone: 'v1',
+        limit: 10, cursor: 'cursor-token', fields: ['title'], include: ['comments'],
+        comments_limit: 3, activity_limit: 4, time_reports_limit: 5,
+        relations_limit: 6, children_limit: 7, description_preview_chars: 300,
+        __responseMode: 'compact'
+      },
       expectMethod: 'listIssues',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
@@ -134,16 +140,28 @@ describe('Workspace tool dispatch — param forwarding', () => {
         assert.equal(call.args[3], 'bug');
         assert.equal(call.args[4], 'v1');
         assert.equal(call.args[5], 10);
-        assert.equal(call.args[6], true);
+        assert.equal(call.args[6], 'cursor-token');
+        assert.deepEqual(call.args[7], {
+          fields: ['title'], include: ['comments'], commentsLimit: 3,
+          activityLimit: 4, timeReportsLimit: 5, relationsLimit: 6,
+          childrenLimit: 7, descriptionPreviewChars: 300, responseMode: 'compact'
+        });
       }
     },
     {
       name: 'get_issue',
-      args: { issueId: 'P-1', include_details: true },
+      args: {
+        issueId: 'P-1', fields: ['title'], include: ['activity'],
+        activity_limit: 8, __responseMode: 'raw'
+      },
       expectMethod: 'getIssue',
       validate: (call) => {
         assert.equal(call.args[0], 'P-1');
-        assert.deepEqual(call.args[1], { include_details: true });
+        assert.equal(Object.hasOwn(call.args[1], 'include_details'), false);
+        assert.deepEqual(call.args[1].fields, ['title']);
+        assert.deepEqual(call.args[1].include, ['activity']);
+        assert.equal(call.args[1].activityLimit, 8);
+        assert.equal(call.args[1].responseMode, 'raw');
       }
     },
     {
@@ -197,22 +215,24 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'search_issues',
-      args: { query: 'auth', project: 'P', limit: 5 },
+      args: { query: 'auth', project: 'P', limit: 5, cursor: 'cursor' },
       expectMethod: 'searchIssues',
       validate: (call) => {
         assert.equal(call.args[0], 'auth');
         assert.equal(call.args[1], 'P');
         assert.equal(call.args[2], 5);
+        assert.equal(call.args[3], 'cursor');
       }
     },
     {
       name: 'get_my_issues',
-      args: { project: 'P', status: 'Todo', limit: 50 },
+      args: { project: 'P', status: 'Todo', limit: 50, cursor: 'cursor' },
       expectMethod: 'getMyIssues',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
         assert.equal(call.args[1], 'Todo');
         assert.equal(call.args[2], 50);
+        assert.equal(call.args[3], 'cursor');
       }
     },
     {
@@ -350,22 +370,24 @@ describe('Workspace tool dispatch — param forwarding', () => {
     // Milestones
     {
       name: 'list_milestones',
-      args: { project: 'P', status: 'Planned', include_details: true },
+      args: { project: 'P', status: 'Planned', include: ['issues'], issues_limit: 7 },
       expectMethod: 'listMilestones',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
         assert.equal(call.args[1], 'Planned');
-        assert.deepEqual(call.args[2], { include_details: true, cursor: undefined, limit: undefined });
+        assert.deepEqual(call.args[2], {
+          include: ['issues'], issuesLimit: 7, cursor: undefined, limit: undefined
+        });
       }
     },
     {
       name: 'get_milestone',
-      args: { project: 'P', name: 'v1', include_details: true },
+      args: { project: 'P', name: 'v1', include: ['issues'], issues_limit: 9 },
       expectMethod: 'getMilestone',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
         assert.equal(call.args[1], 'v1');
-        assert.deepEqual(call.args[2], { include_details: true });
+        assert.deepEqual(call.args[2], { include: ['issues'], issuesLimit: 9 });
       }
     },
     {
@@ -815,7 +837,7 @@ describe('Dispatch table integrity', () => {
                       hours: 1, query: 'q', template: 'feature',
                       issues: [{ title: 'T' }], targetProject: 'Q',
                       commentId: 'c1', reportId: 'r1', title: 'T',
-                      identifier: 'I', archived: true, include_details: false };
+                      identifier: 'I', archived: true };
       await handler(args, proxy);
       assert.equal(calls.length, 1, `${name}: dispatch should make exactly 1 call`);
       const method = calls[0].method;
