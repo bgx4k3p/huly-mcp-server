@@ -52,11 +52,6 @@ export function projectCompact(value) {
       entries.push([key, projectCompact(child)]);
     }
   }
-  if (Array.isArray(value.items)) {
-    collectionMetadata.push(['count', Math.min(value.items.length, MAX_COMPACT_ARRAY_ITEMS)]);
-    collectionMetadata.push(['hasMore', Boolean(value.nextCursor)]);
-    collectionMetadata.push(['truncated', Boolean(value.nextCursor)]);
-  }
   for (const [key, metadataValue] of collectionMetadata) {
     if (!entries.some(([entryKey]) => entryKey === key)) entries.push([key, metadataValue]);
   }
@@ -68,12 +63,15 @@ export function serializeToolResult(result, mode = DEFAULT_RESPONSE_MODE) {
   if (parsedMode === 'raw') return JSON.stringify(result);
   if (Array.isArray(result)) {
     const items = result.slice(0, MAX_COMPACT_ARRAY_ITEMS).map(projectCompact);
+    const dropped = result.length > items.length;
     return JSON.stringify({
       items,
       count: items.length,
       totalCount: result.length,
-      hasMore: false,
-      truncated: result.length > items.length
+      // A bare array carries no cursor, so dropped records are unreachable from
+      // this result. Report that rather than implying the page is complete.
+      hasMore: dropped,
+      truncated: dropped
     });
   }
   return JSON.stringify(projectCompact(result));

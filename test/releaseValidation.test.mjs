@@ -127,6 +127,8 @@ describe('release validation properties', () => {
         if (query.title === 'New') return null;
         return tag;
       },
+      // createLabel enumerates projects so it can skip built-in model spaces.
+      findAll: async (classRef) => (classRef === tracker.class.Project ? [{ _id: 'project-id' }] : []),
       createDoc: async () => {},
       updateDoc: async () => {},
       removeDoc: async () => {}

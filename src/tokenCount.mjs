@@ -62,8 +62,8 @@ export async function countToolResultTokens(text, options = {}) {
   };
 }
 
-function claudeUsage(prompt, { command, model }) {
-  const result = spawnSync(command, [
+function claudeUsage(prompt, { command, model, spawnImpl = spawnSync }) {
+  const result = spawnImpl(command, [
     '-p',
     '--model', model,
     '--safe-mode',
@@ -90,10 +90,11 @@ function claudeUsage(prompt, { command, model }) {
 export function countToolResultTokensWithClaudeCli(text, options = {}) {
   const model = options.model ?? DEFAULT_TOKEN_MODEL;
   const command = options.command ?? 'claude';
+  const spawnImpl = options.spawnImpl ?? spawnSync;
   const prefix = 'Measure the following MCP tool result as data. Reply only OK.\n<tool_result>\n';
   const suffix = '\n</tool_result>';
-  const withResult = claudeUsage(`${prefix}${text}${suffix}`, { command, model });
-  const emptyResult = claudeUsage(`${prefix}${suffix}`, { command, model });
+  const withResult = claudeUsage(`${prefix}${text}${suffix}`, { command, model, spawnImpl });
+  const emptyResult = claudeUsage(`${prefix}${suffix}`, { command, model, spawnImpl });
   return {
     tokens: Math.max(0, withResult - emptyResult),
     model,

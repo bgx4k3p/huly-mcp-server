@@ -16,7 +16,8 @@ import {
   FILTER_ID_BATCH_SIZE, FILTER_QUERY_CONCURRENCY, MAX_LABEL_FILTER_ISSUES,
   LOOKUP_CACHE_TTL_MS,
   encodeCursor, decodeCursor, cursorTuple, compareCursorTuple,
-  isTupleAfter, normalizePageLimit,
+  isTupleAfter, normalizePageLimit, listEnvelope, normalizeReportDate, toIsoDate,
+  normalizeDueDate, resolvePriority,
   nameMatch, strictGet, toHours, issueTimeFields, withExtra,
   toCollaboratorMarkup, fromCollaboratorMarkup,
   toMarkup, fromMarkup
@@ -208,10 +209,13 @@ export class HulyClient {
   static async createWorkspace(url, creds, name) {
     const { authClient } = await HulyClient._getAuthClient(url, creds);
     const result = await authClient.createWorkspace(name);
+    // WorkspaceLoginInfo carries the slug as workspaceUrl and the uuid as
+    // workspace. Reading result.url returned the uuid as the slug and left
+    // uuid undefined, so the reported slug could not address the workspace.
     return {
       message: `Workspace "${name}" created`,
-      slug: result.url || result.workspace,
-      uuid: result.uuid || result.workspaceId
+      slug: result.workspaceUrl ?? result.url ?? result.workspace,
+      uuid: result.workspace ?? result.uuid
     };
   }
 
@@ -627,7 +631,7 @@ export class HulyClient {
    * @param {string} text - Content to write
    * @param {string} [format='markdown'] - Input format
    * @param {string} [attr='description'] - Attribute name
-   * @returns {Promise<boolean>} True if write succeeded
+   * @returns {Promise<void>}
    */
   async _writeCollaboratorField(objectId, objectClass, text, format = 'markdown', attr = 'description') {
     if (!this._collabClient) {
@@ -930,16 +934,13 @@ export class HulyClient {
     // If we got more than limit, there are more results
     if (allResults.length > limit) {
       const items = allResults.slice(0, limit);
-      return {
-        items,
-        nextCursor: encodeCursor(items[items.length - 1], {
-          scope: cursorScope,
-          watermark
-        })
-      };
+      return listEnvelope(items, encodeCursor(items[items.length - 1], {
+        scope: cursorScope,
+        watermark
+      }));
     }
 
-    return { items: allResults };
+    return listEnvelope(allResults);
   }
 
   /**
@@ -968,16 +969,13 @@ export class HulyClient {
     if (items.length > limit) {
       const page = items.slice(0, limit);
       const decoded = cursor ? decodeCursor(cursor, { scope: cursorScope }) : null;
-      return {
-        items: page,
-        nextCursor: encodeCursor(page[page.length - 1], {
-          scope: cursorScope,
-          watermark: decoded?.watermark ?? page[0]
-        })
-      };
+      return listEnvelope(page, encodeCursor(page[page.length - 1], {
+        scope: cursorScope,
+        watermark: decoded?.watermark ?? page[0]
+      }));
     }
 
-    return { items };
+    return listEnvelope(items);
   }
 
   async _findEmployeeByName(client, name) {
@@ -1076,7 +1074,9 @@ export class HulyClient {
         expiresAt
       });
     }
-    return tagElements.find(tagElement => nameMatch(tagElement.title, labelName)) ?? null;
+    const matched = tagElements.find(tagElement => nameMatch(tagElement.title, labelName)) ?? null;
+    if (matched) this._labelLookupCache.set(key, { value: matched, expiresAt });
+    return matched;
   }
 
   async _findIssueIdsForLabel(client, tagId) {
@@ -1130,18 +1130,18 @@ export class HulyClient {
     );
     const merged = perBatch
       .flatMap(page => page.items)
-      .sort((a, b) => (b.createdOn - a.createdOn) || b._id.localeCompare(a._id));
+      .sort((a, b) => (b.createdOn - a.createdOn) || compareCursorTuple(
+        { createdOn: a.createdOn, id: String(a._id) },
+        { createdOn: b.createdOn, id: String(b._id) }
+      ));
     if (merged.length > options.limit) {
       const items = merged.slice(0, options.limit);
-      return {
-        items,
-        nextCursor: encodeCursor(items[items.length - 1], {
-          scope: cursorScope,
-          watermark: decoded?.watermark ?? items[0]
-        })
-      };
+      return listEnvelope(items, encodeCursor(items[items.length - 1], {
+        scope: cursorScope,
+        watermark: decoded?.watermark ?? items[0]
+      }));
     }
-    return { items: merged };
+    return listEnvelope(merged);
   }
 
   async _buildRelatedIssueMap(client, issues) {
@@ -1255,7 +1255,7 @@ export class HulyClient {
       if (include.has('labels')) {
         base.labels = allLabels.map(label => ({
           name: label.title,
-          color: label.color ? `#${label.color.toString(16).padStart(6, '0')}` : null
+          color: label.color ?? null
         }));
       }
       if (include.has('members')) {
@@ -1265,7 +1265,7 @@ export class HulyClient {
       }
       return withExtra(project, base);
     });
-    return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+    return listEnvelope(items, page.nextCursor);
   }
 
   /**
@@ -1326,7 +1326,7 @@ export class HulyClient {
     }));
     if (include.has('labels')) base.labels = allLabels.map(t => ({
       name: t.title,
-      color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null
+      color: t.color ?? null
     }));
     if (include.has('members')) {
       base.members = (project.members || []).map(mId => employeeMap.get(mId)).filter(Boolean);
@@ -1417,7 +1417,7 @@ export class HulyClient {
       }
       labelIssueIds = await this._findIssueIdsForLabel(client, tagElement._id);
       if (labelIssueIds.length === 0) {
-        return { items: [] };
+        return listEnvelope([]);
       }
     }
 
@@ -1441,7 +1441,7 @@ export class HulyClient {
     const nextCursor = fetchResult.nextCursor;
 
     if (issues.length === 0) {
-      return { items: [] };
+      return listEnvelope([]);
     }
 
     // Fetch only lookup tables required by the requested projection.
@@ -1588,7 +1588,7 @@ export class HulyClient {
             hours: report.value,
             description: fromMarkup(report.description),
             date: report.date,
-            dateFormatted: report.date ? new Date(report.date).toISOString() : null
+            dateFormatted: toIsoDate(report.date)
           }))
         ].sort((a, b) => (a.date || 0) - (b.date || 0));
         assignBounded(entry, 'activity', activity, projection.limits.activity);
@@ -1598,7 +1598,7 @@ export class HulyClient {
           id: report._id,
           hours: report.value,
           description: fromMarkup(report.description),
-          date: report.date ? new Date(report.date).toISOString() : null
+          date: toIsoDate(report.date)
         }));
         assignBounded(entry, 'timeReports', reports, projection.limits.timeReports);
       }
@@ -1626,9 +1626,7 @@ export class HulyClient {
       return projectIssueFields(withExtra(issue, entry), projection);
     });
 
-    const response = { items: result };
-    if (nextCursor) response.nextCursor = nextCursor;
-    return response;
+    return listEnvelope(result, nextCursor);
   }
 
   /**
@@ -1693,6 +1691,7 @@ export class HulyClient {
         : Promise.resolve([]),
       included('children')
         ? client.findAll(tracker.class.Issue, {
+          space: project._id,
           attachedTo: issue._id,
           attachedToClass: tracker.class.Issue
         })
@@ -1764,7 +1763,7 @@ export class HulyClient {
           hours: report.value,
           description: fromMarkup(report.description),
           date: report.date,
-          dateFormatted: report.date ? new Date(report.date).toISOString() : null
+          dateFormatted: toIsoDate(report.date)
         }))
       ].sort((a, b) => (a.date || 0) - (b.date || 0));
       assignBounded('activity', activity, projection.limits.activity);
@@ -1774,7 +1773,7 @@ export class HulyClient {
         id: report._id,
         hours: report.value,
         description: fromMarkup(report.description),
-        date: report.date ? new Date(report.date).toISOString() : null
+        date: toIsoDate(report.date)
       })), projection.limits.timeReports);
     }
     if (included('relations') || included('blockedBy')) {
@@ -1880,13 +1879,13 @@ export class HulyClient {
         identifier: `${project.identifier}-${nextNumber}`,
         description: '',
         status: statusId,
-        priority: PRIORITY_MAP[priority?.toLowerCase()] ?? 0,
+        priority: resolvePriority(priority),
         number: nextNumber,
         assignee: assigneeId,
         component: componentId,
         milestone: milestoneId,
         estimation: toHours(extra.estimation),
-        dueDate: extra.dueDate ? new Date(extra.dueDate).getTime() : null,
+        dueDate: normalizeDueDate(extra.dueDate),
         remainingTime: 0,
         reportedTime: 0,
         childInfo: [],
@@ -1949,7 +1948,7 @@ export class HulyClient {
     }
 
     if (priority !== undefined) {
-      updates.priority = PRIORITY_MAP[priority.toLowerCase()] ?? issue.priority;
+      updates.priority = resolvePriority(priority, issue.priority);
       updatedFields.push('priority');
     }
 
@@ -1965,10 +1964,12 @@ export class HulyClient {
       const taskTypeId = resolvedTaskTypeId || await this._getDefaultTaskType(client, project);
       const statuses = await this._getScopedStatuses(client, project, taskTypeId);
       const found = statuses.find(s => nameMatch(s.name, status));
-      if (found) {
-        updates.status = found._id;
-        updatedFields.push('status');
+      if (!found) {
+        const available = statuses.map(s => s.name).join(', ');
+        throw new Error(`Status "${status}" not found. Available: ${available}`);
       }
+      updates.status = found._id;
+      updatedFields.push('status');
     }
 
     if (extra.assignee !== undefined) {
@@ -1987,7 +1988,7 @@ export class HulyClient {
     }
 
     if (extra.dueDate !== undefined) {
-      updates.dueDate = extra.dueDate ? new Date(extra.dueDate).getTime() : null;
+      updates.dueDate = normalizeDueDate(extra.dueDate);
       updatedFields.push('dueDate');
     }
 
@@ -2067,7 +2068,7 @@ export class HulyClient {
       id: t._id,
       name: t.title,
       description: t.description || '',
-      color: t.color ? `#${t.color.toString(16).padStart(6, '0')}` : null,
+      color: t.color ?? null,
       category: t.category || null
     }));
     return this._cursoredFindAll(enriched, {
@@ -2094,8 +2095,15 @@ export class HulyClient {
       return { message: `Label "${name}" already exists`, id: existing._id };
     }
 
-    const project = await client.findOne(tracker.class.Project, {});
-    const space = project ? project._id : 'tracker:project:Default';
+    // A built-in project such as tracker:project:DefaultProject is a
+    // model-level space, and a TagElement created there is silently not
+    // persisted. Own the label with a real, database-created project.
+    const projects = await client.findAll(tracker.class.Project, {});
+    const project = projects.find(candidate => !String(candidate._id).includes(':')) ?? null;
+    if (!project) {
+      throw new Error('Cannot create a label: the workspace has no project to own it');
+    }
+    const space = project._id;
 
     const tagId = generateId();
     await client.createDoc(tags.class.TagElement, space, {
@@ -2106,6 +2114,19 @@ export class HulyClient {
       category: DEFAULT_LABEL_CATEGORY
     }, tagId);
     this._labelLookupCache.clear();
+
+    // createDoc resolves even when the server discards the document, which is
+    // how a label written to a model-level space used to report success while
+    // persisting nothing. Confirm the write before claiming it happened.
+    const persisted = await client.findOne(tags.class.TagElement, {
+      _id: tagId,
+      targetClass: tracker.class.Issue
+    });
+    if (!persisted) {
+      throw new Error(
+        `Label "${name}" was not persisted by the server. This usually means the owning space is not a real project space.`
+      );
+    }
 
     return { message: `Label "${name}" created`, id: tagId, name, color: resolveColor(color) };
   }
@@ -2138,12 +2159,27 @@ export class HulyClient {
     }
 
     await client.updateDoc(tags.class.TagElement, tagElement.space, tagElement._id, ops);
+
+    // Issue reads and removeLabel match on the denormalised TagReference.title.
+    // Renaming only the element leaves the label answering to its old name
+    // there and its new name in label filters.
+    let renamedReferences = 0;
+    if (ops.title !== undefined) {
+      const references = await client.findAll(tags.class.TagReference, { tag: tagElement._id });
+      for (const reference of references) {
+        await client.updateDoc(tags.class.TagReference, reference.space, reference._id, {
+          title: ops.title
+        });
+        renamedReferences += 1;
+      }
+    }
     this._labelLookupCache.clear();
 
     return {
       message: `Label "${name}" updated`,
       id: tagElement._id,
-      updated: Object.keys(ops)
+      updated: Object.keys(ops),
+      ...(ops.title !== undefined ? { renamedReferences } : {})
     };
   }
 
@@ -2233,6 +2269,42 @@ export class HulyClient {
   }
 
   /**
+   * Detach a sub-issue from its parent, returning it to the project's own
+   * issue collection. Mirrors the attach path in setParent.
+   */
+  async _detachParent(client, project, issue, issueId) {
+    if (issue.attachedToClass !== tracker.class.Issue || !issue.attachedTo) {
+      return { message: `${issueId} has no parent`, issueId, parentId: null };
+    }
+
+    const oldParent = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
+    if (oldParent) {
+      const remaining = (oldParent.childInfo || []).filter(c => c.childId !== issue._id);
+      await client.updateDoc(tracker.class.Issue, oldParent.space, oldParent._id, {
+        childInfo: remaining,
+        subIssues: remaining.length
+      });
+    }
+
+    await client.updateCollection(
+      tracker.class.Issue,
+      project._id,
+      issue._id,
+      project._id,
+      tracker.class.Project,
+      'issues',
+      {
+        parents: [],
+        attachedTo: project._id,
+        attachedToClass: tracker.class.Project,
+        collection: 'issues'
+      }
+    );
+
+    return { message: `Removed parent from ${issueId}`, issueId, parentId: null };
+  }
+
+  /**
    * Set the parent issue for a child issue.
    * @param {string} issueId - Child issue identifier
    * @param {string} parentIssueId - Parent issue identifier
@@ -2242,6 +2314,14 @@ export class HulyClient {
     const client = await this._getClient();
 
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
+
+    // The tool advertises an empty parentId as "remove parent". Without this
+    // branch that call reached _parseAndFindIssue and threw, leaving no way to
+    // detach a sub-issue through the advertised API.
+    if (parentIssueId === undefined || parentIssueId === null || String(parentIssueId).trim() === '') {
+      return await this._detachParent(client, project, issue, issueId);
+    }
+
     const { project: parentProject, issue: parentIssue } = await this._parseAndFindIssue(client, parentIssueId);
 
     // Clean up old parent if the child already has one
@@ -2425,19 +2505,26 @@ export class HulyClient {
       const project = await client.findOne(tracker.class.Project, {
         identifier: projectIdent.toUpperCase()
       });
-      if (project) {
-        const projectTypes = await client.findAll(task.class.ProjectType, {});
-        const projectType = projectTypes.find(pt => pt._id === project.type);
-        if (projectType && projectType.tasks) {
-          const taskTypeIds = new Set(projectType.tasks);
-          relevantTaskTypes = allTaskTypes.filter(tt => taskTypeIds.has(tt._id));
-        }
+      if (!project) throw new Error(`Project not found: ${projectIdent}`);
+      const projectTypes = await client.findAll(task.class.ProjectType, {});
+      const projectType = projectTypes.find(pt => pt._id === project.type);
+      // An unresolvable project type is a data problem, not a licence to return
+      // every status in the workspace as though it were project-scoped. A type
+      // that simply declares no task types legitimately scopes to nothing.
+      if (!projectType) {
+        throw new Error(`Project type not found for project ${projectIdent}`);
       }
+      const taskTypeIds = new Set(projectType.tasks ?? []);
+      relevantTaskTypes = allTaskTypes.filter(tt => taskTypeIds.has(tt._id));
     }
 
-    // Further filter by task type name
+    // Further filter by task type name. An unknown name must fail rather than
+    // fall through to the unscoped status list below.
     if (taskTypeName) {
       relevantTaskTypes = relevantTaskTypes.filter(tt => nameMatch(tt.name, taskTypeName));
+      if (relevantTaskTypes.length === 0) {
+        throw new Error(`Task type not found: ${taskTypeName}`);
+      }
     }
 
     // Collect status IDs from matching task types
@@ -2451,9 +2538,7 @@ export class HulyClient {
     }
 
     // Filter statuses to only those in scope
-    const scopedStatuses = statusIds.size > 0
-      ? allStatuses.filter(s => statusIds.has(s._id))
-      : allStatuses;
+    const scopedStatuses = allStatuses.filter(s => statusIds.has(s._id));
 
     const enriched = scopedStatuses.map(s => ({
       id: s._id,
@@ -2561,7 +2646,7 @@ export class HulyClient {
       }
       return withExtra(milestone, base);
     });
-    return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+    return listEnvelope(items, page.nextCursor);
   }
 
   /**
@@ -2658,13 +2743,8 @@ export class HulyClient {
       };
     }
 
-    let targetTimestamp = Date.now() + (DEFAULT_MILESTONE_DAYS * 24 * 60 * 60 * 1000);
-    if (targetDate) {
-      const parsed = new Date(targetDate);
-      if (!isNaN(parsed.getTime())) {
-        targetTimestamp = parsed.getTime();
-      }
-    }
+    const targetTimestamp = normalizeDueDate(targetDate) ??
+      Date.now() + (DEFAULT_MILESTONE_DAYS * 24 * 60 * 60 * 1000);
 
     let statusValue = 0;
     if (status) {
@@ -2852,14 +2932,7 @@ export class HulyClient {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
-    let timestamp = null;
-    if (dueDate && dueDate.trim() !== '') {
-      const parsed = new Date(dueDate);
-      if (isNaN(parsed.getTime())) {
-        throw new Error(`Invalid date: ${dueDate}`);
-      }
-      timestamp = parsed.getTime();
-    }
+    const timestamp = normalizeDueDate(dueDate);
 
     await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
       dueDate: timestamp
@@ -2918,7 +2991,7 @@ export class HulyClient {
       'reports',
       {
         employee: employeeId,
-        date: date ? new Date(date).getTime() : Date.now(),
+        date: normalizeReportDate(date),
         value: normalizedHours,
         description: description || ''
       },
@@ -3016,7 +3089,7 @@ export class HulyClient {
       modifiedOn: i.modifiedOn,
       completedAt: doneStatuses.has(i.status) ? i.modifiedOn : null
     }));
-    return { items, ...(fetchResult.nextCursor ? { nextCursor: fetchResult.nextCursor } : {}) };
+    return listEnvelope(items, fetchResult.nextCursor);
   }
 
   // ── New Methods (Tier 1–2) ─────────────────────────────────────
@@ -3157,7 +3230,7 @@ export class HulyClient {
       }));
     }
 
-    return { items: result, ...(fetchResult.nextCursor ? { nextCursor: fetchResult.nextCursor } : {}) };
+    return listEnvelope(result, fetchResult.nextCursor);
   }
 
   /**
@@ -3280,7 +3353,7 @@ export class HulyClient {
           component: componentId,
           milestone: milestoneId,
           estimation: toHours(item.estimation),
-          dueDate: item.dueDate ? new Date(item.dueDate).getTime() : null,
+          dueDate: normalizeDueDate(item.dueDate),
           remainingTime: 0,
           reportedTime: 0,
           childInfo: [],
@@ -3368,7 +3441,8 @@ export class HulyClient {
     }
 
     // Remap status if needed
-    const destStatuses = await this._getScopedStatuses(client, destProject);
+    const destTaskTypeId = issue.kind ?? await this._getDefaultTaskType(client, destProject);
+    const destStatuses = await this._getScopedStatuses(client, destProject, destTaskTypeId);
     const srcStatusMap = await this._buildStatusMaps(client, sourceProject);
     const currentStatusName = srcStatusMap.statusMap.get(issue.status);
     if (currentStatusName) {
@@ -3525,7 +3599,7 @@ export class HulyClient {
         hours: tr.value,
         description: fromMarkup(tr.description),
         date: tr.date,
-        dateFormatted: tr.date ? new Date(tr.date).toISOString() : null
+        dateFormatted: toIsoDate(tr.date)
       });
     }
 
@@ -3902,17 +3976,15 @@ export class HulyClient {
     }
     if (updates.status !== undefined) {
       const statusValue = MILESTONE_STATUS_MAP[updates.status.toLowerCase()];
-      if (statusValue !== undefined) {
-        docUpdates.status = statusValue;
-        updatedFields.push('status');
+      if (statusValue === undefined) {
+        throw new Error(`Milestone status not found: ${updates.status}`);
       }
+      docUpdates.status = statusValue;
+      updatedFields.push('status');
     }
     if (updates.targetDate !== undefined) {
-      const parsed = new Date(updates.targetDate);
-      if (!isNaN(parsed.getTime())) {
-        docUpdates.targetDate = parsed.getTime();
-        updatedFields.push('targetDate');
-      }
+      docUpdates.targetDate = normalizeDueDate(updates.targetDate);
+      updatedFields.push('targetDate');
     }
 
     if (Object.keys(docUpdates).length > 0) {
@@ -4082,7 +4154,7 @@ export class HulyClient {
       id: r._id,
       hours: toHours(r.value),
       description: fromMarkup(r.description),
-      date: r.date ? new Date(r.date).toISOString() : null
+      date: toIsoDate(r.date)
     }));
     return this._cursoredFindAll(enriched, {
       ...options,
@@ -4321,7 +4393,7 @@ export class HulyClient {
       id: report._id,
       hours: toHours(report.value),
       description: fromMarkup(report.description),
-      date: report.date ? new Date(report.date).toISOString() : null
+      date: toIsoDate(report.date)
     });
   }
 }

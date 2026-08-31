@@ -153,7 +153,9 @@ export function cursorTuple(value) {
 }
 
 export function compareCursorTuple(left, right) {
-  return (right.createdOn - left.createdOn) || right.id.localeCompare(left.id);
+  if (right.createdOn !== left.createdOn) return right.createdOn - left.createdOn;
+  if (right.id === left.id) return 0;
+  return right.id < left.id ? -1 : 1;
 }
 
 export function isTupleAfter(value, boundary) {
@@ -235,6 +237,64 @@ export function decodeCursor(cursor, options = {}) {
         error?.message?.startsWith('Unsupported pagination cursor')) throw error;
     throw new Error('Invalid pagination cursor');
   }
+}
+
+/**
+ * Build the v3 list envelope. Pagination metadata is stated by the producer,
+ * which knows whether a page was cut short, rather than inferred downstream
+ * from the shape of the payload.
+ */
+export function listEnvelope(items, nextCursor) {
+  return {
+    items,
+    count: items.length,
+    hasMore: Boolean(nextCursor),
+    truncated: Boolean(nextCursor),
+    ...(nextCursor ? { nextCursor } : {})
+  };
+}
+
+/**
+ * Resolve an optional due date. setDueDate already validated; createIssue,
+ * updateIssue, and batchCreateIssues did not, and stored NaN instead.
+ */
+export function toIsoDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const ms = typeof value === 'number' ? value : new Date(value).getTime();
+  // A stored NaN or unparseable string must not throw RangeError out of a read
+  // path and fail the whole page.
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+export function normalizeDueDate(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const parsed = new Date(value).getTime();
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid date: ${value}. Use ISO format, for example 2026-04-01.`);
+  }
+  return parsed;
+}
+
+/**
+ * Map a priority name to its numeric code. An unrecognised name must fail:
+ * silently storing "none" while echoing the requested value back misreports
+ * the write. listIssues already rejects; the write paths did not.
+ */
+export function resolvePriority(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const mapped = PRIORITY_MAP[String(value).toLowerCase()];
+  if (mapped === undefined) throw new Error(`Priority not found: ${value}`);
+  return mapped;
+}
+
+/** Resolve a time-report date, rejecting values the SDK would store as NaN. */
+export function normalizeReportDate(value) {
+  if (value === undefined || value === null || value === '') return Date.now();
+  const parsed = new Date(value).getTime();
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid date: ${String(value)}. Use ISO format, for example 2026-04-01.`);
+  }
+  return parsed;
 }
 
 export function normalizePageLimit(value, fallback = DEFAULT_PAGE_SIZE, maximum = MAX_PAGE_SIZE) {

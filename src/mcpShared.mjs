@@ -89,7 +89,16 @@ const paginationProps = {
   },
   limit: {
     type: 'number',
-    description: 'Page size: default 50, max 100; expanded issues default 20, max 50.'
+    description: 'Page size: default 50, max 100 (expanded issues 20/50).'
+  }
+};
+
+// Shared by every tool whose client method accepts a description format.
+const descriptionFormatProp = {
+  descriptionFormat: {
+    type: 'string',
+    enum: ['markdown', 'html', 'plain'],
+    description: 'Description format; markdown is the default.'
   }
 };
 
@@ -531,12 +540,12 @@ function getToolDefinitions() {
     {
       name: 'create_issue',
       description: 'Create a new issue in a project. Returns the new issue ID (e.g., "PROJ-43"). Supports markdown in the description field. Priority defaults to "none", status defaults to "Todo". Use list_task_types to discover available types (Issue, Epic, Bug, etc.) before specifying a type. For creating multiple issues at once, use batch_create_issues instead.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, title: { type: 'string', description: 'Issue title' }, description: { type: 'string', description: 'Issue description. Format controlled by descriptionFormat.' }, descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Format of the description field. "markdown" (default) renders Markdown syntax. "html" accepts raw HTML. "plain" stores as unformatted text.' }, priority: { type: 'string', description: 'Priority: urgent, high, medium, low, none (default: none)' }, status: { type: 'string', description: 'Initial status (default: Todo). Use list_statuses to see options.' }, labels: { type: 'array', items: { type: 'string' }, description: 'Label names to apply. Labels are auto-created if they don\'t exist.' }, type: { type: 'string', description: 'Task type name (e.g., "Issue", "Epic", "Bug"). Use list_task_types to see available types.' }, assignee: { type: 'string', description: 'Assignee name (must match an active workspace member)' }, component: { type: 'string', description: 'Component name to assign the issue to' }, milestone: { type: 'string', description: 'Milestone name to assign the issue to' }, dueDate: { type: 'string', description: 'Due date in ISO format (e.g., "2026-04-01")' }, estimation: { type: 'number', description: 'Time estimation in hours' }, ...workspaceProp }, required: ['project', 'title'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, title: { type: 'string', description: 'Issue title' }, description: { type: 'string', description: 'Issue description. Format controlled by descriptionFormat.' }, ...descriptionFormatProp, priority: { type: 'string', description: 'Priority: urgent, high, medium, low, none (default: none)' }, status: { type: 'string', description: 'Initial status (default: Todo). Use list_statuses to see options.' }, labels: { type: 'array', items: { type: 'string' }, description: 'Label names to apply. Labels are auto-created if they don\'t exist.' }, type: { type: 'string', description: 'Task type name (e.g., "Issue", "Epic", "Bug"). Use list_task_types to see available types.' }, assignee: { type: 'string', description: 'Assignee name (must match an active workspace member)' }, component: { type: 'string', description: 'Component name to assign the issue to' }, milestone: { type: 'string', description: 'Milestone name to assign the issue to' }, dueDate: { type: 'string', description: 'Due date in ISO format (e.g., "2026-04-01")' }, estimation: { type: 'number', description: 'Time estimation in hours' }, ...workspaceProp }, required: ['project', 'title'] }
     },
     {
       name: 'update_issue',
       description: 'Update one or more fields on an existing issue. Only specify the fields you want to change — omitted fields are left unchanged. Returns a list of which fields were updated. Use list_statuses to discover valid status names.',
-      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, title: { type: 'string', description: 'New title' }, description: { type: 'string', description: 'New description. Format controlled by descriptionFormat.' }, descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'], description: 'Format of the description field. "markdown" (default) renders Markdown syntax. "html" accepts raw HTML. "plain" stores as unformatted text.' }, priority: { type: 'string', description: 'New priority: urgent, high, medium, low, none' }, status: { type: 'string', description: 'New status: Backlog, Todo, In Progress, Done, Canceled' }, type: { type: 'string', description: 'New task type name (e.g., "Issue", "Epic", "Bug")' }, assignee: { type: 'string', description: 'New assignee name (must match an active workspace member)' }, component: { type: 'string', description: 'New component name' }, milestone: { type: 'string', description: 'New milestone name' }, dueDate: { type: 'string', description: 'New due date in ISO format (e.g., "2026-04-01")' }, estimation: { type: 'number', description: 'New time estimation in hours' }, ...workspaceProp }, required: ['issueId'] }
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, title: { type: 'string', description: 'New title' }, description: { type: 'string', description: 'New description. Format controlled by descriptionFormat.' }, ...descriptionFormatProp, priority: { type: 'string', description: 'New priority: urgent, high, medium, low, none' }, status: { type: 'string', description: 'New status: Backlog, Todo, In Progress, Done, Canceled' }, type: { type: 'string', description: 'New task type name (e.g., "Issue", "Epic", "Bug")' }, assignee: { type: 'string', description: 'New assignee name (must match an active workspace member)' }, component: { type: 'string', description: 'New component name' }, milestone: { type: 'string', description: 'New milestone name' }, dueDate: { type: 'string', description: 'New due date in ISO format (e.g., "2026-04-01")' }, estimation: { type: 'number', description: 'New time estimation in hours' }, ...workspaceProp }, required: ['issueId'] }
     },
     {
       name: 'add_label',
@@ -586,7 +595,7 @@ function getToolDefinitions() {
     {
       name: 'update_project',
       description: 'Update a project\'s name, description, privacy, or default assignee.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, name: { type: 'string', description: 'New display name' }, description: { type: 'string', description: 'New description' }, isPrivate: { type: 'boolean', description: 'Privacy setting' }, defaultAssignee: { type: 'string', description: 'Default assignee name (empty string to clear)' }, ...workspaceProp }, required: ['project'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, name: { type: 'string', description: 'New display name' }, description: { type: 'string', description: 'New description' }, private: { type: 'boolean', description: 'Privacy setting' }, defaultAssignee: { type: 'string', description: 'Default assignee name (empty string to clear)' }, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'delete_project',
@@ -628,7 +637,7 @@ function getToolDefinitions() {
     {
       name: 'create_issues_from_template',
       description: 'Create a set of issues from a predefined template. Templates: feature (epic + design/implement/test/docs/review), bug (reproduce/root-cause/fix/regression-test), sprint (planning/standup/review/retro), release (freeze/QA/changelog/staging/prod/verify).',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, template: { type: 'string', enum: ['feature', 'bug', 'sprint', 'release'], description: 'Template name' }, title: { type: 'string', description: 'Title prefix for generated issues' }, ...workspaceProp }, required: ['project', 'template', 'title'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, template: { type: 'string', enum: ['feature', 'bug', 'sprint', 'release'], description: 'Template name' }, title: { type: 'string', description: 'Title prefix for generated issues' }, version: { type: 'string', description: 'Version label for the release template, used when title is omitted' }, ...workspaceProp }, required: ['project', 'template'] }
     },
 
     // ── Relations ────────────────────────────────────────────
@@ -662,12 +671,12 @@ function getToolDefinitions() {
     {
       name: 'create_component',
       description: 'Create a new component in a project.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Component name' }, description: { type: 'string', description: 'Component description' }, lead: { type: 'string', description: 'Lead member name' }, ...workspaceProp }, required: ['project', 'name'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Component name' }, description: { type: 'string', description: 'Component description' }, lead: { type: 'string', description: 'Lead member name' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'update_component',
       description: 'Update a component\'s name, description, or lead.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current component name' }, newName: { type: 'string', description: 'New component name' }, description: { type: 'string', description: 'New description' }, lead: { type: 'string', description: 'Lead member name (empty string to clear)' }, ...workspaceProp }, required: ['project', 'name'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current component name' }, newName: { type: 'string', description: 'New component name' }, description: { type: 'string', description: 'New description' }, lead: { type: 'string', description: 'Lead member name (empty string to clear)' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'delete_component',
@@ -679,7 +688,7 @@ function getToolDefinitions() {
     {
       name: 'list_milestones',
       description: 'List milestones in a project with stable pagination and an optional bounded issue expansion. Returns { items, nextCursor? }.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...milestoneExpansionProps, ...paginationProps, ...workspaceProp }, required: ['project'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, status: { type: 'string', description: 'Filter by status: planned, in progress, completed, cancelled' }, ...milestoneExpansionProps, ...paginationProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'get_milestone',
@@ -689,12 +698,12 @@ function getToolDefinitions() {
     {
       name: 'create_milestone',
       description: 'Create a new milestone in a project.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Milestone name' }, description: { type: 'string', description: 'Milestone description' }, status: { type: 'string', description: 'Status: planned, in progress, completed, cancelled' }, startDate: { type: 'string', description: 'Start date (ISO format)' }, targetDate: { type: 'string', description: 'Target date (ISO format)' }, ...workspaceProp }, required: ['project', 'name'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Milestone name' }, description: { type: 'string', description: 'Milestone description' }, status: { type: 'string', description: 'Status: planned, in progress, completed, cancelled' }, targetDate: { type: 'string', description: 'Target date (ISO format)' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'update_milestone',
       description: 'Update a milestone\'s name, description, status, or dates.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current milestone name' }, newName: { type: 'string', description: 'New name' }, description: { type: 'string', description: 'New description' }, status: { type: 'string', description: 'New status: planned, in progress, completed, cancelled' }, startDate: { type: 'string', description: 'New start date' }, targetDate: { type: 'string', description: 'New target date' }, ...workspaceProp }, required: ['project', 'name'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current milestone name' }, newName: { type: 'string', description: 'New name' }, description: { type: 'string', description: 'New description' }, status: { type: 'string', description: 'New status: planned, in progress, completed, cancelled' }, targetDate: { type: 'string', description: 'New target date' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'delete_milestone',
@@ -750,7 +759,7 @@ function getToolDefinitions() {
     {
       name: 'list_statuses',
       description: 'List issue statuses available in a project. Returns { items, nextCursor? }.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, taskType: { type: 'string', description: 'Restrict statuses to one task type (e.g., "Issue", "Epic", "Bug").' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'get_status',
@@ -777,7 +786,7 @@ function getToolDefinitions() {
     {
       name: 'log_time',
       description: 'Log time spent on an issue.',
-      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, hours: { type: 'number', description: 'Hours spent' }, description: { type: 'string', description: 'Description of work done' }, ...workspaceProp }, required: ['issueId', 'hours'] }
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, hours: { type: 'number', description: 'Hours spent' }, description: { type: 'string', description: 'Description of work done' }, date: { type: 'string', description: 'Date of the work in ISO format (default: today)' }, employee: { type: 'string', description: 'Workspace member the time is logged for. Omitted leaves the report unattributed.' }, ...workspaceProp }, required: ['issueId', 'hours'] }
     },
     {
       name: 'list_time_reports',

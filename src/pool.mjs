@@ -12,7 +12,7 @@ import {
   POOL_TTL_MS, POOL_CLEANUP_INTERVAL_MS
 } from './config.mjs';
 
-class ConnectionPool {
+export class ConnectionPool {
   constructor() {
     /** @type {Map<string, { client: HulyClient|null, lastUsed: number, connecting: Promise<HulyClient>|null }>} */
     this._entries = new Map();
@@ -62,6 +62,19 @@ class ConnectionPool {
         workspace: ws
       });
       await client.connect();
+      // clearClient/clearAll during an in-flight connect used to be undone by
+      // this write, caching a connection the caller asked to close and — since
+      // clearAll also stops the sweep timer — leaking it for the process
+      // lifetime. Only claim the slot if it is still ours.
+      if (this._entries.get(ws)?.connecting !== connectPromise) {
+        client.disconnect();
+        // Returning the client here would hand the caller a disconnected
+        // instance that fails on first use. The pool was cleared out from
+        // under this connect, so the honest answer is to say so.
+        throw new Error(
+          `Connection for workspace "${ws}" was closed while it was being established; retry the request.`
+        );
+      }
       this._entries.set(ws, { client, lastUsed: Date.now(), connecting: null });
       return client;
     })();

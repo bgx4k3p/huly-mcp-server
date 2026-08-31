@@ -31,9 +31,9 @@ was `*Truncated`.
 | Profile | Tools | Catalog bytes | Approx. bytes/4 |
 | --- | ---: | ---: | ---: |
 | Installed 2.4.6 full baseline | 82 | 45,016 | 11,254 |
-| V3 `full` | 82 | 43,153 | 10,789 |
-| V3 `project` | 55 | 33,007 | 8,252 |
-| V3 `read` | 36 | 18,622 | 4,656 |
+| V3 `full` | 82 | 43,740 | 10,935 |
+| V3 `project` | 55 | 33,594 | 8,399 |
+| V3 `read` | 36 | 18,688 | 4,672 |
 
 The byte/4 column is not a provider token count. The deterministic catalog
 budgets are enforced in unit tests. `full` remains the default to avoid hiding
@@ -60,9 +60,9 @@ support `include: [issues]`; `issues_limit` defaults to 20 and caps at 100.
 
 The privacy-reviewed corpus is in `test/fixtures/response-corpus.json`.
 `response-budgets.json` binds every count to exact response hashes. The
-installed-package baseline has 2,869 UTF-8 bytes and 1,300 Claude CLI
-differential input tokens. V3 compact output has 1,738 bytes and 794 counted
-tokens: 39.4% fewer bytes and 38.9% fewer counted tokens.
+installed-package baseline has 2,923 UTF-8 bytes and 1,327 Claude CLI
+differential input tokens. V3 compact output has 1,738 bytes and 796 counted
+tokens: 40.5% fewer bytes and 40.0% fewer counted tokens.
 
 Recount intentionally with the official Anthropic API:
 

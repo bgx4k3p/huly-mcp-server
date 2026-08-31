@@ -111,7 +111,7 @@ describe('listIssues filter correctness', () => {
 
     const result = await client.listIssues('PROJ', undefined, undefined, 'bug');
 
-    assert.deepEqual(result, { items: [] });
+    assert.deepEqual(result, { items: [], count: 0, hasMore: false, truncated: false });
     assert.equal(paginatedQueries.length, 0);
   });
 
@@ -176,7 +176,7 @@ describe('listIssues filter correctness', () => {
 
     const result = await client.listIssues('PROJ', undefined, undefined, undefined, 'V1');
 
-    assert.deepEqual(result, { items: [] });
+    assert.deepEqual(result, { items: [], count: 0, hasMore: false, truncated: false });
   });
 });
 

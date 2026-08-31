@@ -900,8 +900,17 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   // ── create_label ──────────────────────────────────────────
 
   describe('create_label', () => {
+    const createdLabels = [];
+    after(async () => {
+      for (const name of createdLabels) {
+        try { await client.deleteLabel(name); } catch {}
+      }
+    });
+
     it('creates a new label', async () => {
-      const result = await client.createLabel(`${TEST_PREFIX}-label-${Date.now()}`);
+      const name = `${TEST_PREFIX}-label-${Date.now()}`;
+      const result = await client.createLabel(name);
+      createdLabels.push(name);
       assert.ok(result);
       assert.ok(result.id, 'createLabel should return id');
     });
@@ -1168,6 +1177,10 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   // ── Single-item lookups (get_*) ───────────────────────────
 
   describe('get_label', () => {
+    after(async () => {
+      try { await client.deleteLabel('TestLookup'); } catch {}
+    });
+
     it('creates and retrieves a label by name', async () => {
       await client.createLabel('TestLookup', 7);
       const label = await client.getLabel('TestLookup');
@@ -1390,6 +1403,13 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   describe('update_label', () => {
     const labelName = `${TEST_PREFIX}-upd-label-${Date.now()}`;
 
+    // The rename test leaves the label under its new name; remove both spellings.
+    after(async () => {
+      for (const name of [labelName, `${labelName}-renamed`]) {
+        try { await client.deleteLabel(name); } catch {}
+      }
+    });
+
     it('creates, updates color, and reads back', async () => {
       await client.createLabel(labelName, 3);
       const updated = await client.updateLabel(labelName, { color: 11 });
@@ -1410,6 +1430,12 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   // ── Label color round-trip ─────────────────────────────────
 
   describe('Label color round-trip', () => {
+    after(async () => {
+      for (const name of ['ColorIdx5', 'ColorRGB', 'ColorNamed', 'ColorDefault']) {
+        try { await client.deleteLabel(name); } catch {}
+      }
+    });
+
     it('creates a label with palette index and reads back', async () => {
       await client.createLabel('ColorIdx5', 5);
       const label = await client.getLabel('ColorIdx5');

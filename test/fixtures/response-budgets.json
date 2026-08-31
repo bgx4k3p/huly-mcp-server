@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-25T02:24:54.934Z",
+  "generatedAt": "2026-08-29T15:02:07.409Z",
   "counter": "claude-cli-differential",
   "model": "claude-sonnet-5",
   "measurements": [
@@ -21,16 +21,16 @@
     {
       "name": "list_issues_page",
       "tool": "list_issues",
-      "sha256": "5cb8148f23bb5d3c199085f8b49dc24541eb7d43572ec0a8ac7e9802b937fa7f",
-      "bytes": 1278,
-      "tokens": 542,
-      "maxBytes": 1278,
-      "maxTokens": 542,
-      "compactSha256": "c0e8acd2779bc3a7b542c56c2b4c507657bc2d658dd961c6398ebc7d8dab852d",
+      "sha256": "4fe7d0f539ed9af28a27e03cfabe708b35cad31dfd1ab45d36825ee2e294f1b7",
+      "bytes": 1332,
+      "tokens": 569,
+      "maxBytes": 1332,
+      "maxTokens": 569,
+      "compactSha256": "8e49a80a75a31bbd0874ea6504767e4e6e721e1b32293fa6bea38307afccda50",
       "compactBytes": 718,
       "maxCompactBytes": 718,
-      "compactTokens": 324,
-      "maxCompactTokens": 324
+      "compactTokens": 326,
+      "maxCompactTokens": 326
     },
     {
       "name": "project_summary",

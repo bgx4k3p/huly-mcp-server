@@ -8,6 +8,7 @@ import {
   projectCompact,
   serializeToolResult
 } from '../src/responseMode.mjs';
+import { listEnvelope } from '../src/helpers.mjs';
 
 const corpus = JSON.parse(readFileSync(
   new URL('./fixtures/response-corpus.json', import.meta.url),
@@ -51,13 +52,10 @@ describe('MCP response modes', () => {
   });
 
   it('adds explicit continuation metadata and bounds nested collections in compact mode', () => {
-    const result = {
-      items: [{
-        id: 'FIX-1',
-        children: Array.from({ length: 105 }, (_, index) => ({ id: `FIX-${index + 2}` }))
-      }],
-      nextCursor: 'opaque'
-    };
+    const result = listEnvelope([{
+      id: 'FIX-1',
+      children: Array.from({ length: 105 }, (_, index) => ({ id: `FIX-${index + 2}` }))
+    }], 'opaque');
     const compact = JSON.parse(serializeToolResult(result, 'compact', { toolName: 'list_issues' }));
     assert.equal(compact.count, 1);
     assert.equal(compact.hasMore, true);
@@ -83,7 +81,7 @@ describe('MCP response modes', () => {
     assert.equal(compact.items.length, 100);
     assert.equal(compact.count, 100);
     assert.equal(compact.totalCount, 105);
-    assert.equal(compact.hasMore, false);
+    assert.equal(compact.hasMore, true);
     assert.equal(compact.truncated, true);
   });
 
@@ -157,7 +155,7 @@ describe('MCP response modes', () => {
             items: source.slice(0, 100).map(projectCompact),
             count: Math.min(source.length, 100),
             totalCount: source.length,
-            hasMore: false,
+            hasMore: source.length > 100,
             truncated: source.length > 100
           }
         : projectCompact(source));

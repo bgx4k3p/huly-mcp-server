@@ -76,7 +76,11 @@ describe('MCP tool metadata', () => {
   });
 
   it('keeps every tool profile within its discovery-byte budget', () => {
-    const budgets = { full: 43_500, project: 33_500, read: 19_000 };
+    // Raised once from 43_500/33_500 when the nine parameter sites the
+    // dispatch layer reads were finally advertised; still under the
+    // 45_016-byte v2.4.6 catalog. Treat any further increase as a bloat
+    // regression to justify.
+    const budgets = { full: 44_100, project: 33_900, read: 19_000 };
     for (const [profile, maximum] of Object.entries(budgets)) {
       const tools = createMcpServer({}, { toolProfile: profile }).TOOLS;
       const bytes = Buffer.byteLength(JSON.stringify(tools));
