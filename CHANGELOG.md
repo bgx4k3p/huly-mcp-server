@@ -2,39 +2,59 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 3.0.1 - 2026-08-31
 
-Closes the three items the v3 validation pass deliberately deferred. Each was
-held back for a reason that did not survive a second look; `docs/V3_DEFECTS.md`
-records both the original reasoning and what changed.
+The v3 validation pass deferred three defects, each for a reason that did not
+survive a second look. `docs/V3_DEFECTS.md` records the original reasoning
+alongside what changed.
 
-- `list_statuses`, `list_project_types`, and `list_task_types` order by creation
-  time again. Their rows reached the cursor without a timestamp, so ordering
-  silently degenerated to id-descending. They now pass their source document
-  through `withExtra` like every other paginated reader, which carries
-  `createdOn` to the comparator. Compact output filters `extra` through an empty
-  allowlist, so responses are byte-identical — the budget fixtures did not move.
-- Hours are rejected rather than silently recorded as 0 when they are not a
-  number. `log_time` with `hours: "two"` reported success while the workspace
-  recorded nothing; the same coercion sat on `set_estimation` and the
+### Deferred defects closed
+
+- **Cursor ordering degenerated to id-descending** for `list_statuses`,
+  `list_project_types`, and `list_task_types`. The deferral assumed a fix meant
+  putting `createdOn` into compact output and paying bytes on every response. It
+  did not: those four builders hand-construct their rows, while every other
+  paginated reader passes its source document through `withExtra`, which already
+  carries `createdOn` to the cursor tuple. Compact output filters `extra`
+  through an empty allowlist, so the timestamp reaches the comparator and never
+  reaches the payload. Budget fixtures are byte-identical. A live probe
+  confirmed the premise first: every status, project type, and task type carries
+  a real `createdOn`, model-level rows included.
+- **Hours were coerced to 0 when they were not a number**, so `log_time` with
+  `hours: "two"` reported success while the workspace recorded nothing. One
+  lenient coercion was serving both reads and writes. `toHours` stays lenient
+  for reads, where a single malformed stored value must not fail a page; the
+  five write sites now use `parseHours`, which rejects non-numeric and negative
+  values and admits 0. Four of those sites — `set_estimation` and the
   `estimation` field of `create_issue`, `update_issue`, and
-  `batch_create_issues`. Negative values are rejected too, and 0 remains legal.
-  Read paths keep coercing, so a single malformed stored value still cannot fail
-  a page.
-- `get_huly_context` reports the workspace tool dispatch would actually use.
-  It read the module-load constant while dispatch read the live environment, so
-  a host that repointed the server after startup was told a workspace nothing
-  was reading from.
+  `batch_create_issues` — had the same defect and were not in the original
+  report.
+- **`get_huly_context` reported the module-load workspace constant** while
+  dispatch resolved from the live environment, so a host that repointed the
+  server was told a workspace nothing was reading from. Both now resolve through
+  `resolveDefaultWorkspace`.
 
-### Changed
+### Project type selection
 
-- `create_project` no longer demands an explicit `projectType` merely because
-  the workspace has HR or CRM modules installed. Candidates are narrowed to the
-  project types that own a tracker task type; a single remaining type is used
-  automatically, and the call still refuses — now listing only the issue-capable
-  types — when the choice is genuinely the caller's. A workspace carrying
-  vacancy and funnel types alongside the tracker's could not create a project
-  at all without naming a type.
+- **`create_project` no longer demands an explicit `projectType`** merely
+  because the workspace has HR or CRM modules installed. Candidates are narrowed
+  to the types that own a tracker task type, using the predicate
+  `list_task_types` and `search_issues` already share; a single remaining type
+  is used automatically, and the call still refuses, listing only the
+  issue-capable types, when the choice is genuinely the caller's.
+
+### Maintenance
+
+- Adds the project-type resolution guards that shipped without a test, and
+  corrects `CONTRIBUTING.md`, which called the live integration suite the unit
+  tests. Without `HULY_TEST_PROJECT` that suite reads workspace `default` and
+  project `START`, then fails on missing fixtures rather than on the
+  contributor's change.
+- Bumps `github/codeql-action` to v4.37.8 and clears three stale dependabot
+  pull requests; every action reference in both workflows is now current.
+
+509 unit tests pass, live WebSocket and REST suites 200/200, response budgets
+unchanged.
 
 ## 3.0.0 - 2026-08-25
 
