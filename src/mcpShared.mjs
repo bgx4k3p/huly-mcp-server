@@ -30,7 +30,7 @@ import {
   DESTRUCTIVE_TOOL_NAMES
 } from './dispatch.mjs';
 import { ISSUE_BASE_FIELDS, ISSUE_INCLUDE_FIELDS } from './projection.mjs';
-import { HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, HULY_WORKSPACE, HULY_PROJECT, HULY_CREDS } from './config.mjs';
+import { HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, HULY_PROJECT, HULY_CREDS, resolveDefaultWorkspace } from './config.mjs';
 
 const require = createRequire(import.meta.url);
 const { name: PKG_NAME, version: PKG_VERSION } = require('../package.json');
@@ -169,7 +169,7 @@ function authMode() {
 
 function getHulyContext() {
   return {
-    defaultWorkspace: HULY_WORKSPACE || null,
+    defaultWorkspace: resolveDefaultWorkspace(),
     defaultProject: HULY_PROJECT || null,
     hulyUrlHost: hulyUrlHost(),
     authMode: authMode(),
@@ -197,7 +197,7 @@ export async function handleToolCall(name, args = {}) {
     const toolArgs = PROJECT_DEFAULT_TOOLS.has(name) && HULY_PROJECT && !args.project
       ? { ...args, project: HULY_PROJECT }
       : args;
-    const workspace = toolArgs.workspace || process.env.HULY_WORKSPACE;
+    const workspace = toolArgs.workspace || resolveDefaultWorkspace();
     const client = await pool.getClient(workspace);
     return await client.withReconnect(() => workspaceTools[name](toolArgs, client));
   }
@@ -590,7 +590,7 @@ function getToolDefinitions() {
     {
       name: 'create_project',
       description: 'Create a new project in the workspace. Returns the project identifier and details.',
-      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (2-5 uppercase letters, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, projectType: { type: 'string', description: 'Project type name or id (e.g., "Classic"). Required only when the workspace has multiple project types; otherwise the single available type is used.' }, ...workspaceProp }, required: ['identifier', 'name'] }
+      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (2-5 uppercase letters, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, projectType: { type: 'string', description: 'Project type name or id (e.g., "Classic"). Required only when the workspace has several project types that can hold issues; a single issue-capable type is selected automatically, so HR and CRM types in the workspace do not force this argument.' }, ...workspaceProp }, required: ['identifier', 'name'] }
     },
     {
       name: 'update_project',
