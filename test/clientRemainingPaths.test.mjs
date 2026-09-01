@@ -82,8 +82,8 @@ describe('setEstimation', () => {
       /estimation must be a number, received "abc"/
     );
 
-    // Coercing to 0 would have reported success while discarding the caller's
-    // intent, which is the class of defect HMCP-67 closed.
+    // Coercing to 0 would report success while discarding the caller's intent,
+    // storing an estimate they never asked for.
     assert.equal(sdk.calls.find(c => c.op === 'updateDoc'), undefined);
   });
 

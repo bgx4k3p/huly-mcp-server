@@ -18,7 +18,7 @@ import {
   encodeCursor, decodeCursor, cursorTuple, compareCursorTuple,
   isTupleAfter, normalizePageLimit, listEnvelope, normalizeReportDate, toIsoDate,
   normalizeDueDate, resolvePriority,
-  nameMatch, strictGet, toHours, parseHours, issueTimeFields, withExtra,
+  nameMatch, strictGet, toHours, parseHours, issueTimeFields, issueRollupFields, withExtra,
   toCollaboratorMarkup, fromCollaboratorMarkup,
   toMarkup, fromMarkup
 } from './helpers.mjs';
@@ -1554,6 +1554,12 @@ export class HulyClient {
       const timeFields = this._issueTimeFields(issue);
       if (field('estimation')) entry.estimation = timeFields.estimation;
       if (field('reportedTime')) entry.reportedTime = timeFields.reportedTime;
+      // Only an issue with children carries a rollup, so a leaf costs no bytes.
+      const rollup = issueRollupFields(issue);
+      if (rollup) {
+        if (field('estimationTotal')) entry.estimationTotal = rollup.estimationTotal;
+        if (field('reportedTimeTotal')) entry.reportedTimeTotal = rollup.reportedTimeTotal;
+      }
       if (field('createdOn')) entry.createdOn = issue.createdOn;
       if (field('modifiedOn')) entry.modifiedOn = issue.modifiedOn;
       if (field('completedAt')) entry.completedAt = doneStatuses.has(issue.status) ? issue.modifiedOn : null;
@@ -1722,6 +1728,11 @@ export class HulyClient {
     const issueTimes = this._issueTimeFields(issue);
     if (field('estimation')) result.estimation = issueTimes.estimation;
     if (field('reportedTime')) result.reportedTime = issueTimes.reportedTime;
+    const issueRollup = issueRollupFields(issue);
+    if (issueRollup) {
+      if (field('estimationTotal')) result.estimationTotal = issueRollup.estimationTotal;
+      if (field('reportedTimeTotal')) result.reportedTimeTotal = issueRollup.reportedTimeTotal;
+    }
     if (field('createdOn')) result.createdOn = issue.createdOn;
     if (field('modifiedOn')) result.modifiedOn = issue.modifiedOn;
     if (field('completedAt')) result.completedAt = doneStatuses.has(issue.status) ? issue.modifiedOn : null;

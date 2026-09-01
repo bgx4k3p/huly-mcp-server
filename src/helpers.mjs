@@ -154,6 +154,26 @@ export function issueTimeFields(issue) {
   };
 }
 
+/**
+ * Rolled-up time for an issue that has children, matching what the Huly UI
+ * displays. An issue's own `estimation` and `reportedTime` count only time
+ * booked directly on it; Huly never rolls descendants into those fields. The
+ * per-child totals live in the server-maintained `childInfo` array, and the UI
+ * sums one level — a grandchild's time reaches the grandparent only through
+ * its own parent's direct total, which is why this is deliberately not
+ * recursive.
+ * @param {Object} issue - Raw issue document carrying childInfo
+ * @returns {{estimationTotal: number, reportedTimeTotal: number}|null} null when the issue has no children
+ */
+export function issueRollupFields(issue) {
+  const children = issue?.childInfo;
+  if (!Array.isArray(children) || children.length === 0) return null;
+  return {
+    estimationTotal: children.reduce((sum, child) => sum + toHours(child?.estimation), toHours(issue?.estimation)),
+    reportedTimeTotal: children.reduce((sum, child) => sum + toHours(child?.reportedTime), toHours(issue?.reportedTime))
+  };
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!value || typeof value !== 'object') return value;
