@@ -18,7 +18,7 @@ import {
   encodeCursor, decodeCursor, cursorTuple, compareCursorTuple,
   isTupleAfter, normalizePageLimit, listEnvelope, normalizeReportDate, toIsoDate,
   normalizeDueDate, resolvePriority,
-  nameMatch, strictGet, toHours, issueTimeFields, withExtra,
+  nameMatch, strictGet, toHours, parseHours, issueTimeFields, withExtra,
   toCollaboratorMarkup, fromCollaboratorMarkup,
   toMarkup, fromMarkup
 } from './helpers.mjs';
@@ -1884,7 +1884,7 @@ export class HulyClient {
         assignee: assigneeId,
         component: componentId,
         milestone: milestoneId,
-        estimation: toHours(extra.estimation),
+        estimation: extra.estimation === undefined ? 0 : parseHours(extra.estimation, 'estimation'),
         dueDate: normalizeDueDate(extra.dueDate),
         remainingTime: 0,
         reportedTime: 0,
@@ -1993,7 +1993,7 @@ export class HulyClient {
     }
 
     if (extra.estimation !== undefined) {
-      updates.estimation = toHours(extra.estimation);
+      updates.estimation = parseHours(extra.estimation, 'estimation');
       updatedFields.push('estimation');
     }
 
@@ -2426,7 +2426,7 @@ export class HulyClient {
       );
     }
 
-    const enriched = typesToReturn.map(tt => ({
+    const enriched = typesToReturn.map(tt => withExtra(tt, {
       id: tt._id,
       name: tt.name || tt._id.split(':').pop(),
       description: fromMarkup(tt.description),
@@ -2456,7 +2456,7 @@ export class HulyClient {
     const allTaskTypes = await client.findAll(task.class.TaskType, {});
     const taskTypeById = new Map(allTaskTypes.map(tt => [tt._id, tt]));
 
-    const enriched = projectTypes.map(pt => ({
+    const enriched = projectTypes.map(pt => withExtra(pt, {
       id: pt._id,
       name: pt.name || pt._id.split(':').pop(),
       description: fromMarkup(pt.description) || pt.shortDescription || null,
@@ -2484,7 +2484,10 @@ export class HulyClient {
 
     // If no scoping requested, return all
     if (!projectIdent && !taskTypeName) {
-      const enriched = allStatuses.map(s => ({
+      // withExtra carries the source doc's createdOn, which the cursor tuple
+      // sorts on. Without it these rows tuple to 0 and ordering silently
+      // degenerates to id-descending. Compact output strips extra entirely.
+      const enriched = allStatuses.map(s => withExtra(s, {
         id: s._id,
         name: s.name,
         category: STATUS_CATEGORY_NAMES[s.category] || s.category,
@@ -2540,7 +2543,7 @@ export class HulyClient {
     // Filter statuses to only those in scope
     const scopedStatuses = allStatuses.filter(s => statusIds.has(s._id));
 
-    const enriched = scopedStatuses.map(s => ({
+    const enriched = scopedStatuses.map(s => withExtra(s, {
       id: s._id,
       name: s.name,
       category: STATUS_CATEGORY_NAMES[s.category] || s.category,
@@ -2955,7 +2958,7 @@ export class HulyClient {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
-    const normalizedHours = toHours(hours);
+    const normalizedHours = parseHours(hours, 'estimation');
 
     await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
       estimation: normalizedHours
@@ -2981,7 +2984,7 @@ export class HulyClient {
       employeeId = await this._findEmployeeByName(client, employeeName);
     }
 
-    const normalizedHours = toHours(hours);
+    const normalizedHours = parseHours(hours);
     const reportId = generateId();
     await client.addCollection(
       tracker.class.TimeSpendReport,
@@ -3352,7 +3355,7 @@ export class HulyClient {
           assignee: assigneeId,
           component: componentId,
           milestone: milestoneId,
-          estimation: toHours(item.estimation),
+          estimation: item.estimation === undefined ? 0 : parseHours(item.estimation, 'estimation'),
           dueDate: normalizeDueDate(item.dueDate),
           remainingTime: 0,
           reportedTime: 0,
@@ -3735,6 +3738,24 @@ export class HulyClient {
 
   // ── Project Management ──────────────────────────────────────
 
+  /**
+   * The project types that own at least one tracker task type. A workspace with
+   * HR or CRM modules also carries vacancy and funnel types, which cannot hold
+   * issues and are never candidates for a project created through this server.
+   * @param {Object} client - Connected SDK client
+   * @param {Object[]} projectTypes - Candidate project types
+   * @returns {Promise<Object[]>}
+   */
+  async _trackerProjectTypes(client, projectTypes) {
+    const allTaskTypes = await client.findAll(task.class.TaskType, {});
+    const trackerTaskTypeIds = new Set(
+      allTaskTypes
+        .filter(tt => tt.ofClass === tracker.class.Issue || tt.targetClass === tracker.class.Issue)
+        .map(tt => tt._id)
+    );
+    return projectTypes.filter(pt => (pt.tasks ?? []).some(id => trackerTaskTypeIds.has(id)));
+  }
+
   async createProject(identifier, name, description, isPrivate = false, projectType) {
     const client = await this._getClient();
 
@@ -3761,8 +3782,18 @@ export class HulyClient {
     } else if (projectTypes.length === 1) {
       resolvedProjectType = projectTypes[0];
     } else {
-      const available = projectTypes.map(pt => pt.name || pt._id).join(', ');
-      throw new Error(`Multiple project types found: ${available}. Specify projectType explicitly.`);
+      // A workspace with HR or CRM modules carries vacancy and funnel types
+      // alongside the tracker's. This server creates tracker projects, so those
+      // are not real candidates. Narrow to the types that own a tracker task
+      // type; only refuse when the remaining choice is genuinely the caller's.
+      const trackerTypes = await this._trackerProjectTypes(client, projectTypes);
+      if (trackerTypes.length === 1) {
+        resolvedProjectType = trackerTypes[0];
+      } else {
+        const candidates = trackerTypes.length > 1 ? trackerTypes : projectTypes;
+        const available = candidates.map(pt => pt.name || pt._id).join(', ');
+        throw new Error(`Multiple project types found: ${available}. Specify projectType explicitly.`);
+      }
     }
 
     // Scope default status to the resolved ProjectType's task types

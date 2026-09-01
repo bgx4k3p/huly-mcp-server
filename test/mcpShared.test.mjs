@@ -38,6 +38,23 @@ describe('MCP shared runtime context', () => {
     assert.equal(result.defaultProject, 'PROJ');
   });
 
+  it('reports the workspace tool dispatch would actually use', async () => {
+    // The reported workspace used to come from the module-load constant while
+    // dispatch resolved from the live env, so a host that repointed the server
+    // was told a workspace nothing was reading from.
+    const original = process.env.HULY_WORKSPACE;
+    process.env.HULY_WORKSPACE = 'repointed-workspace';
+    try {
+      const result = await handleToolCall('get_huly_context', {});
+      assert.equal(result.defaultWorkspace, 'repointed-workspace');
+    } finally {
+      if (original === undefined) delete process.env.HULY_WORKSPACE;
+      else process.env.HULY_WORKSPACE = original;
+    }
+
+    assert.equal((await handleToolCall('get_huly_context', {})).defaultWorkspace, 'my-workspace');
+  });
+
   it('rejects every unadvertised tool argument', async () => {
     const { server } = createMcpServer();
     const call = callHandler(server);

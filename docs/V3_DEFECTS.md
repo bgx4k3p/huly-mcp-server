@@ -104,15 +104,39 @@ Class G — infrastructure and supply chain.
 defects in earlier fixes made during this same validation pass, both found by
 independent review rather than by the test suite.
 
-## Deliberately not changed
+## Deferred at the time, closed since
 
-- Cursor ordering degenerates to id-descending for `list_statuses` and
-  `list_project_types`, whose rows carry no timestamp. Deterministic, and
-  cursors stay consistent. Fixing it means adding `createdOn` to compact list
-  output, which grows every response against the byte budgets. Raise as a
-  contract decision rather than an implicit payload increase.
-- `logTime` records 0 for non-numeric hours rather than rejecting, matching the
-  documented `toHours` contract.
-- `getHulyContext` reports the `config.mjs` workspace constant while tool
-  dispatch resolves from `process.env`. Reporting-only, and the server
-  overwrites it on every path that matters.
+All three items held back from the v3 pass were resolved afterwards. Each was
+deferred for a reason that turned out not to hold.
+
+| # | Defect | Site | Guard |
+| --- | --- | --- | --- |
+| H1 | Cursor ordering degenerated to id-descending for `list_statuses`, `list_project_types`, and `list_task_types` | client.mjs (4 builders) | clientReadPaths |
+| H2 | `logTime` and the estimation writes recorded 0 for a non-numeric value instead of rejecting | client.mjs (5 write sites) | timeNormalization, clientRemainingPaths |
+| H3 | `getHulyContext` reported the `config.mjs` workspace constant while dispatch resolved from `process.env` | config.mjs, mcpShared.mjs | mcpShared |
+
+**H1** was deferred because fixing it looked like it meant adding `createdOn` to
+compact list output, growing every response against the byte budgets. It did
+not. Those four builders hand-construct their rows while every other paginated
+reader passes its source doc through `withExtra`, which already carries
+`createdOn` into the cursor tuple. Compact output filters `extra` through an
+empty allowlist, so the timestamp reaches the comparator and never reaches the
+payload — the budget fixtures are byte-identical after the fix. A live probe
+first confirmed the premise: all 6 statuses, 3 project types, and 4 task types
+in the validation workspace carry a real `createdOn`, model-level rows included,
+sharing a timestamp from when the model was installed.
+
+**H2** was deferred as matching the documented `toHours` contract. The contract
+was the problem: one lenient coercion served both reads and writes. Reading 0
+for a malformed stored value is right, because one bad record should not fail a
+page. Writing 0 for a caller's value discards what they asked for and reports
+success — the same class as C1-C5. `toHours` stays lenient for reads; the five
+write sites (`logTime`, `setEstimation`, and the estimation field of
+`createIssue`, `updateIssue`, and `batchCreateIssues`) now use `parseHours`,
+which rejects a non-numeric or negative value and lets 0 through.
+
+**H3** was deferred as reporting-only, which it was — no mutation could reach
+the wrong workspace. But `get_huly_context` exists to tell a caller which
+workspace it is pointed at, and the server instructions send clients there first
+when defaults are unclear. Both now resolve through `resolveDefaultWorkspace()`,
+so there is one answer rather than two.

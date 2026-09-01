@@ -96,9 +96,11 @@ const EMPLOYEES = [
   { _id: 'emp-2', name: 'Grace Hopper', active: true }
 ];
 
+// Every Huly Doc carries createdOn, statuses included — the model-level ones
+// share a timestamp from when the model was installed. The cursor sorts on it.
 const STATUSES = [
-  { _id: 's-todo', name: 'Todo', category: 'task:statusCategory:ToDo', color: 1 },
-  { _id: 's-done', name: 'Done', category: 'task:statusCategory:Won', color: 2 }
+  { _id: 's-todo', name: 'Todo', category: 'task:statusCategory:ToDo', color: 1, createdOn: 2 },
+  { _id: 's-done', name: 'Done', category: 'task:statusCategory:Won', color: 2, createdOn: 1 }
 ];
 
 const TASK_TYPES = [
@@ -592,18 +594,21 @@ describe('listProjectTypes', () => {
     const page = await client.listProjectTypes();
     const byId = new Map(page.items.map(item => [item.id, item]));
 
-    assert.deepEqual(byId.get('pt-classic'), {
+    const { extra: classicExtra, ...classic } = byId.get('pt-classic');
+    assert.deepEqual(classic, {
       id: 'pt-classic',
       name: 'Classic',
       description: 'Default workflow',
       taskTypes: ['Epic', 'Issue']
     });
-    assert.deepEqual(byId.get('task:type:Bugs'), {
+    const { extra: _bugsExtra, ...bugs } = byId.get('task:type:Bugs');
+    assert.deepEqual(bugs, {
       id: 'task:type:Bugs',
       name: 'Bugs',
       description: null,
       taskTypes: []
     });
+    assert.equal(classicExtra.createdOn, 2, 'the source timestamp must reach the cursor tuple');
     assert.equal(page.count, 2);
     assert.equal(page.hasMore, false);
     assert.equal(select('findAll', task.class.TaskType).length, 1,
@@ -617,8 +622,8 @@ describe('listStatuses scoping', () => {
       projects: projects(),
       statuses: [
         ...STATUSES,
-        { _id: 's-loose', name: 'Orphan', category: 'task:statusCategory:Active', color: 3 },
-        { _id: 's-odd', name: 'Odd', category: 'task:statusCategory:Unmapped', color: 4, description: 'Custom' }
+        { _id: 's-loose', name: 'Orphan', category: 'task:statusCategory:Active', color: 3, createdOn: 4 },
+        { _id: 's-odd', name: 'Odd', category: 'task:statusCategory:Unmapped', color: 4, description: 'Custom', createdOn: 3 }
       ],
       taskTypes: [
         ...TASK_TYPES,
@@ -638,16 +643,45 @@ describe('listStatuses scoping', () => {
     const byId = new Map(page.items.map(item => [item.id, item]));
 
     assert.equal(page.count, 4);
-    assert.deepEqual(byId.get('s-todo'),
+    const { extra: todoExtra, ...todo } = byId.get('s-todo');
+    assert.deepEqual(todo,
       { id: 's-todo', name: 'Todo', category: 'Todo', color: 1, description: '' });
-    assert.deepEqual(byId.get('s-done'),
+    const { extra: _doneExtra, ...done } = byId.get('s-done');
+    assert.deepEqual(done,
       { id: 's-done', name: 'Done', category: 'Done', color: 2, description: '' });
+    // The source timestamp rides in extra so the cursor can sort on it. Compact
+    // output strips extra, so this costs no response bytes.
+    assert.ok(todoExtra.createdOn > 0, 'status rows must carry a cursor timestamp');
     assert.equal(byId.get('s-odd').category, 'task:statusCategory:Unmapped',
       'an unmapped category must pass through rather than resolve to a wrong name');
     assert.equal(byId.get('s-odd').description, 'Custom');
     assert.equal(select('findAll', task.class.TaskType).length, 0);
     assert.equal(select('findAll', task.class.ProjectType).length, 0);
     assert.equal(select('findOne', PROJECT_CLASS).length, 0);
+  });
+
+  it('orders statuses by creation time instead of degenerating to id order', async () => {
+    const { client } = statusHarness();
+
+    const page = await client.listStatuses();
+
+    // Before HMCP-66 every status tupled to createdOn 0, so the comparator fell
+    // through to its id-descending tiebreak: s-todo, s-odd, s-loose, s-done.
+    assert.deepEqual(page.items.map(s => s.id), ['s-loose', 's-odd', 's-todo', 's-done']);
+  });
+
+  it('pages statuses across a cursor without gaps or repeats', async () => {
+    const { client } = statusHarness();
+
+    const first = await client.listStatuses(undefined, undefined, { limit: 2 });
+    assert.deepEqual(first.items.map(s => s.id), ['s-loose', 's-odd']);
+    assert.ok(first.nextCursor, 'a truncated status page must offer a cursor');
+
+    const second = await client.listStatuses(undefined, undefined,
+      { limit: 2, cursor: first.nextCursor });
+
+    assert.deepEqual(second.items.map(s => s.id), ['s-todo', 's-done']);
+    assert.equal(second.nextCursor, undefined);
   });
 
   it('rejects a task type that exists elsewhere but not in the addressed project', async () => {

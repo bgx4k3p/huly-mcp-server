@@ -114,9 +114,37 @@ export const CURSOR_TTL_MS = 24 * 60 * 60 * 1000;
 
 const processCursorSecret = randomBytes(32);
 
+/**
+ * Lenient hours coercion for READ paths. A single malformed stored value must
+ * not fail a whole page, so anything unusable reads as 0. Never use this on a
+ * caller-supplied value: use parseHours, which refuses instead of discarding.
+ */
 export function toHours(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+/**
+ * Strict hours parsing for WRITE paths. Coercing a caller's value to 0 records
+ * nothing while reporting success, so a value that cannot be an hour count is
+ * rejected rather than written.
+ * @param {*} value - Caller-supplied hours
+ * @param {string} [field] - Field name for the error message
+ * @returns {number}
+ */
+export function parseHours(value, field = 'hours') {
+  if (value === null || value === undefined || typeof value === 'boolean' ||
+      (typeof value === 'string' && value.trim() === '')) {
+    throw new Error(`${field} must be a number, received ${JSON.stringify(value)}`);
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    throw new Error(`${field} must be a number, received ${JSON.stringify(value)}`);
+  }
+  if (number < 0) {
+    throw new Error(`${field} cannot be negative, received ${number}`);
+  }
+  return number;
 }
 
 export function issueTimeFields(issue) {

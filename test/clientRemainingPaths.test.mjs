@@ -74,12 +74,28 @@ describe('setEstimation', () => {
     assert.equal(typeof write.data.estimation, 'number');
   });
 
-  it('stores zero for a non-numeric estimate rather than NaN', async () => {
+  it('rejects a non-numeric estimate instead of silently storing zero', async () => {
     const sdk = recorder();
-    await stubClient(sdk).setEstimation('PROJ-42', 'abc');
-    const write = sdk.calls.find(c => c.op === 'updateDoc');
-    assert.equal(write.data.estimation, 0);
-    assert.ok(!Number.isNaN(write.data.estimation));
+
+    await assert.rejects(
+      () => stubClient(sdk).setEstimation('PROJ-42', 'abc'),
+      /estimation must be a number, received "abc"/
+    );
+
+    // Coercing to 0 would have reported success while discarding the caller's
+    // intent, which is the class of defect HMCP-67 closed.
+    assert.equal(sdk.calls.find(c => c.op === 'updateDoc'), undefined);
+  });
+
+  it('rejects a negative estimate', async () => {
+    const sdk = recorder();
+
+    await assert.rejects(
+      () => stubClient(sdk).setEstimation('PROJ-42', -3),
+      /estimation cannot be negative, received -3/
+    );
+
+    assert.equal(sdk.calls.find(c => c.op === 'updateDoc'), undefined);
   });
 });
 

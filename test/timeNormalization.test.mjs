@@ -47,6 +47,41 @@ describe('time numeric normalization', () => {
     assert.equal(issueUpdate.reportedTime, 1.75);
     assert.equal(result.reportedTime, 1.75);
   });
+
+  it('rejects hours that are not a number rather than logging zero', async () => {
+    const writes = [];
+    const client = new HulyClient({
+      url: 'https://huly.example.test',
+      token: 'test-token',
+      workspace: 'test-workspace'
+    });
+    client._getClient = async () => ({
+      addCollection: async (...args) => { writes.push(args); },
+      updateDoc: async (...args) => { writes.push(args); }
+    });
+    client._parseAndFindIssue = async () => ({
+      project: { _id: 'project-space' },
+      issue: { _id: 'issue-id', reportedTime: 0 }
+    });
+
+    // Each of these coerced to 0 before HMCP-67: the tool reported success
+    // while the workspace recorded no time at all.
+    for (const bad of ['two', '', null, undefined, true, NaN, Infinity, {}]) {
+      await assert.rejects(
+        () => client.logTime('PROJ-1', bad, 'work'),
+        /hours must be a number/,
+        `logTime must reject ${JSON.stringify(bad) ?? String(bad)}`
+      );
+    }
+
+    await assert.rejects(() => client.logTime('PROJ-1', -1, 'work'), /hours cannot be negative/);
+
+    assert.deepEqual(writes, [], 'nothing may reach the SDK for a rejected value');
+
+    // 0 stays legal: it is a real, if unusual, amount of time to log.
+    await client.logTime('PROJ-1', 0, 'work');
+    assert.equal(writes.length, 2);
+  });
 });
 
 describe('issue id validation', () => {

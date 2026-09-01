@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+Closes the three items the v3 validation pass deliberately deferred. Each was
+held back for a reason that did not survive a second look; `docs/V3_DEFECTS.md`
+records both the original reasoning and what changed.
+
+- `list_statuses`, `list_project_types`, and `list_task_types` order by creation
+  time again. Their rows reached the cursor without a timestamp, so ordering
+  silently degenerated to id-descending. They now pass their source document
+  through `withExtra` like every other paginated reader, which carries
+  `createdOn` to the comparator. Compact output filters `extra` through an empty
+  allowlist, so responses are byte-identical — the budget fixtures did not move.
+- Hours are rejected rather than silently recorded as 0 when they are not a
+  number. `log_time` with `hours: "two"` reported success while the workspace
+  recorded nothing; the same coercion sat on `set_estimation` and the
+  `estimation` field of `create_issue`, `update_issue`, and
+  `batch_create_issues`. Negative values are rejected too, and 0 remains legal.
+  Read paths keep coercing, so a single malformed stored value still cannot fail
+  a page.
+- `get_huly_context` reports the workspace tool dispatch would actually use.
+  It read the module-load constant while dispatch read the live environment, so
+  a host that repointed the server after startup was told a workspace nothing
+  was reading from.
+
+### Changed
+
+- `create_project` no longer demands an explicit `projectType` merely because
+  the workspace has HR or CRM modules installed. Candidates are narrowed to the
+  project types that own a tracker task type; a single remaining type is used
+  automatically, and the call still refuses — now listing only the issue-capable
+  types — when the choice is genuinely the caller's. A workspace carrying
+  vacancy and funnel types alongside the tracker's could not create a project
+  at all without naming a type.
+
 ## 3.0.0 - 2026-08-25
 
 Version 3 is an intentionally breaking token-efficiency release. It does not

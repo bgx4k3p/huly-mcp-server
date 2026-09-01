@@ -696,7 +696,7 @@ Full list of all MCP tools available through this server.
 | --- | --- | --- |
 | `list_projects` | List projects with optional `milestones`, `components`, `labels`, and `members` expansions | -- |
 | `get_project` | Get project by identifier with optional granular expansions | -- |
-| `create_project` | Create a new project | `projectType`: name/id (required only if the workspace has multiple) |
+| `create_project` | Create a new project | `projectType`: name/id (required only if the workspace has several issue-capable types; HR and CRM types are ignored) |
 | `update_project` | Update project name, description, privacy, default assignee | -- |
 | `archive_project` | Archive or unarchive a project | -- |
 | `delete_project` | Permanently delete a project | -- |
