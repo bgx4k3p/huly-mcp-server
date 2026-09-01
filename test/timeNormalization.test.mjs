@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { issueTimeFields, toHours } from '../src/helpers.mjs';
+import { issueTimeFields, issueRollupFields, toHours } from '../src/helpers.mjs';
 import { HulyClient } from '../src/client.mjs';
 
 process.env.HULY_URL ??= 'https://huly.example.test';
@@ -17,6 +17,29 @@ describe('time numeric normalization', () => {
       estimation: 4,
       reportedTime: 1.5
     });
+  });
+
+  it('rolls up childInfo one level and reports nothing for a leaf', () => {
+    assert.equal(issueRollupFields({ estimation: 1, reportedTime: 1 }), null,
+      'an issue with no childInfo has no rollup');
+    assert.equal(issueRollupFields({ childInfo: [] }), null, 'an empty childInfo is not a rollup');
+    assert.equal(issueRollupFields(undefined), null);
+
+    assert.deepEqual(
+      issueRollupFields({
+        estimation: 2,
+        reportedTime: 0.5,
+        childInfo: [
+          { childId: 'a', estimation: 3, reportedTime: 1.5 },
+          { childId: 'b', estimation: '4', reportedTime: '2' }
+        ]
+      }),
+      { estimationTotal: 9, reportedTimeTotal: 4 });
+
+    // A malformed stored value must not poison the total with NaN.
+    assert.deepEqual(
+      issueRollupFields({ estimation: 1, reportedTime: 1, childInfo: [{ childId: 'a', estimation: 'x' }] }),
+      { estimationTotal: 1, reportedTimeTotal: 1 });
   });
 
   it('logTime writes numeric report values and numeric issue totals', async () => {
@@ -64,8 +87,8 @@ describe('time numeric normalization', () => {
       issue: { _id: 'issue-id', reportedTime: 0 }
     });
 
-    // Each of these coerced to 0 before HMCP-67: the tool reported success
-    // while the workspace recorded no time at all.
+    // Each of these once coerced to 0: the tool reported success while the
+    // workspace recorded no time at all.
     for (const bad of ['two', '', null, undefined, true, NaN, Infinity, {}]) {
       await assert.rejects(
         () => client.logTime('PROJ-1', bad, 'work'),

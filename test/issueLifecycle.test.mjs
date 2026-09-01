@@ -635,6 +635,44 @@ describe('listIssues and getIssue projection', () => {
     }]);
   });
 
+  it('rolls child time up one level, as the Huly UI does', async () => {
+    // An issue's own reportedTime counts only time booked directly on it —
+    // Huly never rolls descendants into it. The per-child totals live in the
+    // server-maintained childInfo array, and the UI sums one level from there.
+    const { client } = createHarness({
+      issues: [baseIssue({
+        estimation: 2,
+        reportedTime: 0.5,
+        subIssues: 2,
+        childInfo: [
+          { childId: 'kid-1', estimation: 3, reportedTime: 1.5 },
+          { childId: 'kid-2', estimation: '4', reportedTime: '2' }
+        ]
+      })]
+    });
+
+    const page = await client.listIssues('PROJ', undefined, undefined, undefined, undefined, 10, undefined,
+      { fields: ['estimation', 'reportedTime', 'estimationTotal', 'reportedTimeTotal'] });
+
+    assert.deepEqual(page.items, [{
+      id: 'PROJ-1',
+      estimation: 2,
+      reportedTime: 0.5,
+      estimationTotal: 9,
+      reportedTimeTotal: 4
+    }]);
+  });
+
+  it('omits the rollup entirely for an issue with no children', async () => {
+    const { client } = createHarness({ issues: [baseIssue({ estimation: 2, reportedTime: 0.5 })] });
+
+    const page = await client.listIssues('PROJ', undefined, undefined, undefined, undefined, 10, undefined,
+      { fields: ['estimation', 'reportedTime', 'estimationTotal', 'reportedTimeTotal'] });
+
+    // A leaf must cost no extra bytes against the response budgets.
+    assert.deepEqual(page.items, [{ id: 'PROJ-1', estimation: 2, reportedTime: 0.5 }]);
+  });
+
   it('derives completedAt only from done-category statuses', async () => {
     const harness = createHarness();
     const readWith = async status => {

@@ -665,8 +665,8 @@ describe('listStatuses scoping', () => {
 
     const page = await client.listStatuses();
 
-    // Before HMCP-66 every status tupled to createdOn 0, so the comparator fell
-    // through to its id-descending tiebreak: s-todo, s-odd, s-loose, s-done.
+    // When every status tuples to createdOn 0, the comparator falls through to
+    // its id-descending tiebreak and yields: s-todo, s-odd, s-loose, s-done.
     assert.deepEqual(page.items.map(s => s.id), ['s-loose', 's-odd', 's-todo', 's-done']);
   });
 

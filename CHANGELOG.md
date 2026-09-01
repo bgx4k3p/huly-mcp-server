@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Rolled-up child time
+
+- `get_issue` and `list_issues` return `estimationTotal` and
+  `reportedTimeTotal` for an issue that has children. An issue's `estimation`
+  and `reportedTime` count only what is booked directly on it — Huly never rolls
+  descendants into those fields — so a parent previously read as empty while the
+  Huly UI showed a total. The totals are summed from the server-maintained
+  `childInfo` array, one level deep, matching what the UI displays.
+- Both fields are projectable through `fields`. An issue with no children emits
+  neither, so response sizes are unchanged for every leaf. `estimation` and
+  `reportedTime` keep their existing meaning, so existing parsers are
+  unaffected.
+
 ## 3.0.1 - 2026-08-31
 
 The v3 validation pass deferred three defects, each for a reason that did not

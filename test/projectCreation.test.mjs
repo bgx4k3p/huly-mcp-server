@@ -171,8 +171,9 @@ describe('project type resolution', () => {
   });
 
   it('ignores HR and CRM types so their presence alone does not force the argument', async () => {
-    // The HMCP-33 report: a workspace with recruit and lead modules could not
-    // create a project at all without naming a type explicitly.
+    // A workspace with the recruit and lead modules enabled could not create a
+    // project at all without naming a type explicitly, because their vacancy
+    // and funnel types counted toward "multiple types found".
     const { client, calls } = createHarness({
       projectTypes: [
         { _id: 'recruit:template:DefaultVacancy', name: 'Default vacancy', tasks: ['tt-applicant'] },

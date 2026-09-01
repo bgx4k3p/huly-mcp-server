@@ -1,7 +1,8 @@
 export const ISSUE_BASE_FIELDS = Object.freeze([
   'id', 'title', 'status', 'priority', 'type', 'assignee', 'component',
   'labels', 'parent', 'childCount', 'milestone', 'dueDate', 'estimation',
-  'reportedTime', 'createdOn', 'modifiedOn', 'completedAt'
+  'reportedTime', 'estimationTotal', 'reportedTimeTotal',
+  'createdOn', 'modifiedOn', 'completedAt'
 ]);
 
 export const ISSUE_INCLUDE_FIELDS = Object.freeze([
