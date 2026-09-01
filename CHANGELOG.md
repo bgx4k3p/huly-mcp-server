@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 3.0.2 - 2026-09-01
 
 ### Rolled-up child time
 
