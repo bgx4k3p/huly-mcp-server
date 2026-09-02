@@ -2,6 +2,76 @@
 
 All notable changes to this project are documented in this file.
 
+## 3.0.3 - 2026-09-02
+
+Three defects that all produced the same symptom — a description or comment that
+saved without error and then rendered blank in Huly — plus the live write
+verification that would have caught them.
+
+### Markup was written in a shape Huly cannot render
+
+- `toMarkup` returned the SDK's `MarkupContent` wrapper. That wrapper is only
+  unwrapped by `PlatformClientImpl.processMarkup`, and this server holds a bare
+  `TxOperations` on both transports, so the object was persisted verbatim as
+  `{"content":..,"kind":..}` into a field Huly types as a ProseMirror JSON
+  string. The UI rendered nothing while `fromMarkup` unwrapped the same object on
+  read, so a round trip through this server looked correct. Every milestone and
+  component description this server had ever written was affected.
+- An empty description produced `{"type":"doc","content":[]}`, which fails the
+  editor schema's `block+` content expression. Empty text now uses Huly's
+  canonical empty node, one empty paragraph. This also affected issue
+  descriptions and comments, which share the same encoder.
+- `markdownToMarkup` emits `bold` and `code` on one text node for ``**`x`**``,
+  but the `code` mark declares `excludes: "_"` and may not coexist with any other
+  mark. Marks are now re-applied through `Mark.addToSet`, so the schema's own
+  exclusion rules decide which survive rather than a hardcoded precedence.
+
+### Repairing documents already written
+
+- `scripts/repair-inline-markup.mjs` rewrites affected milestone descriptions,
+  component descriptions and comment messages. It is dry-run by default, scopes
+  by workspace, project, label or count, and is safe to re-run.
+- It repairs only documents that actually render blank. Documents that fail the
+  strict schema but that Huly's renderer still displays — a text node carrying
+  both `bold` and `code`, for instance — are left alone, because rewriting them
+  drops a mark and changes nothing on screen. `--normalize-schema` opts in.
+
+### archive_project is one-way
+
+- Huly filters archived spaces out of every client query, and each project method
+  begins with a lookup by identifier. After archiving, `get_project`,
+  `list_issues`, `delete_project` and unarchiving all fail with "Project not
+  found", and only the Huly web UI can restore the project. There is no discovery
+  path: archived spaces are absent from unscoped queries too.
+- The tool description now says so, and `archive_project` returns the project id,
+  which is the only remaining handle for a restore. The behaviour is unchanged —
+  this is a warning, not a fix.
+
+### Live write verification
+
+- `test/liveCrud.test.mjs` (`npm run test:crud`) verifies 30 of 36 write tools and
+  all 10 destructive tools against a real server. Every write asserts against an
+  independent read of what the server stored, never against the value the
+  mutation returned; every delete asserts absence. A mutation that silently fails
+  to persist can no longer pass.
+- The suite provisions its own `HCMP-TEST` workspace and `CRUD` project when they
+  are missing, so it produces the same result on any machine without prior setup.
+- Markup writes are additionally validated against the real editor schema through
+  `jsonToPmNode(...).check()`. Two of the three defects above survive a round trip
+  through this server's own reader, so a round-trip assertion alone cannot catch
+  them; only the consumer's validator can.
+- Two pre-existing unit tests asserted the broken shapes as though they were the
+  specification and have been corrected.
+
+### Release plumbing
+
+- `version:sync` only ever wrote `package.json`, so `package-lock.json` had been
+  stranded at 3.0.0 since the 3.0.1 release. It now updates both, and the lock is
+  back in step.
+- `docs/RELEASE_VALIDATION.md` pointed every live gate at a validation workspace
+  that no longer exists. It now names `hcmp-test` and records why deleting a
+  validation workspace is close to irreversible.
+
 ## 3.0.2 - 2026-09-01
 
 ### Rolled-up child time

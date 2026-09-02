@@ -13,8 +13,8 @@ import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-// integration.test.mjs needs a live Huly workspace; it runs from test:ws/test:rest.
-const LIVE_ONLY = new Set(['integration.test.mjs']);
+// These need a live Huly workspace; they run from test:ws/test:rest and test:crud.
+const LIVE_ONLY = new Set(['integration.test.mjs', 'liveCrud.test.mjs']);
 
 const testDir = 'test';
 const files = readdirSync(testDir)

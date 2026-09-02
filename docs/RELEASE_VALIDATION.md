@@ -4,18 +4,27 @@ Version 3 remains staged until every gate is green.
 
 ## Validation workspace
 
-Every live gate runs against the disposable `hmcpmcpvalidation20260824`
-workspace and its `MCPV` fixture project. Export all five variables; the
-integration suite silently falls back to the `default` workspace when
-`HULY_WORKSPACE` is unset.
+Every live gate runs against the disposable `hcmp-test` workspace and its
+`MCPV` fixture project. Export all five variables; the integration suite
+silently falls back to the `default` workspace when `HULY_WORKSPACE` is unset.
 
 ```sh
-export HULY_WORKSPACE=hmcpmcpvalidation20260824
+export HULY_WORKSPACE=hcmp-test
 export HULY_TEST_PROJECT=MCPV
-export HULY_ACCOUNT_TEST_WORKSPACE=hmcpmcpvalidation20260824
-export HULY_BENCHMARK_WORKSPACE=hmcpmcpvalidation20260824
+export HULY_ACCOUNT_TEST_WORKSPACE=hcmp-test
+export HULY_BENCHMARK_WORKSPACE=hcmp-test
 export HULY_BENCHMARK_PROJECT=MCPV
 ```
+
+`npm run test:crud` needs none of these: it provisions `HCMP-TEST` itself if the
+workspace is missing, waits for it to become active, and builds its own `CRUD`
+project. That is what makes it reproducible on any machine.
+
+Deleting a validation workspace is close to irreversible in practice. Huly's
+`deleteWorkspace` only sets `mode=pending-deletion` and `is_disabled=true` — the
+row survives, and workspace creation is capped on a lifetime count of rows
+created by the account, so every delete permanently consumes one of the ten
+slots. Reuse the workspace instead of recreating it.
 
 Address the workspace by **slug, never by UUID**. The fixtures previously lived
 in a real workspace because a UUID was assumed to name the disposable one; it
@@ -24,7 +33,7 @@ did not. A slug is checkable at a glance, a UUID is not.
 Rebuild the fixtures with:
 
 ```sh
-HULY_SEED_WORKSPACE=hmcpmcpvalidation20260824 node scripts/seed-validation-fixtures.mjs
+HULY_SEED_WORKSPACE=hcmp-test node scripts/seed-validation-fixtures.mjs
 ```
 
 That script refuses any workspace holding a project with issues outside the
@@ -74,6 +83,11 @@ npm run benchmark:workflows:live
 
 # WebSocket and REST integration suites, both against the same workspace.
 npm run test
+
+# Live CRUD: every write verified by an independent read, every delete by
+# absence. Self-provisioning, so it needs no exported workspace variables.
+HULY_TRANSPORT=rest npm run test:crud
+HULY_TRANSPORT=ws npm run test:crud
 ```
 
 ## Gates
@@ -86,6 +100,7 @@ npm run test
 | Correctness | No failed task, changed identity/order, filter violation, or added retry |
 | Latency | Candidate p95 no more than 10% slower without explicit acceptance |
 | Regression | Offline, package, WebSocket, REST, and HTTP suites all pass |
+| Round trip | `test:crud` green on both transports: every write read back, every delete confirmed absent |
 
 Final measured evidence is recorded here only after the commands above are
 rerun against the release candidate.
@@ -182,3 +197,24 @@ The countermeasures are: the suite now deletes every label it creates, tests
 assert on the arguments reaching the SDK rather than on return values,
 `createLabel` verifies persistence before reporting success, and the fixtures
 live in a workspace the seeder can rebuild from scratch.
+
+## 3.0.3 evidence (2026-09-02)
+
+- Unit suite 534/534; lint clean; live CRUD 44/44 on REST and on WebSocket, with
+  `delete_workspace` skipped by design (see below).
+- Write coverage: 30 of 36 write tools and 10 of 10 destructive tools verified
+  against a live server by independent read-back or confirmed absence.
+- Not covered live, each for a reason that is not a test gap: `change_password`
+  and `add_email_social_id` mutate the authenticating account irreversibly,
+  `send_invite` and `resend_invite` send real mail, `update_workspace_role`
+  needs a second member, and `create_mailbox`/`delete_mailbox` return
+  `domain-not-found` because no mail domain is configured.
+- `delete_workspace` is validated but gated behind `HULY_TEST_DELETE_WORKSPACE=1`.
+  Each run permanently consumes one of the account's ten workspace slots, because
+  the row it leaves behind still counts.
+- Markup writes are validated against the real editor schema via
+  `jsonToPmNode(...).check()` rather than against this server's own reader. Two
+  of the three markup defects fixed in this release survive a round trip through
+  the reader, so a round-trip assertion alone cannot catch them.
+- Known defect recorded, not fixed: `archive_project` is one-way. The suite pins
+  the current behaviour so the trap stays visible.

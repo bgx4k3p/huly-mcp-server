@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 
 import { HulyClient } from '../src/client.mjs';
 import {
-  fromCollaboratorMarkup, fromMarkup, toCollaboratorMarkup, toMarkup
+  fromCollaboratorMarkup, fromMarkup, normalizeMarkup, toCollaboratorMarkup, toMarkup
 } from '../src/helpers.mjs';
 import { markdownPreview } from '../src/projection.mjs';
 
@@ -529,15 +530,109 @@ describe('issue templates', () => {
   });
 });
 
+// Every construct this server can emit is validated against Huly's real editor
+// schema. jsonToPmNode resolves node types and attrs, and Node.check() validates
+// content expressions — a doc that fails either renders blank in the Huly UI.
+// This replaces eyeballing descriptions in a browser.
+const { jsonToPmNode, markupToJSON } = createRequire(import.meta.url)('@hcengineering/text');
+
+describe('editor schema conformance', () => {
+
+  const CONSTRUCTS = [
+    ['inline marks', 'markdown', 'Some **bold**, *italic* and `code`.'],
+    ['heading', 'markdown', '# Heading one'],
+    ['bullet list', 'markdown', '- one\n- two'],
+    ['nested bullet list', 'markdown', '- one\n- two\n  - nested'],
+    ['ordered list', 'markdown', '1. first\n2. second'],
+    ['blockquote', 'markdown', '> a blockquote'],
+    ['code block', 'markdown', '```js\nconst a = 1;\n```'],
+    ['link', 'markdown', 'A [link](https://example.test/d)'],
+    ['strikethrough', 'markdown', '~~strike~~'],
+    ['task list', 'markdown', '- [ ] no\n- [x] yes'],
+    ['table', 'markdown', '| a | b |\n| --- | --- |\n| 1 | 2 |'],
+    ['image', 'markdown', '![alt](https://x.test/i.png)'],
+    ['horizontal rule', 'markdown', 'a\n\n---\n\nb'],
+    ['html input', 'html', '<h1>T</h1><p>body <b>b</b></p>'],
+    ['plain text', 'plain', 'one line'],
+    ['plain multiline', 'plain', 'line one\nline two\n\nline four'],
+    ['empty description', 'markdown', '']
+  ];
+
+  for (const [label, format, source] of CONSTRUCTS) {
+    it(`emits a schema-valid document for ${label}`, () => {
+      for (const encode of [toMarkup, toCollaboratorMarkup]) {
+        const node = jsonToPmNode(markupToJSON(encode(source, format)));
+        node.check();
+      }
+    });
+  }
+
+  it('drops mark combinations the schema excludes', () => {
+    // markdownToMarkup emits bold+code for **`x`**, but the code mark declares
+    // excludes: "_", so the document fails check() and the UI renders nothing.
+    const stored = toMarkup('Step 3: **`FAIR`** inputs', 'markdown');
+    jsonToPmNode(markupToJSON(stored)).check();
+    const marks = JSON.parse(stored).content[0].content.flatMap(n => (n.marks ?? []).map(m => m.type));
+    assert.deepEqual(marks, ['code'], 'code excludes bold');
+    // marks that do not exclude each other are left alone
+    const kept = JSON.parse(toMarkup('***both***', 'markdown')).content[0].content[0].marks.map(m => m.type);
+    assert.deepEqual(kept.sort(), ['bold', 'italic']);
+  });
+
+  it('re-normalizes an already-stored document that violates the schema', () => {
+    const broken = JSON.stringify({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'x', marks: [{ type: 'bold' }, { type: 'code' }] }] }]
+    });
+    assert.throws(() => jsonToPmNode(markupToJSON(broken)).check());
+    jsonToPmNode(markupToJSON(normalizeMarkup(broken))).check();
+
+    // the other stored-invalid shape: a doc with no children
+    const childless = JSON.stringify({ type: 'doc', content: [] });
+    assert.throws(() => jsonToPmNode(markupToJSON(childless)).check());
+    jsonToPmNode(markupToJSON(normalizeMarkup(childless))).check();
+  });
+
+  it('encodes an empty description as Huly\'s canonical empty node', () => {
+    // { doc, content: [] } passes isEmptyMarkup but fails the doc's block+
+    // content expression, which blanks the description in the Huly UI.
+    assert.deepEqual(JSON.parse(toMarkup('')), {
+      type: 'doc', content: [{ type: 'paragraph', content: [] }]
+    });
+    assert.equal(fromMarkup(toMarkup('')), '');
+  });
+});
+
 describe('markup conversion', () => {
-  it('stamps the declared format onto MarkupContent', () => {
-    assert.equal(toMarkup('# Hi', 'markdown').kind, 'markdown');
-    assert.equal(toMarkup('# Hi', 'html').kind, 'html');
-    // plain must carry no kind, or the server re-renders it as markdown.
-    assert.equal(toMarkup('# Hi', 'plain').kind, undefined);
-    assert.equal(toMarkup('# Hi').kind, 'markdown');
-    assert.equal(toMarkup('# Hi', 'html').content, '# Hi');
-    assert.equal(toMarkup('').content, '');
+  // Milestone/component descriptions are `Markup` fields: a STRING holding a
+  // ProseMirror JSON doc. Handing the SDK's MarkupContent wrapper to
+  // TxOperations persists {"content":..,"kind":..} and the Huly UI renders
+  // nothing, while fromMarkup() still reads it back — so a round-trip through
+  // this server cannot catch the regression. Assert the wire shape directly.
+  it('encodes inline markup as a ProseMirror JSON string, not MarkupContent', () => {
+    for (const format of ['markdown', 'html', 'plain', undefined]) {
+      const stored = toMarkup('# Hi', format);
+      assert.equal(typeof stored, 'string', `${format} must produce a string`);
+      assert.equal(JSON.parse(stored).type, 'doc');
+    }
+    assert.deepEqual(JSON.parse(toMarkup('')), {
+      type: 'doc', content: [{ type: 'paragraph', content: [] }]
+    });
+  });
+
+  it('routes each inline-markup format to its own parser', () => {
+    assert.deepEqual(nodeTypes(toMarkup('# Title', 'markdown')), ['heading']);
+    assert.deepEqual(nodeTypes(toMarkup('# Title', 'html')), ['paragraph']);
+    assert.deepEqual(nodeTypes(toMarkup('# Title', 'plain')), ['paragraph']);
+    assert.deepEqual(nodeTypes(toMarkup('<h1>Title</h1>', 'html')), ['heading']);
+  });
+
+  it('round-trips inline markup through fromMarkup', () => {
+    const text = 'Updated **description** with `code`';
+    assert.equal(fromMarkup(toMarkup(text, 'markdown')), text);
+    assert.equal(fromMarkup(toMarkup('', 'markdown')), '');
+    // legacy docs written before the fix must still read back
+    assert.equal(fromMarkup({ content: 'legacy value', kind: 'markdown' }), 'legacy value');
   });
 
   it('routes each collaborator format to its own parser', () => {
@@ -545,7 +640,8 @@ describe('markup conversion', () => {
     assert.deepEqual(nodeTypes(toCollaboratorMarkup('# Title', 'html')), ['paragraph']);
     assert.deepEqual(nodeTypes(toCollaboratorMarkup('# Title', 'plain')), ['paragraph']);
     assert.deepEqual(nodeTypes(toCollaboratorMarkup('<h1>Title</h1>', 'html')), ['heading']);
-    assert.deepEqual(JSON.parse(toCollaboratorMarkup('', 'markdown')).content, []);
+    // empty must be one empty paragraph — a doc with no children fails block+
+    assert.deepEqual(JSON.parse(toCollaboratorMarkup('', 'markdown')).content, [{ type: 'paragraph', content: [] }]);
   });
 
   it('round-trips markdown structure without losing content', () => {
