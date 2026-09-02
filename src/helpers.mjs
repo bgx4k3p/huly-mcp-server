@@ -49,10 +49,10 @@ import { createRequire } from 'module';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 const require = createRequire(import.meta.url);
 
-const { markdown: markdownMarkup, html: htmlMarkup, MarkupContent } = require('@hcengineering/api-client');
 const { markdownToMarkup, markupToMarkdown } = require('@hcengineering/text-markdown');
 const { htmlToMarkup, markupToHtml } = require('@hcengineering/text-html');
-const { jsonToMarkup, markupToJSON, isEmptyMarkup } = require('@hcengineering/text-core');
+const { jsonToMarkup, markupToJSON, isEmptyMarkup, emptyMarkupNode } = require('@hcengineering/text-core');
+const { jsonToPmNode } = require('@hcengineering/text');
 
 // ── Constants ──────────────────────────────────────────────────
 
@@ -422,8 +422,59 @@ export function withExtra(raw, known) {
  *
  * Flow: user text -> ProseMirror JSON -> jsonToMarkup() -> collaborator.updateMarkup()
  */
+let _markupSchema = null;
+
+/**
+ * The ProseMirror schema Huly's editor actually validates against.
+ */
+function markupSchema() {
+  _markupSchema ??= jsonToPmNode({ type: 'doc', content: [{ type: 'paragraph' }] }).type.schema;
+  return _markupSchema;
+}
+
+/**
+ * Drop mark combinations the editor schema forbids.
+ *
+ * markdownToMarkup happily emits marks the schema excludes — `**`code`**` yields
+ * a text node carrying both bold and code, but the code mark declares
+ * excludes: "_", so it may not coexist with any other mark. Such a document
+ * fails Node.check() and the Huly UI renders the whole description blank.
+ *
+ * Marks are re-applied through Mark.addToSet, so the schema's own exclusion
+ * rules decide which survive rather than a hardcoded precedence list.
+ */
+function sanitizeMarkupNode(node) {
+  if (Array.isArray(node.content)) node.content.forEach(sanitizeMarkupNode);
+  if (!Array.isArray(node.marks) || node.marks.length < 2) return node;
+
+  const schema = markupSchema();
+  let set = [];
+  for (const mark of node.marks) {
+    const type = schema.marks[mark.type];
+    if (type === undefined) continue;
+    set = type.create(mark.attrs ?? null).addToSet(set);
+  }
+  node.marks = set.map(mark => mark.toJSON());
+  return node;
+}
+
+/**
+ * Re-normalize an already-stored markup string so it satisfies the editor
+ * schema. Used to repair documents written before mark sanitization existed.
+ */
+export function normalizeMarkup(markup) {
+  const json = markupToJSON(markup);
+  // A doc with no children fails the block+ content expression.
+  if (!Array.isArray(json.content) || json.content.length === 0) {
+    return jsonToMarkup(emptyMarkupNode());
+  }
+  return jsonToMarkup(sanitizeMarkupNode(json));
+}
+
 export function toCollaboratorMarkup(text, format = 'markdown') {
-  if (!text) return jsonToMarkup({ type: 'doc', content: [] });
+  // { doc, content: [] } fails the editor schema — doc requires block+ — so an
+  // empty description must use Huly's canonical empty node, one empty paragraph.
+  if (!text) return jsonToMarkup(emptyMarkupNode());
   let pmJson;
   switch (format) {
     case 'html':
@@ -437,7 +488,7 @@ export function toCollaboratorMarkup(text, format = 'markdown') {
       pmJson = markdownToMarkup(text);
       break;
   }
-  return jsonToMarkup(pmJson);
+  return jsonToMarkup(sanitizeMarkupNode(pmJson));
 }
 
 /**
@@ -460,17 +511,21 @@ export function fromCollaboratorMarkup(markup, format = 'markdown') {
 }
 
 /**
- * Convert text to MarkupContent for SDK fields that expect MarkupContent
- * instead of serialized ProseMirror markup strings.
+ * Convert text to inline Markup for milestone and component descriptions.
+ *
+ * Huly types those fields as `Markup` — a plain string holding a ProseMirror
+ * JSON document stored directly on the doc, unlike issue descriptions which
+ * hold a collaborator reference.
+ *
+ * The SDK's MarkupContent wrapper must NOT be used here. It is only unwrapped
+ * by PlatformClientImpl.processMarkup, and this server holds a bare
+ * TxOperations on both transports (see connect()), so a MarkupContent is
+ * persisted verbatim as {"content":..,"kind":..}. The Huly UI then renders an
+ * empty description, while fromMarkup() still unwraps it on read — which makes
+ * a round-trip through this server look correct.
  */
 export function toMarkup(text, format = 'markdown') {
-  if (!text) return new MarkupContent('');
-  switch (format) {
-    case 'html': return htmlMarkup(text);
-    case 'plain': return new MarkupContent(text);
-    case 'markdown':
-    default: return markdownMarkup(text);
-  }
+  return toCollaboratorMarkup(text, format);
 }
 
 /**

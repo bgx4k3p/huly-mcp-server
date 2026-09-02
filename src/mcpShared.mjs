@@ -604,8 +604,8 @@ function getToolDefinitions() {
     },
     {
       name: 'archive_project',
-      description: 'Archive or unarchive a project. Archived projects are hidden from the sidebar but data is preserved.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, archived: { type: 'boolean', description: 'true to archive, false to unarchive (default: true)' }, ...workspaceProp }, required: ['project'] }
+      description: 'Archive a project. ONE-WAY: archived projects vanish from every query, so get_project, list_issues, delete_project and unarchive all fail afterwards; only the Huly web UI can restore one. Keep the returned id.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, archived: { type: 'boolean', description: 'true to archive (default). false cannot succeed once archived.' }, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'move_issue',

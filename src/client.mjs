@@ -3956,9 +3956,18 @@ export class HulyClient {
       archived
     });
 
+    // Archiving is one-way: Huly filters archived spaces out of every client
+    // query, so this project can no longer be looked up by identifier and the
+    // `archived: false` path can never find it again. The internal id is the
+    // only remaining handle, so return it explicitly.
     return {
-      message: archived ? `Project ${projectIdent} archived` : `Project ${projectIdent} unarchived`,
+      message: archived
+        ? `Project ${projectIdent} archived. This is ONE-WAY: the project is now `
+          + 'unreachable through every tool. Keep the id below — only the Huly web '
+          + 'UI can restore it.'
+        : `Project ${projectIdent} unarchived`,
       identifier: project.identifier,
+      id: project._id,
       archived
     };
   }
