@@ -271,8 +271,8 @@ describe('time report writes', () => {
   it('normalizes hours and dates on both report read paths', async () => {
     const queries = [];
     const reports = [
-      { _id: 'r-old', value: '2.5', date: 1700000000000, description: 'a', createdOn: 100 },
-      { _id: 'r-new', value: undefined, date: null, description: '', createdOn: 200 }
+      { _id: 'r-old', attachedTo: 'issue-id', value: '2.5', date: 1700000000000, description: 'a', createdOn: 100 },
+      { _id: 'r-new', attachedTo: 'issue-id', value: undefined, date: null, description: '', createdOn: 200 }
     ];
     const client = singleIssue(stubClient({
       findAll: async (_class, query) => { queries.push(query); return reports; },
@@ -290,7 +290,7 @@ describe('time report writes', () => {
     const single = await client.getTimeReport('PROJ-1', 'r-old');
     assert.equal(single.hours, 2.5);
     assert.equal(single.date, new Date(1700000000000).toISOString());
-    await assert.rejects(() => client.getTimeReport('PROJ-1', 'ghost'), /Time report not found: ghost/);
+    await assert.rejects(() => client.getTimeReport('PROJ-1', 'ghost'), /Time report not found on PROJ-1: ghost/);
   });
 });
 
@@ -336,6 +336,55 @@ describe('issue relations', () => {
     assert.equal(updates.length, 0);
   });
 
+  it('removes both sides of a relation from their own project spaces', async () => {
+    const updates = [];
+    const fixtures = relationFixtures();
+    fixtures['PROJ-1'].issue.relations = [
+      { _id: 'issue-b', _class: ISSUE_CLASS },
+      { _id: 'issue-c', _class: ISSUE_CLASS }
+    ];
+    fixtures['OTHER-9'].issue.relations = [
+      { _id: 'issue-a', _class: ISSUE_CLASS },
+      { _id: 'issue-d', _class: ISSUE_CLASS }
+    ];
+    const client = stubClient({ updateDoc: async (...args) => { updates.push(args); } });
+    client._parseAndFindIssue = issueLookup(fixtures);
+
+    const result = await client.removeRelation('PROJ-1', 'OTHER-9');
+
+    assert.deepEqual(updates, [
+      [ISSUE_CLASS, 'space-a', 'issue-a', {
+        relations: [{ _id: 'issue-c', _class: ISSUE_CLASS }]
+      }],
+      [ISSUE_CLASS, 'space-b', 'issue-b', {
+        relations: [{ _id: 'issue-d', _class: ISSUE_CLASS }]
+      }]
+    ]);
+    assert.deepEqual(result, {
+      message: 'Removed relation: PROJ-1 ↔ OTHER-9',
+      issueId: 'PROJ-1',
+      relatedIssueId: 'OTHER-9'
+    });
+  });
+
+  it('repairs a one-sided relation and is a no-op when neither side exists', async () => {
+    const updates = [];
+    const fixtures = relationFixtures();
+    fixtures['OTHER-9'].issue.relations = [{ _id: 'issue-a', _class: ISSUE_CLASS }];
+    const client = stubClient({ updateDoc: async (...args) => { updates.push(args); } });
+    client._parseAndFindIssue = issueLookup(fixtures);
+
+    await client.removeRelation('PROJ-1', 'OTHER-9');
+    assert.deepEqual(updates, [
+      [ISSUE_CLASS, 'space-b', 'issue-b', { relations: [] }]
+    ]);
+
+    fixtures['OTHER-9'].issue.relations = [];
+    const result = await client.removeRelation('PROJ-1', 'OTHER-9');
+    assert.match(result.message, /not related/);
+    assert.equal(updates.length, 1, 'an absent relation must not be re-written');
+  });
+
   it('records the blocker on the blocked issue only, preserving existing entries', async () => {
     const updates = [];
     const fixtures = relationFixtures();
@@ -356,6 +405,34 @@ describe('issue relations', () => {
     fixtures['PROJ-1'].issue.blockedBy = [{ _id: 'issue-b', _class: ISSUE_CLASS }];
     await client.addBlockedBy('PROJ-1', 'OTHER-9');
     assert.equal(updates.length, 1, 'an existing dependency must not be re-written');
+  });
+
+  it('removes a blocker from the blocked issue only and is idempotent', async () => {
+    const updates = [];
+    const fixtures = relationFixtures();
+    fixtures['PROJ-1'].issue.blockedBy = [
+      { _id: 'issue-c', _class: ISSUE_CLASS },
+      { _id: 'issue-b', _class: ISSUE_CLASS }
+    ];
+    const client = stubClient({ updateDoc: async (...args) => { updates.push(args); } });
+    client._parseAndFindIssue = issueLookup(fixtures);
+
+    const removed = await client.removeBlockedBy('PROJ-1', 'OTHER-9');
+    assert.deepEqual(updates, [
+      [ISSUE_CLASS, 'space-a', 'issue-a', {
+        blockedBy: [{ _id: 'issue-c', _class: ISSUE_CLASS }]
+      }]
+    ]);
+    assert.deepEqual(removed, {
+      message: 'Removed dependency: PROJ-1 is no longer blocked by OTHER-9',
+      issueId: 'PROJ-1',
+      blockerIssueId: 'OTHER-9'
+    });
+
+    fixtures['PROJ-1'].issue.blockedBy = [{ _id: 'issue-c', _class: ISSUE_CLASS }];
+    const absent = await client.removeBlockedBy('PROJ-1', 'OTHER-9');
+    assert.match(absent.message, /not blocked by/);
+    assert.equal(updates.length, 1, 'an absent dependency must not be re-written');
   });
 });
 

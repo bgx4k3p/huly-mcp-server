@@ -25,18 +25,18 @@ export const READ_ONLY_TOOL_NAMES = new Set([
   'get_integration', 'list_mailboxes', 'find_person_by_social_key',
   'get_social_ids', 'list_subscriptions',
   'list_projects', 'get_project', 'list_issues', 'get_issue',
-  'search_issues', 'get_my_issues', 'summarize_project', 'list_labels',
+  'search_issues', 'get_my_issues', 'get_issue_history', 'summarize_project', 'list_labels',
   'list_project_types', 'list_task_types', 'list_statuses',
   'list_milestones', 'get_milestone', 'list_members', 'list_comments',
   'list_time_reports', 'list_components', 'get_label', 'get_member',
   'get_status', 'get_component', 'get_task_type', 'get_comment',
-  'get_time_report'
+  'get_time_report', 'list_issue_templates', 'get_issue_template'
 ]);
 
 export const DESTRUCTIVE_TOOL_NAMES = new Set([
   'delete_workspace', 'delete_integration', 'delete_mailbox',
   'delete_issue', 'delete_label', 'delete_milestone', 'delete_comment',
-  'delete_time_report', 'delete_project', 'delete_component'
+  'delete_time_report', 'delete_project', 'delete_component', 'delete_issue_template'
 ]);
 
 /**
@@ -105,6 +105,21 @@ export const accountTools = {
  * Handler signature: (args, client) => Promise<any>
  */
 export const workspaceTools = {
+  list_issue_templates: (a, c) => c.listIssueTemplates(a.project, { limit: a.limit, cursor: a.cursor }),
+  get_issue_template: (a, c) => c.getIssueTemplate(a.project, a.templateId),
+  create_issue_template: (a, c) => c.createIssueTemplate(a.project, {
+    title: a.title, description: a.description, descriptionFormat: a.descriptionFormat,
+    priority: a.priority, assignee: a.assignee, component: a.component,
+    milestone: a.milestone, estimation: a.estimation, labels: a.labels,
+    type: a.type, children: a.children, relations: a.relations
+  }),
+  update_issue_template: (a, c) => c.updateIssueTemplate(a.project, a.templateId, {
+    title: a.title, description: a.description, descriptionFormat: a.descriptionFormat,
+    priority: a.priority, assignee: a.assignee, component: a.component,
+    milestone: a.milestone, estimation: a.estimation, labels: a.labels,
+    type: a.type, children: a.children, relations: a.relations
+  }),
+  delete_issue_template: (a, c) => c.deleteIssueTemplate(a.project, a.templateId),
   list_projects: (a, c) =>
     c.listProjects({ include: a.include, cursor: a.cursor, limit: a.limit }),
   get_project: (a, c) =>
@@ -139,6 +154,8 @@ export const workspaceTools = {
     c.searchIssues(a.query, a.project, a.limit, a.cursor),
   get_my_issues: (a, c) =>
     c.getMyIssues(a.project, a.status, a.limit, a.cursor),
+  get_issue_history: (a, c) =>
+    c.getIssueHistory(a.issueId),
   batch_create_issues: (a, c) =>
     c.batchCreateIssues(a.project, a.issues),
   move_issue: (a, c) =>
@@ -159,7 +176,9 @@ export const workspaceTools = {
 
   // Relations
   add_relation: (a, c) => c.addRelation(a.issueId, a.relatedIssueId),
+  remove_relation: (a, c) => c.removeRelation(a.issueId, a.relatedIssueId),
   add_blocked_by: (a, c) => c.addBlockedBy(a.issueId, a.blockerIssueId),
+  remove_blocked_by: (a, c) => c.removeBlockedBy(a.issueId, a.blockerIssueId),
   set_parent: (a, c) => c.setParent(a.issueId, a.parentId),
 
   // Task types & statuses
@@ -175,14 +194,17 @@ export const workspaceTools = {
     include: a.include, issuesLimit: a.issues_limit
   }),
   create_milestone: (a, c) =>
-    c.createMilestone(a.project, a.name, a.description, a.targetDate, a.status, a.descriptionFormat),
+    c.createMilestone(
+      a.project, a.name, a.description, a.targetDate, a.status, a.descriptionFormat, a.collaborators
+    ),
   set_milestone: (a, c) => c.setMilestone(a.issueId, a.milestone),
   update_milestone: (a, c) =>
     c.updateMilestone(a.project, a.name, {
       name: a.newName, description: a.description,
-      descriptionFormat: a.descriptionFormat, status: a.status, targetDate: a.targetDate
+      descriptionFormat: a.descriptionFormat, status: a.status, targetDate: a.targetDate,
+      collaborators: a.collaborators
     }),
-  delete_milestone: (a, c) => c.deleteMilestone(a.project, a.name),
+  delete_milestone: (a, c) => c.deleteMilestone(a.project, a.name, a.moveIssuesTo),
 
   // Members
   list_members: (a, c) => c.listMembers({ cursor: a.cursor, limit: a.limit }),
@@ -196,15 +218,22 @@ export const workspaceTools = {
   // Time tracking
   log_time: (a, c) => c.logTime(a.issueId, a.hours, a.description, a.date, a.employee),
   list_time_reports: (a, c) => c.listTimeReports(a.issueId, { cursor: a.cursor, limit: a.limit }),
+  update_time_report: (a, c) => c.updateTimeReport(a.issueId, a.reportId, {
+    hours: a.hours, description: a.description, date: a.date, employee: a.employee
+  }),
   delete_time_report: (a, c) => c.deleteTimeReport(a.reportId),
 
   // Projects
   create_project: (a, c) =>
-    c.createProject(a.identifier, a.name, a.description, a.private, a.projectType),
+    c.createProject(a.identifier, a.name, a.description, a.private, a.projectType, {
+      members: a.members, owners: a.owners, defaultAssignee: a.defaultAssignee,
+      defaultIssueStatus: a.defaultIssueStatus, defaultTimeReportDay: a.defaultTimeReportDay
+    }),
   update_project: (a, c) =>
     c.updateProject(a.project, {
       name: a.name, description: a.description,
-      isPrivate: a.private, defaultAssignee: a.defaultAssignee
+      isPrivate: a.private, members: a.members, owners: a.owners, defaultAssignee: a.defaultAssignee,
+      defaultIssueStatus: a.defaultIssueStatus, defaultTimeReportDay: a.defaultTimeReportDay
     }),
   archive_project: (a, c) => c.archiveProject(a.project, a.archived),
   delete_project: (a, c) => c.deleteProject(a.project),

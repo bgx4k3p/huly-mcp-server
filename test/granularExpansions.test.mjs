@@ -21,15 +21,15 @@ describe('granular project and milestone expansions', () => {
   it('fetches only requested project relationships for the selected page', async () => {
     const calls = [];
     const projects = [
-      { _id: 'p1', identifier: 'ONE', name: 'One', members: ['e1'], createdOn: 2 },
-      { _id: 'p2', identifier: 'TWO', name: 'Two', members: ['e2'], createdOn: 1 }
+      { _id: 'p1', identifier: 'ONE', name: 'One', members: ['a1'], createdOn: 2 },
+      { _id: 'p2', identifier: 'TWO', name: 'Two', members: ['a2'], createdOn: 1 }
     ];
     const sdk = {
       findAll: async (classRef, query) => {
         calls.push({ classRef, query });
         if (classRef === tracker.class.Project) return projects;
         if (classRef === contactPlugin.mixin.Employee) {
-          return [{ _id: 'e1', name: 'Alice' }, { _id: 'e2', name: 'Bob' }];
+          return [{ _id: 'e1', personUuid: 'a1', name: 'Alice' }, { _id: 'e2', personUuid: 'a2', name: 'Bob' }];
         }
         return [];
       }

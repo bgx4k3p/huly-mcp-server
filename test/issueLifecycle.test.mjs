@@ -311,6 +311,17 @@ describe('updateIssue payload', () => {
     assert.deepEqual(update.data, { dueDate: null, estimation: 2.5 });
   });
 
+  it('clears every optional issue reference through update_issue', async () => {
+    const { client, select } = updateHarness();
+
+    await client.updateIssue('PROJ-1', undefined, undefined, undefined, undefined, undefined, {
+      assignee: '', component: '   ', milestone: ''
+    });
+
+    const [update] = select('updateDoc', tracker.class.Issue);
+    assert.deepEqual(update.data, { assignee: null, component: null, milestone: null });
+  });
+
   it('writes a description without issuing an empty document update', async () => {
     const { client, select, collaboratorWrites } = updateHarness();
 

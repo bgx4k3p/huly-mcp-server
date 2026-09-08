@@ -30,6 +30,8 @@ Claude Code, VS Code, n8n, and any MCP client.
 - **Maintenance**: repair scripts for known data consistency issues.
 - **Development and Publishing**: tests, linting, and package publishing.
 - **API Reference**: available MCP tools and response conventions.
+- **SDK Capability Audit**: supported lifecycles, known gaps, and coverage gates
+  are tracked in [`docs/SDK_CAPABILITY_AUDIT.md`](docs/SDK_CAPABILITY_AUDIT.md).
 
 ## Install
 
@@ -400,8 +402,8 @@ clients can set `Huly-Response-Mode` while creating a session; this is captured
 for that session only. `raw` returns full SDK fields as minified JSON.
 
 Tool profiles reduce the catalog sent to the model at session startup. `full`
-exposes all 82 tools, `project` exposes the 55 workspace/project tools, and
-`read` exposes 36 read-only tools. For Claude research/review sessions, set
+exposes all 91 tools, `project` exposes the 64 workspace/project tools, and
+`read` exposes 39 read-only tools. For Claude research/review sessions, set
 `HULY_TOOL_PROFILE=read`; use `project` when the session must edit issues, and
 use `full` only for workspace/account administration. Calls outside the active
 profile fail instead of being silently routed.
@@ -694,10 +696,10 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_projects` | List projects with optional `milestones`, `components`, `labels`, and `members` expansions | -- |
+| `list_projects` | List projects with optional `milestones`, `components`, `labels`, `members`, `owners`, and `defaults` expansions | -- |
 | `get_project` | Get project by identifier with optional granular expansions | -- |
 | `create_project` | Create a new project | `projectType`: name/id (required only if the workspace has several issue-capable types; HR and CRM types are ignored) |
-| `update_project` | Update project name, description, privacy, default assignee | -- |
+| `update_project` | Update project fields, member/owner sets, and defaults | -- |
 | `archive_project` | Archive or unarchive a project | -- |
 | `delete_project` | Permanently delete a project | -- |
 | `summarize_project` | Aggregated project metrics and health | -- |
@@ -713,9 +715,35 @@ Full list of all MCP tools available through this server.
 | `delete_issue` | Permanently delete an issue | -- |
 | `search_issues` | Full-text search across projects | -- |
 | `get_my_issues` | Issues assigned to current user | -- |
+| `get_issue_history` | Issue activity timeline with comments, time reports, labels, and sub-issues | -- |
 | `batch_create_issues` | Create multiple issues at once | `descriptionFormat` per item |
 | `move_issue` | Move issue between projects | -- |
 | `create_issues_from_template` | Create from predefined templates | -- |
+
+### Stored Issue Templates
+
+These tools manage persistent Huly templates, including embedded child templates,
+labels, task types, related documents, and descriptions. The Huly UI can use these
+templates to create issues. `create_issues_from_template` is the separate predefined
+workflow generator.
+
+| Tool | Description |
+| --- | --- |
+| `create_issue_template` | Create a stored template and optional child templates |
+| `get_issue_template` | Read a template by `project` and `templateId` |
+| `list_issue_templates` | Page through a project's stored templates |
+| `update_issue_template` | Update fields; supplied arrays replace the full set, empty arrays clear |
+| `delete_issue_template` | Delete a template while retaining previously created issues |
+
+Preserve returned child IDs when editing child templates. Empty assignee,
+component, or milestone values clear those fields. An empty task type resets to
+the project's default type.
+
+Project `members` and `owners` accept exact member names or account UUIDs.
+Creation always includes the creator as a member and owner. Updates replace
+supplied sets; use `include: ["members", "owners", "defaults"]` to read them back.
+A project must retain an owner, and a private project must retain an owner who is
+also a member. Removing a member also removes their project-role assignments.
 
 ### Labels
 
@@ -734,7 +762,9 @@ Full list of all MCP tools available through this server.
 | Tool | Description |
 | --- | --- |
 | `add_relation` | Add bidirectional "related to" link |
+| `remove_relation` | Remove bidirectional "related to" link |
 | `add_blocked_by` | Add "blocked by" dependency |
+| `remove_blocked_by` | Remove "blocked by" dependency |
 | `set_parent` | Set parent issue (epic/task hierarchy) |
 
 ### Components
@@ -751,11 +781,11 @@ Full list of all MCP tools available through this server.
 
 | Tool | Description | Text Format |
 | --- | --- | --- |
-| `list_milestones` | List milestones with optional bounded `issues` expansion | -- |
-| `get_milestone` | Get milestone details with optional bounded `issues` expansion | -- |
-| `create_milestone` | Create a new milestone | `descriptionFormat`: md/html/plain |
-| `update_milestone` | Update milestone fields | `descriptionFormat`: md/html/plain |
-| `delete_milestone` | Delete a milestone | -- |
+| `list_milestones` | List milestones and collaborator members with optional bounded `issues` expansion | -- |
+| `get_milestone` | Get milestone details and collaborator members with optional bounded `issues` expansion | -- |
+| `create_milestone` | Create a new milestone with optional collaborators | `descriptionFormat`: md/html/plain |
+| `update_milestone` | Update milestone fields or replace/clear collaborators | `descriptionFormat`: md/html/plain |
+| `delete_milestone` | Delete a milestone and clear or move assigned issues | -- |
 | `set_milestone` | Set or clear milestone on an issue | -- |
 
 ### Members
@@ -782,6 +812,7 @@ Full list of all MCP tools available through this server.
 | `log_time` | Log actual time spent | -- |
 | `list_time_reports` | List time reports for an issue | -- |
 | `get_time_report` | Get a specific time report by ID | -- |
+| `update_time_report` | Update hours, description, date, or employee attribution | -- |
 | `delete_time_report` | Delete a time report | -- |
 
 ### Metadata
@@ -814,7 +845,7 @@ Compact issue lists use a concise default field projection, while raw lists
 retain the complete base-field set. `include` is the only expansion mechanism;
 there is no broad-detail boolean shortcut.
 
-Projects accept `include: [milestones, components, labels, members]` and fetch
+Projects accept `include: [milestones, components, labels, members, owners, defaults]` and fetch
 only the selected related collections. Milestones accept `include: [issues]`;
 `issues_limit` defaults to 20 and caps at 100, with `issuesCount` and
 `issuesTruncated` in the result.
@@ -833,8 +864,9 @@ the [release validation matrix](docs/RELEASE_VALIDATION.md) records the regressi
 | Label | `create_label` | `get_label` | `list_labels` | `update_label` | `delete_label` |
 | Component | `create_component` | `get_component` | `list_components` | `update_component` | `delete_component` |
 | Milestone | `create_milestone` | `get_milestone` | `list_milestones` | `update_milestone` | `delete_milestone` |
+| Issue Template | `create_issue_template` | `get_issue_template` | `list_issue_templates` | `update_issue_template` | `delete_issue_template` |
 | Comment | `add_comment` | `get_comment` | `list_comments` | `update_comment` | `delete_comment` |
-| Time Report | `log_time` | `get_time_report` | `list_time_reports` | -- | `delete_time_report` |
+| Time Report | `log_time` | `get_time_report` | `list_time_reports` | `update_time_report` | `delete_time_report` |
 | Member | -- | `get_member` | `list_members` | -- | -- |
 | Status | -- | `get_status` | `list_statuses` | -- | -- |
 | Task Type | -- | `get_task_type` | `list_task_types` | -- | -- |

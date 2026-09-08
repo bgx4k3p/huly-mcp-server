@@ -71,7 +71,7 @@ function normalizeIncludeSet(value, allowed, name = 'include') {
   return result;
 }
 
-const PROJECT_INCLUDE_FIELDS = Object.freeze(['milestones', 'components', 'labels', 'members']);
+const PROJECT_INCLUDE_FIELDS = Object.freeze(['milestones', 'components', 'labels', 'members', 'owners', 'defaults']);
 const MILESTONE_INCLUDE_FIELDS = Object.freeze(['issues']);
 
 /**
@@ -987,6 +987,103 @@ export class HulyClient {
     return found._id;
   }
 
+  async _resolveCollaboratorMembers(client, names) {
+    return this._resolveAccountMembers(client, names, 'collaborators');
+  }
+
+  async _resolveAccountMembers(client, names, field) {
+    if (!Array.isArray(names)) throw new Error(`${field} must be an array`);
+
+    const requested = names.map((name) => {
+      if (typeof name !== 'string' || name.trim() === '') {
+        throw new Error(`${field} must contain non-empty member names or account UUIDs`);
+      }
+      return name.trim();
+    });
+    if (requested.length === 0) return [];
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const resolved = [];
+
+    for (const name of requested) {
+      const matches = employees.filter(employee =>
+        employee.name?.trim().toLowerCase() === name.toLowerCase() || employee.personUuid === name
+      );
+      if (matches.length > 1) throw new Error(`Ambiguous ${field} member: ${name}; use an account UUID`);
+      const member = matches[0];
+      if (!member) throw new Error(`${field === 'collaborators' ? 'Collaborator' : 'Member'} not found: ${name}`);
+      if (!member.personUuid) {
+        throw new Error(`${field} member "${member.name}" has no account UUID`);
+      }
+      if (!resolved.some(item => item.account === member.personUuid)) {
+        resolved.push({ account: member.personUuid, name: member.name });
+      }
+    }
+
+    return resolved;
+  }
+
+  async _collaboratorsByObject(client, objectIds) {
+    const ids = [...new Set(objectIds.filter(Boolean))];
+    const result = new Map(ids.map(id => [id, []]));
+    if (ids.length === 0) return result;
+
+    const records = await client.findAll(core.class.Collaborator, {
+      attachedTo: { $in: ids }
+    });
+    if (records.length === 0) return result;
+
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const employeeByAccount = new Map(
+      employees.filter(employee => employee.personUuid)
+        .map(employee => [employee.personUuid, employee])
+    );
+    for (const record of records) {
+      if (!result.has(record.attachedTo)) continue;
+      const employee = employeeByAccount.get(record.collaborator);
+      result.get(record.attachedTo).push({
+        account: record.collaborator,
+        name: employee?.name ?? null
+      });
+    }
+    for (const collaborators of result.values()) {
+      collaborators.sort((a, b) => (a.name ?? a.account).localeCompare(b.name ?? b.account));
+    }
+    return result;
+  }
+
+  async _syncCollaborators(client, object, names) {
+    const desired = await this._resolveCollaboratorMembers(client, names);
+    const desiredAccounts = new Set(desired.map(item => item.account));
+    const existing = await client.findAll(core.class.Collaborator, { attachedTo: object._id });
+    const existingAccounts = new Set(existing.map(item => item.collaborator));
+
+    for (const collaborator of desired) {
+      if (existingAccounts.has(collaborator.account)) continue;
+      await client.addCollection(
+        core.class.Collaborator,
+        object.space,
+        object._id,
+        object._class,
+        'collaborators',
+        { collaborator: collaborator.account }
+      );
+    }
+
+    for (const collaborator of existing) {
+      if (desiredAccounts.has(collaborator.collaborator)) continue;
+      await client.removeCollection(
+        core.class.Collaborator,
+        collaborator.space,
+        collaborator._id,
+        collaborator.attachedTo,
+        collaborator.attachedToClass,
+        collaborator.collection
+      );
+    }
+
+    return desired;
+  }
+
   async _findMilestoneByName(client, projectId, name) {
     const ms = await client.findOne(tracker.class.Milestone, {
       space: projectId,
@@ -1179,6 +1276,20 @@ export class HulyClient {
 
   // ── Public API ────────────────────────────────────────────
 
+  async _projectDefaults(client, project) {
+    const [assignee, status] = await Promise.all([
+      project.defaultAssignee
+        ? client.findOne(contactPlugin.mixin.Employee, { _id: project.defaultAssignee }) : null,
+      project.defaultIssueStatus
+        ? client.findOne(tracker.class.IssueStatus, { _id: project.defaultIssueStatus }) : null
+    ]);
+    return {
+      defaultAssignee: assignee?.name ?? null,
+      defaultIssueStatus: status?.name ?? null,
+      defaultTimeReportDay: project.defaultTimeReportDay ?? null
+    };
+  }
+
   /**
    * List all projects with issue counts.
    * @returns {Promise<Object[]>}
@@ -1196,7 +1307,7 @@ export class HulyClient {
     const page = this._cursoredFindAll(projects, { ...options, cursorScope });
     const selectedProjects = page.items;
     const projectIds = selectedProjects.map(project => project._id);
-    const needsEmployees = include.has('members') || include.has('components');
+    const needsEmployees = include.has('members') || include.has('owners') || include.has('components');
     const [allMilestones, allComponents, allLabels, employees] = await Promise.all([
       include.has('milestones') && projectIds.length > 0
         ? client.findAll(tracker.class.Milestone, { space: { $in: projectIds } })
@@ -1212,6 +1323,9 @@ export class HulyClient {
         : []
     ]);
     const employeeMap = new Map(employees.map(employee => [employee._id, employee.name]));
+    const accountMap = new Map(employees.filter(e => e.personUuid).map(e => [e.personUuid, e.name]));
+    const defaults = include.has('defaults')
+      ? await Promise.all(selectedProjects.map(project => this._projectDefaults(client, project))) : [];
     const milestonesByProject = new Map();
     for (const milestone of allMilestones) {
       if (!milestonesByProject.has(milestone.space)) milestonesByProject.set(milestone.space, []);
@@ -1223,7 +1337,7 @@ export class HulyClient {
       componentsByProject.get(component.space).push(component);
     }
 
-    const items = selectedProjects.map(project => {
+    const items = selectedProjects.map((project, index) => {
       const base = {
         id: project._id,
         identifier: project.identifier,
@@ -1260,9 +1374,10 @@ export class HulyClient {
       }
       if (include.has('members')) {
         base.members = (project.members || [])
-          .map(memberId => employeeMap.get(memberId))
-          .filter(Boolean);
+          .map(account => accountMap.get(account) ?? account);
       }
+      if (include.has('owners')) base.owners = (project.owners || []).map(account => accountMap.get(account) ?? account);
+      if (include.has('defaults')) Object.assign(base, defaults[index]);
       return withExtra(project, base);
     });
     return listEnvelope(items, page.nextCursor);
@@ -1302,7 +1417,7 @@ export class HulyClient {
       return withExtra(project, base);
     }
 
-    const needsEmployees = include.has('members') || include.has('components');
+    const needsEmployees = include.has('members') || include.has('owners') || include.has('components');
     const [milestones, components, allLabels, employees] = await Promise.all([
       include.has('milestones') ? client.findAll(tracker.class.Milestone, { space: project._id }) : [],
       include.has('components') ? client.findAll(tracker.class.Component, { space: project._id }) : [],
@@ -1313,6 +1428,7 @@ export class HulyClient {
     ]);
 
     const employeeMap = new Map(employees.map(e => [e._id, e.name]));
+    const accountMap = new Map(employees.filter(e => e.personUuid).map(e => [e.personUuid, e.name]));
 
     if (include.has('milestones')) base.milestones = milestones.map(m => ({
       name: m.label,
@@ -1329,8 +1445,10 @@ export class HulyClient {
       color: t.color ?? null
     }));
     if (include.has('members')) {
-      base.members = (project.members || []).map(mId => employeeMap.get(mId)).filter(Boolean);
+      base.members = (project.members || []).map(account => accountMap.get(account) ?? account);
     }
+    if (include.has('owners')) base.owners = (project.owners || []).map(account => accountMap.get(account) ?? account);
+    if (include.has('defaults')) Object.assign(base, await this._projectDefaults(client, project));
 
     return withExtra(project, base);
   }
@@ -1984,17 +2102,23 @@ export class HulyClient {
     }
 
     if (extra.assignee !== undefined) {
-      updates.assignee = await this._findEmployeeByName(client, extra.assignee);
+      updates.assignee = extra.assignee.trim() === ''
+        ? null
+        : await this._findEmployeeByName(client, extra.assignee);
       updatedFields.push('assignee');
     }
 
     if (extra.component !== undefined) {
-      updates.component = await this._findComponentByName(client, project._id, extra.component);
+      updates.component = extra.component.trim() === ''
+        ? null
+        : await this._findComponentByName(client, project._id, extra.component);
       updatedFields.push('component');
     }
 
     if (extra.milestone !== undefined) {
-      updates.milestone = await this._findMilestoneByName(client, project._id, extra.milestone);
+      updates.milestone = extra.milestone.trim() === ''
+        ? null
+        : await this._findMilestoneByName(client, project._id, extra.milestone);
       updatedFields.push('milestone');
     }
 
@@ -2248,6 +2372,53 @@ export class HulyClient {
   }
 
   /**
+   * Remove a bidirectional "related to" relationship between two issues.
+   * Repairs a partially written relationship by removing whichever side exists.
+   * @param {string} issueId - Issue identifier
+   * @param {string} relatedToIssueId - Related issue identifier
+   * @returns {Promise<Object>}
+   */
+  async removeRelation(issueId, relatedToIssueId) {
+    const client = await this._getClient();
+
+    const { project, issue } = await this._parseAndFindIssue(client, issueId);
+    const { project: relatedProject, issue: relatedIssue } =
+      await this._parseAndFindIssue(client, relatedToIssueId);
+
+    const currentRelations = issue.relations || [];
+    const relatedRelations = relatedIssue.relations || [];
+    const remainingRelations = currentRelations.filter(r => r._id !== relatedIssue._id);
+    const remainingRelatedRelations = relatedRelations.filter(r => r._id !== issue._id);
+    const removedSource = remainingRelations.length !== currentRelations.length;
+    const removedTarget = remainingRelatedRelations.length !== relatedRelations.length;
+
+    if (!removedSource && !removedTarget) {
+      return {
+        message: `Issues are not related: ${issueId} ↔ ${relatedToIssueId}`,
+        issueId,
+        relatedIssueId: relatedToIssueId
+      };
+    }
+
+    if (removedSource) {
+      await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
+        relations: remainingRelations
+      });
+    }
+    if (removedTarget) {
+      await client.updateDoc(tracker.class.Issue, relatedProject._id, relatedIssue._id, {
+        relations: remainingRelatedRelations
+      });
+    }
+
+    return {
+      message: `Removed relation: ${issueId} ↔ ${relatedToIssueId}`,
+      issueId,
+      relatedIssueId: relatedToIssueId
+    };
+  }
+
+  /**
    * Add a "blocked by" dependency between two issues.
    * @param {string} issueId - Issue that is blocked
    * @param {string} blockedByIssueId - The blocking issue
@@ -2276,6 +2447,39 @@ export class HulyClient {
       message: `Added dependency: ${issueId} is now blocked by ${blockedByIssueId}`,
       issueId,
       blockedByIssueId
+    };
+  }
+
+  /**
+   * Remove a "blocked by" dependency from an issue.
+   * @param {string} issueId - Issue that is blocked
+   * @param {string} blockerIssueId - The blocking issue
+   * @returns {Promise<Object>}
+   */
+  async removeBlockedBy(issueId, blockerIssueId) {
+    const client = await this._getClient();
+
+    const { project, issue } = await this._parseAndFindIssue(client, issueId);
+    const { issue: blockingIssue } = await this._parseAndFindIssue(client, blockerIssueId);
+    const currentBlockedBy = issue.blockedBy || [];
+    const remainingBlockedBy = currentBlockedBy.filter(r => r._id !== blockingIssue._id);
+
+    if (remainingBlockedBy.length === currentBlockedBy.length) {
+      return {
+        message: `${issueId} is not blocked by ${blockerIssueId}`,
+        issueId,
+        blockerIssueId
+      };
+    }
+
+    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
+      blockedBy: remainingBlockedBy
+    });
+
+    return {
+      message: `Removed dependency: ${issueId} is no longer blocked by ${blockerIssueId}`,
+      issueId,
+      blockerIssueId
     };
   }
 
@@ -2635,6 +2839,10 @@ export class HulyClient {
       }
     }
 
+    const collaboratorsByMilestone = await this._collaboratorsByObject(
+      client,
+      selectedMilestones.map(milestone => milestone._id)
+    );
     const items = selectedMilestones.map(milestone => {
       const base = {
         id: milestone._id,
@@ -2644,7 +2852,8 @@ export class HulyClient {
         targetDate: milestone.targetDate
           ? new Date(milestone.targetDate).toISOString().split('T')[0]
           : null,
-        comments: milestone.comments || 0
+        comments: milestone.comments || 0,
+        collaborators: collaboratorsByMilestone.get(milestone._id) ?? []
       };
       if (include.has('issues')) {
         const projected = (issuesByMilestone.get(milestone._id) || []).map(issue => ({
@@ -2697,6 +2906,7 @@ export class HulyClient {
       milestone: milestone._id
     });
 
+    const collaboratorsByMilestone = await this._collaboratorsByObject(client, [milestone._id]);
     const base = {
       id: milestone._id,
       name: milestone.label,
@@ -2704,7 +2914,8 @@ export class HulyClient {
       status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
       targetDate: milestone.targetDate ? new Date(milestone.targetDate).toISOString().split('T')[0] : null,
       comments: milestone.comments || 0,
-      issueCount: issues.length
+      issueCount: issues.length,
+      collaborators: collaboratorsByMilestone.get(milestone._id) ?? []
     };
 
     if (include.has('issues')) {
@@ -2735,7 +2946,7 @@ export class HulyClient {
    * @param {string} [status] - Initial status
    * @returns {Promise<Object>}
    */
-  async createMilestone(projectIdent, name, description, targetDate, status, format) {
+  async createMilestone(projectIdent, name, description, targetDate, status, format, collaborators = []) {
     const client = await this._getClient();
 
     const project = await client.findOne(tracker.class.Project, {
@@ -2763,10 +2974,13 @@ export class HulyClient {
     let statusValue = 0;
     if (status) {
       const parsed = MILESTONE_STATUS_MAP[status.toLowerCase()];
-      if (parsed !== undefined) {
-        statusValue = parsed;
-      }
+      if (parsed === undefined) throw new Error(`Milestone status not found: ${status}`);
+      statusValue = parsed;
     }
+
+    // Resolve every collaborator before writing the milestone so an invalid
+    // member cannot leave behind a partially-created object.
+    const resolvedCollaborators = await this._resolveCollaboratorMembers(client, collaborators);
 
     const milestoneId = generateId();
     await client.createDoc(tracker.class.Milestone, project._id, {
@@ -2778,13 +2992,30 @@ export class HulyClient {
       attachments: 0
     }, milestoneId);
 
+    try {
+      for (const collaborator of resolvedCollaborators) {
+        await client.addCollection(
+          core.class.Collaborator,
+          project._id,
+          milestoneId,
+          tracker.class.Milestone,
+          'collaborators',
+          { collaborator: collaborator.account }
+        );
+      }
+    } catch (error) {
+      await client.removeDoc(tracker.class.Milestone, project._id, milestoneId);
+      throw error;
+    }
+
     return {
       message: `Milestone "${name}" created`,
       id: milestoneId,
       name,
       description: description || '',
       status: MILESTONE_STATUS_NAMES[statusValue],
-      targetDate: new Date(targetTimestamp).toISOString().split('T')[0]
+      targetDate: new Date(targetTimestamp).toISOString().split('T')[0],
+      collaborators: resolvedCollaborators
     };
   }
 
@@ -3634,13 +3865,176 @@ export class HulyClient {
     };
   }
 
-  /**
-   * Create a batch of issues from a template definition.
-   * @param {string} projectIdent - Project identifier
-   * @param {string} templateName - Template name (determines the structure)
-   * @param {Object} [params] - Template parameters (e.g., { featureName, epicTitle })
-   * @returns {Promise<Object>}
-   */
+  // ── Persistent Issue Templates ─────────────────────────────
+  async _templateProject(client, projectIdent) {
+    const project = await client.findOne(tracker.class.Project, { identifier: projectIdent.toUpperCase() });
+    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    return project;
+  }
+
+  async _findIssueTemplate(client, project, templateId) {
+    const template = await client.findOne(tracker.class.IssueTemplate, { _id: templateId, space: project._id });
+    if (!template) throw new Error(`Issue template not found in ${project.identifier}: ${templateId}`);
+    return template;
+  }
+
+  async _templateData(client, project, input, create = false) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error('Template fields must be an object');
+    }
+    const data = create ? {
+      title: '', description: toMarkup(''), priority: 0, assignee: null,
+      component: null, milestone: null, estimation: 0, labels: []
+    } : {};
+    if (create || input.title !== undefined) {
+      if (typeof input.title !== 'string' || !input.title.trim()) throw new Error('Template title must not be empty');
+      data.title = input.title.trim();
+    }
+    if (input.description !== undefined) data.description = toMarkup(input.description, input.descriptionFormat);
+    if (input.priority !== undefined) {
+      const priority = PRIORITY_MAP[input.priority.toLowerCase()];
+      if (priority === undefined) throw new Error(`Unknown template priority: ${input.priority}`);
+      data.priority = priority;
+    }
+    if (input.estimation !== undefined) data.estimation = parseHours(input.estimation, 'estimation');
+    for (const [field, resolve] of [
+      ['assignee', value => this._findEmployeeByName(client, value)],
+      ['component', value => this._findComponentByName(client, project._id, value)],
+      ['milestone', value => this._findMilestoneByName(client, project._id, value)]
+    ]) {
+      if (input[field] !== undefined) data[field] = input[field].trim() === '' ? null : await resolve(input[field]);
+    }
+    if (input.type !== undefined) {
+      data.kind = input.type.trim() === '' ? await this._getDefaultTaskType(client, project)
+        : await this._findTaskTypeByName(client, project.identifier, input.type);
+    }
+    if (input.labels !== undefined) {
+      if (!Array.isArray(input.labels)) throw new Error('Template labels must be an array');
+      data.labels = [];
+      for (const name of input.labels) {
+        const label = await this._findLabelByName(client, name);
+        if (!label) throw new Error(`Label not found: ${name}`);
+        if (!data.labels.includes(label._id)) data.labels.push(label._id);
+      }
+    }
+    return data;
+  }
+
+  async _templateUpdates(client, project, input, create = false) {
+    const data = await this._templateData(client, project, input, create);
+    if (create || input.children !== undefined) {
+      const children = input.children === undefined ? [] : input.children;
+      if (!Array.isArray(children) || children.length > 50) {
+        throw new Error('Template children must be an array of at most 50 items');
+      }
+      const ids = new Set();
+      data.children = [];
+      for (const child of children) {
+        if (!child || typeof child !== 'object' || Array.isArray(child)) throw new Error('Child template must be an object');
+        const allowed = new Set(['id', 'title', 'description', 'descriptionFormat', 'priority', 'assignee',
+          'component', 'milestone', 'estimation', 'labels', 'type']);
+        for (const key of Object.keys(child)) {
+          if (!allowed.has(key)) throw new Error(`Unsupported child-template field: ${key}`);
+        }
+        const id = child.id ?? generateId();
+        if (typeof id !== 'string' || !id.trim() || ids.has(id)) throw new Error('Template child IDs must be non-empty and unique');
+        ids.add(id);
+        data.children.push({ ...await this._templateData(client, project, child, true), id });
+      }
+    }
+    if (create || input.relations !== undefined) {
+      const relations = input.relations === undefined ? [] : input.relations;
+      if (!Array.isArray(relations)) throw new Error('Template relations must be an array');
+      data.relations = [];
+      for (const relation of relations) {
+        if (!relation || typeof relation.id !== 'string' || !relation.id.trim() ||
+            typeof relation.objectClass !== 'string' || !relation.objectClass.trim()) {
+          throw new Error('Template relations require a non-empty id and objectClass');
+        }
+        const target = await client.findOne(relation.objectClass, { _id: relation.id });
+        if (!target) throw new Error(`Related document not found: ${relation.id}`);
+        if (!data.relations.some(r => r._id === target._id)) {
+          data.relations.push({ _id: target._id, _class: target._class });
+        }
+      }
+    }
+    return data;
+  }
+
+  async _readIssueTemplates(client, project, templates) {
+    if (templates.length === 0) return [];
+    const [employees, components, milestones, labels, types] = await Promise.all([
+      client.findAll(contactPlugin.mixin.Employee, {}),
+      client.findAll(tracker.class.Component, { space: project._id }),
+      client.findAll(tracker.class.Milestone, { space: project._id }),
+      client.findAll(tags.class.TagElement, { targetClass: tracker.class.Issue }),
+      client.findAll(task.class.TaskType, {})
+    ]);
+    const maps = [employees, components, milestones, labels, types].map(docs => new Map(docs.map(doc => [doc._id, doc])));
+    const read = doc => ({
+      title: doc.title, description: fromMarkup(doc.description),
+      priority: strictGet(PRIORITY_NAMES, doc.priority, 'Priority'),
+      assignee: doc.assignee ? maps[0].get(doc.assignee)?.name ?? doc.assignee : null,
+      component: doc.component ? maps[1].get(doc.component)?.label ?? doc.component : null,
+      milestone: doc.milestone ? maps[2].get(doc.milestone)?.label ?? doc.milestone : null,
+      estimation: toHours(doc.estimation),
+      labels: (doc.labels ?? []).map(id => maps[3].get(id)?.title ?? id),
+      type: doc.kind ? maps[4].get(doc.kind)?.name ?? doc.kind : null
+    });
+    return templates.map(template => withExtra(template, {
+      id: template._id, project: project.identifier, ...read(template),
+      children: (template.children ?? []).map(child => ({ id: child.id, ...read(child) })),
+      relations: (template.relations ?? []).map(r => ({ id: r._id, objectClass: r._class })),
+      comments: template.comments ?? 0, attachments: template.attachments ?? 0
+    }));
+  }
+
+  async listIssueTemplates(projectIdent, options = {}) {
+    const client = await this._getClient();
+    const project = await this._templateProject(client, projectIdent);
+    const templates = await client.findAll(tracker.class.IssueTemplate, { space: project._id });
+    const page = this._cursoredFindAll(templates, {
+      ...options, cursorScope: { workspace: this.workspace, tool: 'list_issue_templates', project: project.identifier }
+    });
+    return listEnvelope(await this._readIssueTemplates(client, project, page.items), page.nextCursor);
+  }
+
+  async getIssueTemplate(projectIdent, templateId) {
+    const client = await this._getClient();
+    const project = await this._templateProject(client, projectIdent);
+    const template = await this._findIssueTemplate(client, project, templateId);
+    return (await this._readIssueTemplates(client, project, [template]))[0];
+  }
+
+  async createIssueTemplate(projectIdent, input = {}) {
+    const client = await this._getClient();
+    const project = await this._templateProject(client, projectIdent);
+    const data = await this._templateUpdates(client, project, input, true);
+    const id = generateId();
+    await client.createDoc(tracker.class.IssueTemplate, project._id, { ...data, comments: 0, attachments: 0 }, id);
+    return { id, project: project.identifier, title: data.title };
+  }
+
+  async updateIssueTemplate(projectIdent, templateId, input = {}) {
+    const client = await this._getClient();
+    const project = await this._templateProject(client, projectIdent);
+    const template = await this._findIssueTemplate(client, project, templateId);
+    const data = await this._templateUpdates(client, project, input);
+    if (Object.keys(data).length > 0) {
+      await client.updateDoc(tracker.class.IssueTemplate, project._id, template._id, data);
+    }
+    return { id: template._id, updated: Object.keys(data).map(key => key === 'kind' ? 'type' : key) };
+  }
+
+  async deleteIssueTemplate(projectIdent, templateId) {
+    const client = await this._getClient();
+    const project = await this._templateProject(client, projectIdent);
+    const template = await this._findIssueTemplate(client, project, templateId);
+    await client.removeDoc(tracker.class.IssueTemplate, project._id, template._id);
+    return { id: template._id, message: `Issue template "${template.title}" deleted` };
+  }
+
+  /** Create issues using the predefined convenience workflow generators. */
   async createIssuesFromTemplate(projectIdent, templateName, params = {}) {
     const client = await this._getClient();
     const templates = {
@@ -3767,7 +4161,7 @@ export class HulyClient {
     return projectTypes.filter(pt => (pt.tasks ?? []).some(id => trackerTaskTypeIds.has(id)));
   }
 
-  async createProject(identifier, name, description, isPrivate = false, projectType) {
+  async createProject(identifier, name, description, isPrivate = false, projectType, options = {}) {
     const client = await this._getClient();
 
     identifier = identifier.toUpperCase();
@@ -3827,8 +4221,13 @@ export class HulyClient {
     // Huly's project creation flow always makes the creator both a member and
     // an owner. Private spaces are invisible when owners is populated but
     // members is empty.
-    const members = [this._accountUuid];
-    const owners = [this._accountUuid];
+    const access = await this._projectUpdateFields(client, {
+      identifier, type: resolvedProjectType._id, private: isPrivate,
+      members: [this._accountUuid], owners: [this._accountUuid]
+    }, options);
+    // A newly created project must remain accessible to its creator.
+    const members = [...new Set([this._accountUuid, ...(access.members ?? []), ...(access.owners ?? [])])];
+    const owners = [...new Set([this._accountUuid, ...(access.owners ?? [])])];
 
     const projectId = generateId();
     let projectCreated = false;
@@ -3839,14 +4238,15 @@ export class HulyClient {
         name: name || identifier,
         description: description || '',
         private: isPrivate,
-        members,
-        owners,
         archived: false,
         autoJoin: !isPrivate,
         sequence: 0,
         defaultIssueStatus: defaultStatusId,
-        defaultTimeReportDay: 0,
-        type: resolvedProjectType._id
+        defaultTimeReportDay: 'CurrentWorkDay',
+        type: resolvedProjectType._id,
+        ...access,
+        members,
+        owners
       }, projectId);
       projectCreated = true;
 
@@ -3908,7 +4308,7 @@ export class HulyClient {
   }
 
   /**
-   * Update a project's name, description, default assignee, or privacy.
+   * Update project fields, defaults, membership, or ownership.
    * @param {string} projectIdent - Project identifier
    * @param {Object} updates - Fields to update
    * @returns {Promise<Object>}
@@ -3920,23 +4320,36 @@ export class HulyClient {
     });
     if (!project) throw new Error(`Project not found: ${projectIdent}`);
 
-    const ops = {};
+    const ops = await this._projectUpdateFields(client, project, updates);
     if (updates.name !== undefined) ops.name = updates.name;
     if (updates.description !== undefined) ops.description = updates.description;
     if (updates.isPrivate !== undefined) ops.private = updates.isPrivate;
-    if (updates.defaultAssignee !== undefined) {
-      if (updates.defaultAssignee === '') {
-        ops.defaultAssignee = null;
-      } else {
-        ops.defaultAssignee = await this._findEmployeeByName(client, updates.defaultAssignee);
-      }
-    }
 
     if (Object.keys(ops).length === 0) {
       return { message: 'No updates specified', identifier: project.identifier };
     }
 
-    await client.updateDoc(tracker.class.Project, project.space || project._id, project._id, ops);
+    const removed = new Set((project.members ?? []).filter(account => ops.members && !ops.members.includes(account)));
+    const projectType = removed.size > 0 && project.type
+      ? await client.findOne(task.class.ProjectType, { _id: project.type }) : null;
+    const roleUpdates = {};
+    if (projectType?.targetClass) {
+      const roles = await client.findAll(core.class.Role, { attachedTo: project.type });
+      const assignments = project[projectType.targetClass] ?? {};
+      for (const role of roles) {
+        const assigned = assignments[role._id] ?? [];
+        const remaining = assigned.filter(account => !removed.has(account));
+        if (remaining.length !== assigned.length) roleUpdates[role._id] = remaining;
+      }
+    }
+    if (Object.keys(roleUpdates).length > 0) {
+      const transaction = client.apply(project._id);
+      await transaction.updateDoc(tracker.class.Project, project.space, project._id, ops);
+      await transaction.updateMixin(project._id, tracker.class.Project, project.space, projectType.targetClass, roleUpdates);
+      if (!(await transaction.commit()).result) throw new Error('Project membership update failed');
+    } else {
+      await client.updateDoc(tracker.class.Project, project.space || project._id, project._id, ops);
+    }
 
     return {
       message: `Project ${projectIdent} updated`,
@@ -3945,27 +4358,57 @@ export class HulyClient {
     };
   }
 
+  async _projectUpdateFields(client, project, updates) {
+    const ops = {};
+    if (updates.defaultAssignee !== undefined) {
+      ops.defaultAssignee = updates.defaultAssignee.trim() === '' ? null
+        : await this._findEmployeeByName(client, updates.defaultAssignee);
+    }
+    if (updates.defaultIssueStatus !== undefined) {
+      const kind = await this._getDefaultTaskType(client, project);
+      const statuses = await this._getScopedStatuses(client, project, kind);
+      const status = statuses.find(s => s._id === updates.defaultIssueStatus || nameMatch(s.name, updates.defaultIssueStatus));
+      if (!status) throw new Error(`Default issue status not found in project workflow: ${updates.defaultIssueStatus}`);
+      ops.defaultIssueStatus = status._id;
+    }
+    if (updates.defaultTimeReportDay !== undefined) {
+      if (!['CurrentWorkDay', 'PreviousWorkDay'].includes(updates.defaultTimeReportDay)) {
+        throw new Error('defaultTimeReportDay must be CurrentWorkDay or PreviousWorkDay');
+      }
+      ops.defaultTimeReportDay = updates.defaultTimeReportDay;
+    }
+    for (const field of ['members', 'owners']) {
+      if (updates[field] !== undefined) {
+        ops[field] = (await this._resolveAccountMembers(client, updates[field], field)).map(member => member.account);
+      }
+    }
+    if (ops.owners !== undefined && ops.members === undefined) {
+      ops.members = [...new Set([...(project.members ?? []), ...ops.owners])];
+    }
+    if (ops.members !== undefined || ops.owners !== undefined || updates.isPrivate !== undefined) {
+      const members = ops.members ?? project.members ?? [];
+      const owners = ops.owners ?? project.owners ?? [];
+      if (owners.length === 0) throw new Error('A project must retain at least one owner');
+      if ((updates.isPrivate ?? project.private) && !owners.some(owner => members.includes(owner))) {
+        throw new Error('A private project must retain an owner who is also a member');
+      }
+    }
+    return ops;
+  }
+
   async archiveProject(projectIdent, archived = true) {
     const client = await this._getClient();
     const project = await client.findOne(tracker.class.Project, {
       identifier: projectIdent.toUpperCase()
-    });
+    }, { showArchived: true });
     if (!project) throw new Error(`Project not found: ${projectIdent}`);
 
     await client.updateDoc(tracker.class.Project, project.space || project._id, project._id, {
       archived
     });
 
-    // Archiving is one-way: Huly filters archived spaces out of every client
-    // query, so this project can no longer be looked up by identifier and the
-    // `archived: false` path can never find it again. The internal id is the
-    // only remaining handle, so return it explicitly.
     return {
-      message: archived
-        ? `Project ${projectIdent} archived. This is ONE-WAY: the project is now `
-          + 'unreachable through every tool. Keep the id below — only the Huly web '
-          + 'UI can restore it.'
-        : `Project ${projectIdent} unarchived`,
+      message: archived ? `Project ${projectIdent} archived` : `Project ${projectIdent} unarchived`,
       identifier: project.identifier,
       id: project._id,
       archived
@@ -4038,18 +4481,31 @@ export class HulyClient {
       updatedFields.push('targetDate');
     }
 
+    // Validate collaborator identities before applying any ordinary milestone
+    // fields so a bad member name cannot cause a partial update.
+    if (updates.collaborators !== undefined) {
+      await this._resolveCollaboratorMembers(client, updates.collaborators);
+    }
+
     if (Object.keys(docUpdates).length > 0) {
       await client.updateDoc(tracker.class.Milestone, project._id, milestone._id, docUpdates);
+    }
+
+    let collaborators;
+    if (updates.collaborators !== undefined) {
+      collaborators = await this._syncCollaborators(client, milestone, updates.collaborators);
+      updatedFields.push('collaborators');
     }
 
     return {
       id: milestone._id,
       name: docUpdates.label || milestone.label,
-      updated: updatedFields
+      updated: updatedFields,
+      ...(collaborators !== undefined ? { collaborators } : {})
     };
   }
 
-  async deleteMilestone(projectIdent, name) {
+  async deleteMilestone(projectIdent, name, moveIssuesTo) {
     const client = await this._getClient();
     const project = await client.findOne(tracker.class.Project, {
       identifier: projectIdent.toUpperCase()
@@ -4060,11 +4516,26 @@ export class HulyClient {
     const milestone = milestones.find(m => nameMatch(m.label, name));
     if (!milestone) throw new Error(`Milestone not found: ${name}`);
 
+    let targetMilestone = null;
+    if (moveIssuesTo && moveIssuesTo.trim() !== '') {
+      targetMilestone = milestones.find(m => m._id !== milestone._id && nameMatch(m.label, moveIssuesTo));
+      if (!targetMilestone) throw new Error(`Milestone not found: ${moveIssuesTo}`);
+    }
+
+    const issues = await client.findAll(tracker.class.Issue, { milestone: milestone._id });
+    for (const issue of issues) {
+      await client.updateDoc(tracker.class.Issue, issue.space, issue._id, {
+        milestone: targetMilestone?._id ?? null
+      });
+    }
+
     await client.removeDoc(tracker.class.Milestone, project._id, milestone._id);
 
     return {
       message: `Milestone "${name}" deleted from ${projectIdent}`,
-      id: milestone._id
+      id: milestone._id,
+      issuesMoved: issues.length,
+      movedTo: targetMilestone?.label ?? null
     };
   }
 
@@ -4201,11 +4672,14 @@ export class HulyClient {
       attachedTo: issue._id
     }, { sort: { date: -1 } });
 
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const employeeMap = new Map(employees.map(employee => [employee._id, employee.name]));
     const enriched = reports.map(r => withExtra(r, {
       id: r._id,
       hours: toHours(r.value),
       description: fromMarkup(r.description),
-      date: toIsoDate(r.date)
+      date: toIsoDate(r.date),
+      employee: r.employee ? employeeMap.get(r.employee) ?? null : null
     }));
     return this._cursoredFindAll(enriched, {
       ...options,
@@ -4229,6 +4703,50 @@ export class HulyClient {
       id: reportId,
       hours: toHours(report.value)
     };
+  }
+
+  async updateTimeReport(issueId, reportId, updates = {}) {
+    const client = await this._getClient();
+    const { issue } = await this._parseAndFindIssue(client, issueId);
+    const report = await client.findOne(tracker.class.TimeSpendReport, { _id: reportId });
+    if (!report || report.attachedTo !== issue._id) {
+      throw new Error(`Time report not found on ${issueId}: ${reportId}`);
+    }
+    const docUpdates = {};
+    const updatedFields = [];
+    if (updates.hours !== undefined) {
+      docUpdates.value = parseHours(updates.hours);
+      updatedFields.push('hours');
+    }
+    if (updates.description !== undefined) {
+      docUpdates.description = updates.description;
+      updatedFields.push('description');
+    }
+    if (updates.date !== undefined) {
+      docUpdates.date = normalizeReportDate(updates.date);
+      updatedFields.push('date');
+    }
+    if (updates.employee !== undefined) {
+      docUpdates.employee = updates.employee.trim() === ''
+        ? null
+        : await this._findEmployeeByName(client, updates.employee);
+      updatedFields.push('employee');
+    }
+
+    if (Object.keys(docUpdates).length > 0) {
+      // TimeSpendReport is an AttachedDoc. Updating it through its collection
+      // transaction is what runs Huly's parent reportedTime maintenance.
+      await client.updateCollection(
+        tracker.class.TimeSpendReport,
+        report.space,
+        report._id,
+        report.attachedTo,
+        report.attachedToClass,
+        report.collection,
+        docUpdates
+      );
+    }
+    return { id: reportId, issueId, updated: updatedFields };
   }
 
   // ── Comment Management ──────────────────────────────────────
@@ -4435,16 +4953,25 @@ export class HulyClient {
    */
   async getTimeReport(issueId, reportId) {
     const client = await this._getClient();
-    await this._parseAndFindIssue(client, issueId);
+    const { issue } = await this._parseAndFindIssue(client, issueId);
 
     const report = await client.findOne(tracker.class.TimeSpendReport, { _id: reportId });
-    if (!report) throw new Error(`Time report not found: ${reportId}`);
+    if (!report || report.attachedTo !== issue._id) {
+      throw new Error(`Time report not found on ${issueId}: ${reportId}`);
+    }
+
+    let employee = null;
+    if (report.employee) {
+      const employeeDoc = await client.findOne(contactPlugin.mixin.Employee, { _id: report.employee });
+      employee = employeeDoc?.name ?? null;
+    }
 
     return withExtra(report, {
       id: report._id,
       hours: toHours(report.value),
       description: fromMarkup(report.description),
-      date: toIsoDate(report.date)
+      date: toIsoDate(report.date),
+      employee
     });
   }
 }

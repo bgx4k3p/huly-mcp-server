@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### SDK capability gaps closed
+
+- Added persistent Huly issue-template CRUD, covering embedded child templates,
+  related documents, labels, task types, and descriptions validated against the
+  Huly editor schema. The existing predefined issue generators are unchanged.
+- Project creation and updates now accept members, owners, default assignee,
+  default issue status, and default time-report day. New `owners` and `defaults`
+  read expansions expose the corresponding values. Membership reads now resolve
+  Huly account UUIDs correctly, and removing members clears their project-role
+  assignments. Private-project ownership constraints are validated before writing.
+- Milestones now round-trip collaborator members through attached Huly
+  `Collaborator` collection records. `create_milestone` accepts collaborators,
+  `update_milestone` replaces or clears the complete set, and milestone reads
+  resolve the stored account UUIDs back to member names.
+- Added `update_time_report` for every SDK-editable report field, added
+  employee attribution to time-report reads, and atomically keeps the parent
+  issue's reported-time aggregate in sync when hours change.
+- Added `get_issue_history`, exposing the existing client history path that had
+  no MCP route.
+- `update_issue` now clears assignee, component, and milestone references when
+  their arguments are empty.
+- `batch_create_issues` now advertises component, milestone, due date,
+  estimation, and description format—the fields its implementation already
+  accepted and its documentation claimed.
+- `archive_project` now uses the SDK's `showArchived` query option, making
+  `archived: false` a working restore operation.
+- Deleting a milestone now clears affected issue references by default or moves
+  them to the optional replacement milestone before deletion.
+
+### Correctable issue relationships
+
+- Added `remove_relation`, which removes both sides of a related-issue link and
+  repairs a partially written one-sided link.
+- Added `remove_blocked_by`, which removes a dependency from the blocked issue.
+- Both removals are idempotent and report a clear no-op when the requested edge
+  is absent.
+
 ## 3.0.3 - 2026-09-02
 
 Three defects that all produced the same symptom — a description or comment that

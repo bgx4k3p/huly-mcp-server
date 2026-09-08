@@ -102,6 +102,26 @@ describe('createMilestone validation', () => {
 });
 
 describe('project and task-type lookups', () => {
+  it('uses the SDK archived-space override so archive_project can restore a project', async () => {
+    const calls = [];
+    const sdk = {
+      findOne: async (ref, query, options) => {
+        calls.push({ op: 'findOne', ref: String(ref), query, options });
+        return { ...PROJECT, space: 'core:space:Space', archived: true };
+      },
+      updateDoc: async (ref, space, id, data) => {
+        calls.push({ op: 'updateDoc', ref: String(ref), space, id, data });
+      }
+    };
+    const client = new HulyClient({ url: 'https://huly.example.test', token: 't', workspace: 'w' });
+    client._getClient = async () => sdk;
+
+    await client.archiveProject('PROJ', false);
+
+    assert.deepEqual(calls[0].options, { showArchived: true });
+    assert.deepEqual(calls[1].data, { archived: false });
+  });
+
   it('refuses to create a project whose identifier is taken', async () => {
     const { client, calls } = harness({ projects: [PROJECT] });
     await assert.rejects(

@@ -90,8 +90,8 @@ function createHarness(seed = {}) {
 function projectFixtures() {
   return [
     { _id: 'tracker:project:DefaultProject', space: SPACE, identifier: 'START', name: 'Start', type: 'pt-alpha', createdOn: 3 },
-    { _id: 'alpha-space', space: SPACE, identifier: 'ALPHA', name: 'Alpha', type: 'pt-alpha', members: ['emp-1'], createdOn: 2 },
-    { _id: 'beta-space', space: SPACE, identifier: 'BETA', name: 'Beta', type: 'pt-beta', members: [], createdOn: 1 }
+    { _id: 'alpha-space', space: SPACE, identifier: 'ALPHA', name: 'Alpha', type: 'pt-alpha', members: ['account-1'], owners: ['account-1'], createdOn: 2 },
+    { _id: 'beta-space', space: SPACE, identifier: 'BETA', name: 'Beta', type: 'pt-beta', members: [], owners: ['account-1'], createdOn: 1 }
   ];
 }
 
@@ -274,7 +274,7 @@ describe('advertised taxonomy parameters reach the SDK', () => {
   it('resolves a default assignee by name and clears it on an empty string', async () => {
     const { client, calls } = createHarness({
       projects: projectFixtures(),
-      employees: [{ _id: 'emp-1', name: 'Ada Lovelace', active: true }]
+      employees: [{ _id: 'emp-1', personUuid: 'account-1', name: 'Ada Lovelace', active: true }]
     });
 
     await client.updateProject('ALPHA', { defaultAssignee: 'ada lovelace' });
@@ -408,7 +408,7 @@ describe('taxonomy filters fail closed', () => {
         { _id: 'comp-beta', space: 'beta-space', label: 'Web', lead: null, createdOn: 1 }
       ],
       milestones: [{ _id: 'ms-beta', space: 'beta-space', label: 'v3', status: 1, createdOn: 1 }],
-      employees: [{ _id: 'emp-1', name: 'Ada Lovelace', active: true }]
+      employees: [{ _id: 'emp-1', personUuid: 'account-1', name: 'Ada Lovelace', active: true }]
     });
 
     const page = await client.listProjects({ include: ['components', 'milestones', 'members'] });
