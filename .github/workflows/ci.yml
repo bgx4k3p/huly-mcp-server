@@ -18,6 +18,24 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: Require a version bump for publishable changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "${BASE_REF}"
+          if git diff --quiet "origin/${BASE_REF}" HEAD -- \
+            src package.json package-lock.json README.md CHANGELOG.md; then
+            exit 0
+          fi
+          BASE_VERSION=$(git show "origin/${BASE_REF}:package.json" | node -p \
+            "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          if [ "${CURRENT_VERSION}" = "${BASE_VERSION}" ]; then
+            echo "::error::Publishable files changed without a package version bump (${CURRENT_VERSION})."
+            exit 1
+          fi
+
       - name: Syntax check
         run: |
           node --check src/client.mjs

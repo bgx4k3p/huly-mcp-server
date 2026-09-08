@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 3.1.0 - 2026-09-08
 
 ### SDK capability gaps closed
 
@@ -40,6 +40,13 @@ All notable changes to this project are documented in this file.
 - Added `remove_blocked_by`, which removes a dependency from the blocked issue.
 - Both removals are idempotent and report a clear no-op when the requested edge
   is absent.
+
+### Dependency maintenance
+
+- Updated ESLint from 10.9.1 to 10.10.0 and refreshed compatible transitive
+  dependencies.
+- Updated `fast-uri` to 3.1.7 and `qs` to 6.16.0, removing the fixable high-
+  and moderate-severity advisories from the installed dependency tree.
 
 ## 3.0.3 - 2026-09-02
 
