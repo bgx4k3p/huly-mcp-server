@@ -878,6 +878,11 @@ const ACCOUNT_ROUTES = [
 ];
 
 const WORKSPACE_ROUTES = {
+  create_issue_template: 'createIssueTemplate',
+  get_issue_template: 'getIssueTemplate',
+  list_issue_templates: 'listIssueTemplates',
+  update_issue_template: 'updateIssueTemplate',
+  delete_issue_template: 'deleteIssueTemplate',
   list_projects: 'listProjects',
   get_project: 'getProject',
   list_issues: 'listIssues',
@@ -887,6 +892,7 @@ const WORKSPACE_ROUTES = {
   delete_issue: 'deleteIssue',
   search_issues: 'searchIssues',
   get_my_issues: 'getMyIssues',
+  get_issue_history: 'getIssueHistory',
   batch_create_issues: 'batchCreateIssues',
   move_issue: 'moveIssue',
   create_issues_from_template: 'createIssuesFromTemplate',
@@ -898,7 +904,9 @@ const WORKSPACE_ROUTES = {
   update_label: 'updateLabel',
   delete_label: 'deleteLabel',
   add_relation: 'addRelation',
+  remove_relation: 'removeRelation',
   add_blocked_by: 'addBlockedBy',
+  remove_blocked_by: 'removeBlockedBy',
   set_parent: 'setParent',
   list_project_types: 'listProjectTypes',
   list_task_types: 'listTaskTypes',
@@ -916,6 +924,7 @@ const WORKSPACE_ROUTES = {
   delete_comment: 'deleteComment',
   log_time: 'logTime',
   list_time_reports: 'listTimeReports',
+  update_time_report: 'updateTimeReport',
   delete_time_report: 'deleteTimeReport',
   create_project: 'createProject',
   update_project: 'updateProject',
@@ -988,7 +997,9 @@ describe('dispatch routing — every handler reaches its client method', () => {
     const decoys = { issueId: 'P-1', relatedIssueId: 'DECOY-R', blockerIssueId: 'DECOY-B', parentId: 'DECOY-P' };
     const cases = [
       { name: 'add_relation', method: 'addRelation', override: { relatedIssueId: 'P-2' }, expected: ['P-1', 'P-2'] },
+      { name: 'remove_relation', method: 'removeRelation', override: { relatedIssueId: 'P-2' }, expected: ['P-1', 'P-2'] },
       { name: 'add_blocked_by', method: 'addBlockedBy', override: { blockerIssueId: 'P-3' }, expected: ['P-1', 'P-3'] },
+      { name: 'remove_blocked_by', method: 'removeBlockedBy', override: { blockerIssueId: 'P-3' }, expected: ['P-1', 'P-3'] },
       { name: 'set_parent', method: 'setParent', override: { parentId: 'P-4' }, expected: ['P-1', 'P-4'] }
     ];
 

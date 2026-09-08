@@ -103,25 +103,18 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
       assert.ok((await client.listProjects()).items.some(p => p.identifier === ident));
       await client.archiveProject(ident, true);
       assert.ok(!(await client.listProjects()).items.some(p => p.identifier === ident));
+      await client.archiveProject(ident, false);
+      await client.deleteProject(ident);
     });
 
-    // KNOWN DEFECT, verified live 2026-09-02. Huly filters archived spaces out of
-    // every client query, and each of these methods starts by looking the project
-    // up by identifier. Archiving therefore severs all tool access permanently:
-    // the documented `archived: false` unarchive path can never succeed, and the
-    // project's issues, milestones and components become unreachable. Recovery is
-    // only possible through the Huly web UI. This test pins the CURRENT behaviour
-    // so the trap is visible; it is not an endorsement of it.
-    it('archive_project is one-way — every tool loses the project afterwards (KNOWN DEFECT)', async () => {
-      const ident = `TRAP${Date.now().toString(36).slice(-4).toUpperCase()}`;
-      await client.createProject(ident, 'Archive Trap', '');
-      await client.createIssue(ident, 'Trapped issue', '');
+    it('archive_project can restore an archived project through the SDK override', async () => {
+      const ident = `REST${Date.now().toString(36).slice(-4).toUpperCase()}`;
+      await client.createProject(ident, 'Archive Round Trip', '');
       await client.archiveProject(ident, true);
-
-      await assert.rejects(() => client.getProject(ident), /not found/i, 'get_project');
-      await assert.rejects(() => client.archiveProject(ident, false), /not found/i, 'unarchive');
-      await assert.rejects(() => client.deleteProject(ident), /not found/i, 'delete_project');
-      await assert.rejects(() => client.listIssues(ident), /not found/i, 'list_issues');
+      assert.ok(!(await client.listProjects()).items.some(project => project.identifier === ident));
+      await client.archiveProject(ident, false);
+      assert.equal((await client.getProject(ident)).archived, false);
+      await client.deleteProject(ident);
     });
   });
 
@@ -157,6 +150,34 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
       const read = await client.getIssue(issueId);
       assert.equal(read.estimation, 5);
       assert.ok(String(read.dueDate).startsWith('2026-12-31'));
+    });
+
+    it('update_issue clears assignee, component, and milestone in one call', async () => {
+      const member = (await client.listMembers()).items[0];
+      assert.ok(member?.name, 'CRUD workspace must expose its creating member');
+      const suffix = Date.now().toString(36).slice(-4);
+      const component = `Clear Comp ${suffix}`;
+      const milestone = `Clear MS ${suffix}`;
+      await client.createComponent(PROJECT, component, 'temporary');
+      await client.createMilestone(PROJECT, milestone, 'temporary');
+
+      await client.updateIssue(issueId, undefined, undefined, undefined, undefined, undefined, {
+        assignee: member.name, component, milestone
+      });
+      let read = await client.getIssue(issueId);
+      assert.equal(read.assignee, member.name);
+      assert.equal(read.component, component);
+      assert.equal(read.milestone.name, milestone);
+
+      await client.updateIssue(issueId, undefined, undefined, undefined, undefined, undefined, {
+        assignee: '', component: '', milestone: ''
+      });
+      read = await client.getIssue(issueId);
+      assert.equal(read.assignee, null);
+      assert.equal(read.component, null);
+      assert.equal(read.milestone, null);
+      await client.deleteComponent(PROJECT, component);
+      await client.deleteMilestone(PROJECT, milestone);
     });
   });
 
@@ -258,6 +279,16 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
       assert.equal(read.status, 'In Progress');
       assert.equal(read.targetDate, '2027-01-15');
       assertValidMarkup((await rawMilestone(msName)).description, 'updated milestone description');
+    });
+
+    it('update_milestone round-trips and clears collaborator members', async () => {
+      const member = (await client.listMembers()).items[0];
+      assert.ok(member?.name, 'CRUD workspace must expose its creating member');
+      await client.updateMilestone(PROJECT, msName, { collaborators: [member.name] });
+      assert.deepEqual((await client.getMilestone(PROJECT, msName)).collaborators.map(item => item.name),
+        [member.name]);
+      await client.updateMilestone(PROJECT, msName, { collaborators: [] });
+      assert.deepEqual((await client.getMilestone(PROJECT, msName)).collaborators, []);
     });
 
     it('set_milestone makes the milestone readable on the issue', async () => {
@@ -362,26 +393,36 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
 
   // ── relations ───────────────────────────────────────────────
 
-  describe('add_relation / add_blocked_by', () => {
-    it('add_relation is readable back on the issue', async () => {
+  describe('add/remove relation and blocked-by', () => {
+    it('add_relation and remove_relation persist both directions', async () => {
       const a = await client.createIssue(PROJECT, 'Relation source', '');
       const b = await client.createIssue(PROJECT, 'Relation target', '');
       await client.addRelation(a.id, b.id);
-      // relations are only returned when explicitly projected in
-      const read = await client.getIssue(a.id, { include: ['relations'] });
-      assert.ok(Array.isArray(read.relations), 'relations should be projected');
-      assert.ok(read.relations.some(r => r.id === b.id || r.title === 'Relation target'),
-        `expected ${b.id} in ${JSON.stringify(read.relations)}`);
+      const source = await client.getIssue(a.id, { include: ['relations'] });
+      const target = await client.getIssue(b.id, { include: ['relations'] });
+      assert.ok(source.relations.some(r => r.id === b.id || r.title === 'Relation target'),
+        `expected ${b.id} in ${JSON.stringify(source.relations)}`);
+      assert.ok(target.relations.some(r => r.id === a.id || r.title === 'Relation source'),
+        `expected ${a.id} in ${JSON.stringify(target.relations)}`);
+
+      await client.removeRelation(a.id, b.id);
+      const sourceAfter = await client.getIssue(a.id, { include: ['relations'] });
+      const targetAfter = await client.getIssue(b.id, { include: ['relations'] });
+      assert.ok(!sourceAfter.relations.some(r => r.id === b.id || r.title === 'Relation target'));
+      assert.ok(!targetAfter.relations.some(r => r.id === a.id || r.title === 'Relation source'));
     });
 
-    it('add_blocked_by is readable back on the issue', async () => {
+    it('add_blocked_by and remove_blocked_by persist the dependency lifecycle', async () => {
       const a = await client.createIssue(PROJECT, 'Blocked issue', '');
       const b = await client.createIssue(PROJECT, 'Blocker issue', '');
       await client.addBlockedBy(a.id, b.id);
       const read = await client.getIssue(a.id, { include: ['blockedBy'] });
-      assert.ok(Array.isArray(read.blockedBy), 'blockedBy should be projected');
       assert.ok(read.blockedBy.some(r => r.id === b.id || r.title === 'Blocker issue'),
         `expected ${b.id} in ${JSON.stringify(read.blockedBy)}`);
+
+      await client.removeBlockedBy(a.id, b.id);
+      const after = await client.getIssue(a.id, { include: ['blockedBy'] });
+      assert.ok(!after.blockedBy.some(r => r.id === b.id || r.title === 'Blocker issue'));
     });
   });
 
@@ -493,11 +534,15 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
     it('delete_milestone — the milestone is gone', async () => {
       const name = `Doomed MS ${Date.now().toString(36).slice(-4)}`;
       await client.createMilestone(PROJECT, name, 'temp', '2026-12-31');
+      const assigned = await client.createIssue(PROJECT, 'Milestone delete host', '');
+      await client.setMilestone(assigned.id, name);
       await client.getMilestone(PROJECT, name);
       await client.deleteMilestone(PROJECT, name);
       await assert.rejects(() => client.getMilestone(PROJECT, name), /not found/i);
       const listed = (await client.listMilestones(PROJECT)).items.some(m => m.name === name);
       assert.equal(listed, false);
+      assert.equal((await client.getIssue(assigned.id)).milestone, null,
+        'deleting a milestone must not leave a dangling issue reference');
     });
 
     it('delete_component — the component is gone', async () => {
@@ -534,6 +579,115 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
 
   // ── time ────────────────────────────────────────────────────
 
+  describe('stored issue templates and project settings', () => {
+    it('creates, reads, replaces and clears project settings using account UUIDs', async () => {
+      const ident = `SET${Date.now().toString(36).slice(-4).toUpperCase()}`;
+      const member = (await client.listMembers()).items[0];
+      assert.ok(member?.name);
+      await client.createProject(ident, 'Project settings lifecycle', '', false, undefined, {
+        members: [member.name], owners: [member.name], defaultAssignee: member.name,
+        defaultTimeReportDay: 'PreviousWorkDay'
+      });
+      try {
+        const read = await client.getProject(ident, { include: ['members', 'owners', 'defaults'] });
+        assert.ok(read.members.includes(member.name));
+        assert.ok(read.owners.includes(member.name));
+        assert.equal(read.defaultAssignee, member.name);
+        assert.equal(read.defaultTimeReportDay, 'PreviousWorkDay');
+        const sdk = await client._getClient();
+        const tracker = require('@hcengineering/tracker').default;
+        const raw = await sdk.findOne(tracker.class.Project, { identifier: ident });
+        assert.ok(raw.members.includes(client._accountUuid));
+        assert.ok(raw.owners.includes(client._accountUuid));
+        await client.updateProject(ident, {
+          members: [], defaultAssignee: '', defaultIssueStatus: read.defaultIssueStatus,
+          defaultTimeReportDay: 'CurrentWorkDay'
+        });
+        const cleared = await client.getProject(ident, { include: ['members', 'owners', 'defaults'] });
+        assert.deepEqual(cleared.members, []);
+        assert.equal(cleared.defaultAssignee, null);
+        assert.equal(cleared.defaultTimeReportDay, 'CurrentWorkDay');
+        assert.equal(cleared.defaultIssueStatus, read.defaultIssueStatus);
+        await client.updateProject(ident, { members: read.members, owners: read.owners });
+        const restored = (await client.listProjects({ include: ['members', 'owners'] })).items.find(p => p.identifier === ident);
+        assert.deepEqual(restored.members, read.members);
+        assert.deepEqual(restored.owners, read.owners);
+      } finally {
+        await client.deleteProject(ident);
+      }
+    });
+
+    it('round-trips the complete stored template model, including child templates and markup', async () => {
+      const ident = `TPL${Date.now().toString(36).slice(-4).toUpperCase()}`;
+      await client.createProject(ident, 'Template lifecycle', '');
+      const labelName = `template-${ident}`;
+      let labelCreated = false;
+      try {
+        const member = (await client.listMembers()).items[0];
+        const component = await client.createComponent(ident, 'API', '');
+        const milestone = await client.createMilestone(ident, 'v1', '');
+        const label = await client.createLabel(labelName);
+        labelCreated = true;
+        const issue = await client.createIssue(ident, 'Unrelated issue survives template deletion', '');
+        const sdk = await client._getClient();
+        const tracker = require('@hcengineering/tracker').default;
+        const project = await sdk.findOne(tracker.class.Project, { identifier: ident });
+        const typeId = await client._getDefaultTaskType(sdk, project);
+        const task = require('@hcengineering/task').default;
+        const type = await sdk.findOne(task.class.TaskType, { _id: typeId });
+        const fields = {
+          title: 'Release', description: '**Ship** the release', priority: 'high',
+          assignee: member.name, component: 'API', milestone: 'v1', estimation: 3.5,
+          labels: [labelName], type: type.name
+        };
+        const created = await client.createIssueTemplate(ident, {
+          ...fields, children: [{ ...fields, title: 'Child step' }],
+          relations: [{ id: issue.internalId, objectClass: tracker.class.Issue }]
+        });
+        const raw = await sdk.findOne(tracker.class.IssueTemplate, { _id: created.id });
+        assert.equal(raw.space, project._id);
+        assert.equal(raw.component, component.id);
+        assert.equal(raw.milestone, milestone.id);
+        assert.equal(raw.kind, typeId);
+        assert.deepEqual(raw.labels, [label.id]);
+        assert.deepEqual(raw.children[0].labels, [label.id]);
+        assert.equal(raw.relations[0]._id, issue.internalId);
+        assertValidMarkup(raw.description, 'template description');
+        assertValidMarkup(raw.children[0].description, 'child template description');
+        const read = await client.getIssueTemplate(ident, created.id);
+        assert.equal(read.assignee, member.name);
+        assert.equal(read.description, fields.description);
+        assert.equal(read.children[0].title, 'Child step');
+        assert.equal(read.children[0].component, 'API');
+        assert.equal((await client.listIssueTemplates(ident)).items[0].id, created.id);
+        await client.updateIssueTemplate(ident, created.id, {
+          title: 'Release updated', description: '', priority: 'none', estimation: 0,
+          assignee: '', component: '', milestone: '', labels: [], relations: [],
+          children: [{ id: read.children[0].id, title: 'Child updated', description: '**Valid**' }]
+        });
+        const updated = await client.getIssueTemplate(ident, created.id);
+        assert.equal(updated.title, 'Release updated');
+        assert.equal(updated.description, '');
+        assert.equal(updated.assignee, null);
+        assert.equal(updated.component, null);
+        assert.equal(updated.milestone, null);
+        assert.deepEqual(updated.labels, []);
+        assert.deepEqual(updated.relations, []);
+        assert.equal(updated.children[0].id, read.children[0].id);
+        assert.equal(updated.children[0].title, 'Child updated');
+        await client.updateIssueTemplate(ident, created.id, { children: [] });
+        assert.deepEqual((await client.getIssueTemplate(ident, created.id)).children, []);
+        await client.deleteIssueTemplate(ident, created.id);
+        await assert.rejects(() => client.getIssueTemplate(ident, created.id), /not found/);
+        assert.deepEqual((await client.listIssueTemplates(ident)).items, []);
+        assert.ok(await client.getIssue(issue.id));
+      } finally {
+        if (labelCreated) await client.deleteLabel(labelName);
+        await client.deleteProject(ident);
+      }
+    });
+  });
+
   describe('log_time', () => {
     it('the logged hours are readable back on the report and the issue', async () => {
       const issue = await client.createIssue(PROJECT, 'Timed issue', '');
@@ -543,6 +697,21 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
       assert.equal(read.description, 'work done');
       const reports = (await client.listTimeReports(issue.id)).items;
       assert.ok(reports.some(r => r.id === logged.id));
+    });
+
+    it('update_time_report persists all editable report fields', async () => {
+      const issue = await client.createIssue(PROJECT, 'Updated time host', '');
+      const logged = await client.logTime(issue.id, 1, 'before', '2026-06-01');
+      const member = (await client.listMembers()).items[0];
+      await client.updateTimeReport(issue.id, logged.id, {
+        hours: 2.75, description: 'after', date: '2026-06-03', employee: member.name
+      });
+      const read = await client.getTimeReport(issue.id, logged.id);
+      assert.equal(read.hours, 2.75);
+      assert.equal(read.description, 'after');
+      assert.ok(String(read.date).startsWith('2026-06-03'));
+      assert.equal(read.employee, member.name);
+      assert.equal((await client.getIssue(issue.id)).reportedTime, 2.75);
     });
   });
   // ── delete_workspace ────────────────────────────────────────

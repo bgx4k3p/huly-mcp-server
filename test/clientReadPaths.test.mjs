@@ -92,8 +92,8 @@ function harness(seed = {}) {
 }
 
 const EMPLOYEES = [
-  { _id: 'emp-1', name: 'Ada Lovelace', active: true },
-  { _id: 'emp-2', name: 'Grace Hopper', active: true }
+  { _id: 'emp-1', personUuid: 'account-1', name: 'Ada Lovelace', active: true },
+  { _id: 'emp-2', personUuid: 'account-2', name: 'Grace Hopper', active: true }
 ];
 
 // Every Huly Doc carries createdOn, statuses included — the model-level ones
@@ -112,7 +112,7 @@ function projects() {
   return [
     {
       _id: 'proj-space', space: SPACE, identifier: 'PROJ', name: 'Huly MCP',
-      sequence: 42, members: ['emp-1', 'emp-2'], owners: ['emp-1'],
+      sequence: 42, members: ['account-1', 'account-2'], owners: ['account-1'],
       type: 'pt-classic', createdOn: 100, modifiedOn: 200
     },
     {

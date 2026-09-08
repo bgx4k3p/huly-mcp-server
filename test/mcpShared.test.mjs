@@ -77,7 +77,7 @@ describe('MCP shared runtime context', () => {
     const project = createMcpServer({}, { toolProfile: 'project' }).TOOLS;
     const read = createMcpServer({}, { toolProfile: 'read' }).TOOLS;
 
-    assert.equal(full.length, 82);
+    assert.equal(full.length, 91);
     assert.ok(project.length < full.length);
     assert.ok(read.length < project.length);
     assert.ok(project.some(tool => tool.name === 'create_issue'));
@@ -107,6 +107,18 @@ describe('MCP shared runtime context', () => {
       assert.equal(properties.activity_limit.type, 'integer');
       assert.equal(properties.description_preview_chars.type, 'integer');
     }
+  });
+
+  it('keeps batch_create_issues field-complete with create_issue', () => {
+    const { TOOLS } = createMcpServer();
+    const createFields = Object.keys(
+      TOOLS.find(tool => tool.name === 'create_issue').inputSchema.properties
+    ).filter(name => !['project', 'workspace'].includes(name)).sort();
+    const batchFields = Object.keys(
+      TOOLS.find(tool => tool.name === 'batch_create_issues').inputSchema.properties.issues.items.properties
+    ).sort();
+
+    assert.deepEqual(batchFields, createFields);
   });
 
   it('makes project optional in project-scoped schemas when HULY_PROJECT is set', async () => {

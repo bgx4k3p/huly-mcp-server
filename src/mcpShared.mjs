@@ -105,9 +105,42 @@ const descriptionFormatProp = {
 const projectIncludeProp = {
   include: {
     type: 'array',
-    items: { type: 'string', enum: ['milestones', 'components', 'labels', 'members'] },
+    items: { type: 'string', enum: ['milestones', 'components', 'labels', 'members', 'owners', 'defaults'] },
     uniqueItems: true,
     description: 'Related project data to fetch. Omit for the compact project summary.'
+  }
+};
+
+const projectSettingsProps = {
+  members: { type: 'array', items: { type: 'string' }, description: 'Complete member set: exact names or account UUIDs. Empty clears members on a public project.' },
+  owners: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Complete owner set: exact names or account UUIDs. Owners are added to members unless members is supplied.' },
+  defaultAssignee: { type: 'string', description: 'Default assignee name; empty clears it' },
+  defaultIssueStatus: { type: 'string', description: 'Status name or ID in the default task workflow' },
+  defaultTimeReportDay: { type: 'string', enum: ['CurrentWorkDay', 'PreviousWorkDay'] }
+};
+
+const templateDataProps = {
+  title: { type: 'string', minLength: 1 },
+  description: { type: 'string' },
+  ...descriptionFormatProp,
+  priority: { type: 'string', enum: ['urgent', 'high', 'medium', 'low', 'none'] },
+  assignee: { type: 'string', description: 'Member name; empty clears' },
+  component: { type: 'string', description: 'Component name; empty clears' },
+  milestone: { type: 'string', description: 'Milestone name; empty clears' },
+  estimation: { type: 'number', minimum: 0 },
+  labels: { type: 'array', items: { type: 'string' }, description: 'Complete label-name set; empty clears' },
+  type: { type: 'string', description: 'Task type name; empty resets to project default' }
+};
+
+const templateProps = {
+  ...templateDataProps,
+  children: {
+    type: 'array', maxItems: 50, description: 'Complete child-template set; preserve returned child IDs when editing. Empty clears.',
+    items: { type: 'object', properties: { id: { type: 'string' }, ...templateDataProps }, required: ['title'], additionalProperties: false }
+  },
+  relations: {
+    type: 'array', description: 'Complete related-document set; empty clears.',
+    items: { type: 'object', properties: { id: { type: 'string' }, objectClass: { type: 'string' } }, required: ['id', 'objectClass'], additionalProperties: false }
   }
 };
 
@@ -545,7 +578,7 @@ function getToolDefinitions() {
     {
       name: 'update_issue',
       description: 'Update one or more fields on an existing issue. Only specify the fields you want to change — omitted fields are left unchanged. Returns a list of which fields were updated. Use list_statuses to discover valid status names.',
-      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, title: { type: 'string', description: 'New title' }, description: { type: 'string', description: 'New description. Format controlled by descriptionFormat.' }, ...descriptionFormatProp, priority: { type: 'string', description: 'New priority: urgent, high, medium, low, none' }, status: { type: 'string', description: 'New status: Backlog, Todo, In Progress, Done, Canceled' }, type: { type: 'string', description: 'New task type name (e.g., "Issue", "Epic", "Bug")' }, assignee: { type: 'string', description: 'New assignee name (must match an active workspace member)' }, component: { type: 'string', description: 'New component name' }, milestone: { type: 'string', description: 'New milestone name' }, dueDate: { type: 'string', description: 'New due date in ISO format (e.g., "2026-04-01")' }, estimation: { type: 'number', description: 'New time estimation in hours' }, ...workspaceProp }, required: ['issueId'] }
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, title: { type: 'string', description: 'New title' }, description: { type: 'string', description: 'New description. Format controlled by descriptionFormat.' }, ...descriptionFormatProp, priority: { type: 'string', description: 'New priority: urgent, high, medium, low, none' }, status: { type: 'string', description: 'New status: Backlog, Todo, In Progress, Done, Canceled' }, type: { type: 'string', description: 'New task type name (e.g., "Issue", "Epic", "Bug")' }, assignee: { type: 'string', description: 'New assignee name; empty clears the assignee' }, component: { type: 'string', description: 'New component name; empty clears the component' }, milestone: { type: 'string', description: 'New milestone name; empty clears the milestone' }, dueDate: { type: 'string', description: 'New due date in ISO format; empty clears it' }, estimation: { type: 'number', description: 'New time estimation in hours' }, ...workspaceProp }, required: ['issueId'] }
     },
     {
       name: 'add_label',
@@ -589,13 +622,13 @@ function getToolDefinitions() {
     },
     {
       name: 'create_project',
-      description: 'Create a new project in the workspace. Returns the project identifier and details.',
-      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (2-5 uppercase letters, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, projectType: { type: 'string', description: 'Project type name or id (e.g., "Classic"). Required only when the workspace has several project types that can hold issues; a single issue-capable type is selected automatically, so HR and CRM types in the workspace do not force this argument.' }, ...workspaceProp }, required: ['identifier', 'name'] }
+      description: 'Create a project with members, owners, and defaults. The creator is always included as a member and owner.',
+      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (2-5 uppercase letters, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, projectType: { type: 'string', description: 'Project type name or id. Required when several types can hold issues.' }, ...projectSettingsProps, ...workspaceProp }, required: ['identifier', 'name'] }
     },
     {
       name: 'update_project',
-      description: 'Update a project\'s name, description, privacy, or default assignee.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, name: { type: 'string', description: 'New display name' }, description: { type: 'string', description: 'New description' }, private: { type: 'boolean', description: 'Privacy setting' }, defaultAssignee: { type: 'string', description: 'Default assignee name (empty string to clear)' }, ...workspaceProp }, required: ['project'] }
+      description: 'Update project fields, defaults, or replace membership/ownership. Retain an owner; private projects must retain an owner who is a member.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, name: { type: 'string', description: 'New display name' }, description: { type: 'string', description: 'New description' }, private: { type: 'boolean', description: 'Privacy setting' }, ...projectSettingsProps, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'delete_project',
@@ -604,8 +637,8 @@ function getToolDefinitions() {
     },
     {
       name: 'archive_project',
-      description: 'Archive a project. ONE-WAY: archived projects vanish from every query, so get_project, list_issues, delete_project and unarchive all fail afterwards; only the Huly web UI can restore one. Keep the returned id.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, archived: { type: 'boolean', description: 'true to archive (default). false cannot succeed once archived.' }, ...workspaceProp }, required: ['project'] }
+      description: 'Archive or restore a project. Pass archived=false to unarchive it.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier (e.g., "PROJ")' }, archived: { type: 'boolean', description: 'true to archive (default), false to unarchive' }, ...workspaceProp }, required: ['project'] }
     },
     {
       name: 'move_issue',
@@ -625,14 +658,44 @@ function getToolDefinitions() {
       inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Limit to this project (optional)' }, status: { type: 'string', description: 'Filter by status name' }, ...paginationProps, ...workspaceProp }, required: [] }
     },
     {
+      name: 'get_issue_history',
+      description: 'Get an issue activity timeline with comments, time reports, labels, and sub-issues.',
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier (e.g., "PROJ-42")' }, ...workspaceProp }, required: ['issueId'] }
+    },
+    {
       name: 'batch_create_issues',
       description: 'Create multiple issues at once in a single project. Each issue can have all the same fields as create_issue. Returns created issues and any errors.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, issues: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, priority: { type: 'string' }, status: { type: 'string' }, type: { type: 'string' }, assignee: { type: 'string' }, labels: { type: 'array', items: { type: 'string' } } }, required: ['title'] }, description: 'Array of issues to create' }, ...workspaceProp }, required: ['project', 'issues'] }
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, issues: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, descriptionFormat: { type: 'string', enum: ['markdown', 'html', 'plain'] }, priority: { type: 'string' }, status: { type: 'string' }, type: { type: 'string' }, assignee: { type: 'string' }, component: { type: 'string' }, milestone: { type: 'string' }, dueDate: { type: 'string' }, estimation: { type: 'number' }, labels: { type: 'array', items: { type: 'string' } } }, required: ['title'] }, description: 'Array of issues to create' }, ...workspaceProp }, required: ['project', 'issues'] }
     },
     {
       name: 'summarize_project',
       description: 'Get a statistical summary of a project: issue counts by status, priority, type, assignee, component, and label.',
       inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, ...workspaceProp }, required: ['project'] }
+    },
+    {
+      name: 'list_issue_templates',
+      description: 'List a bounded page of stored Huly issue templates in a project.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string' }, ...paginationProps, ...workspaceProp }, required: ['project'] }
+    },
+    {
+      name: 'get_issue_template',
+      description: 'Read a stored Huly issue template, including children, labels, and related documents.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string' }, templateId: { type: 'string' }, ...workspaceProp }, required: ['project', 'templateId'] }
+    },
+    {
+      name: 'create_issue_template',
+      description: 'Create a persistent Huly issue template usable by the Huly UI. Child templates and references are validated before writing.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string' }, ...templateProps, ...workspaceProp }, required: ['project', 'title'] }
+    },
+    {
+      name: 'update_issue_template',
+      description: 'Update a stored Huly issue template. Omitted fields remain unchanged; supplied arrays replace the complete set.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string' }, templateId: { type: 'string' }, ...templateProps, ...workspaceProp }, required: ['project', 'templateId'] }
+    },
+    {
+      name: 'delete_issue_template',
+      description: 'Delete a stored issue template and its embedded child templates. Previously created issues are retained.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string' }, templateId: { type: 'string' }, ...workspaceProp }, required: ['project', 'templateId'] }
     },
     {
       name: 'create_issues_from_template',
@@ -647,8 +710,18 @@ function getToolDefinitions() {
       inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Source issue (e.g., "PROJ-1")' }, relatedIssueId: { type: 'string', description: 'Target issue (e.g., "PROJ-2")' }, ...workspaceProp }, required: ['issueId', 'relatedIssueId'] }
     },
     {
+      name: 'remove_relation',
+      description: 'Remove a bidirectional "related to" link. No-op if neither side exists; also repairs a one-sided link.',
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Source issue (e.g., "PROJ-1")' }, relatedIssueId: { type: 'string', description: 'Target issue (e.g., "PROJ-2")' }, ...workspaceProp }, required: ['issueId', 'relatedIssueId'] }
+    },
+    {
       name: 'add_blocked_by',
       description: 'Mark an issue as blocked by another issue.',
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Blocked issue (e.g., "PROJ-1")' }, blockerIssueId: { type: 'string', description: 'Blocking issue (e.g., "PROJ-2")' }, ...workspaceProp }, required: ['issueId', 'blockerIssueId'] }
+    },
+    {
+      name: 'remove_blocked_by',
+      description: 'Remove a "blocked by" dependency from an issue. No-op if the dependency is not present.',
       inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Blocked issue (e.g., "PROJ-1")' }, blockerIssueId: { type: 'string', description: 'Blocking issue (e.g., "PROJ-2")' }, ...workspaceProp }, required: ['issueId', 'blockerIssueId'] }
     },
     {
@@ -697,18 +770,18 @@ function getToolDefinitions() {
     },
     {
       name: 'create_milestone',
-      description: 'Create a new milestone in a project.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Milestone name' }, description: { type: 'string', description: 'Milestone description' }, status: { type: 'string', description: 'Status: planned, in progress, completed, cancelled' }, targetDate: { type: 'string', description: 'Target date (ISO format)' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
+      description: 'Create a new milestone in a project, optionally assigning collaborator workspace members.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Milestone name' }, description: { type: 'string', description: 'Milestone description' }, status: { type: 'string', description: 'Status: planned, in progress, completed, cancelled' }, targetDate: { type: 'string', description: 'Target date (ISO format)' }, collaborators: { type: 'array', items: { type: 'string' }, uniqueItems: true, description: 'Active workspace member names or account UUIDs' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'update_milestone',
-      description: 'Update a milestone\'s name, description, status, or dates.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current milestone name' }, newName: { type: 'string', description: 'New name' }, description: { type: 'string', description: 'New description' }, status: { type: 'string', description: 'New status: planned, in progress, completed, cancelled' }, targetDate: { type: 'string', description: 'New target date' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
+      description: 'Update a milestone\'s name, description, status, target date, or complete collaborator set. An empty collaborators array clears all collaborators.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Current milestone name' }, newName: { type: 'string', description: 'New name' }, description: { type: 'string', description: 'New description' }, status: { type: 'string', description: 'New status: planned, in progress, completed, cancelled' }, targetDate: { type: 'string', description: 'New target date' }, collaborators: { type: 'array', items: { type: 'string' }, uniqueItems: true, description: 'Complete set of active workspace member names or account UUIDs; empty clears all' }, ...descriptionFormatProp, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'delete_milestone',
-      description: 'Delete a milestone from a project. Issues assigned to it will be unlinked.',
-      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Milestone name' }, ...workspaceProp }, required: ['project', 'name'] }
+      description: 'Delete a milestone after clearing its issue references, or move those issues to another milestone.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'Project identifier' }, name: { type: 'string', description: 'Milestone name' }, moveIssuesTo: { type: 'string', description: 'Replacement milestone name. Omit or pass empty to clear the milestone from affected issues.' }, ...workspaceProp }, required: ['project', 'name'] }
     },
     {
       name: 'set_milestone',
@@ -797,6 +870,11 @@ function getToolDefinitions() {
       name: 'get_time_report',
       description: 'Get details for a specific time report.',
       inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier' }, reportId: { type: 'string', description: 'Time report ID' }, ...workspaceProp }, required: ['issueId', 'reportId'] }
+    },
+    {
+      name: 'update_time_report',
+      description: 'Update a time report\'s hours, description, date, or employee. Pass an empty employee to clear attribution.',
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier' }, reportId: { type: 'string', description: 'Time report ID' }, hours: { type: 'number', description: 'New hours spent' }, description: { type: 'string', description: 'New work description' }, date: { type: 'string', description: 'New work date in ISO format' }, employee: { type: 'string', description: 'New workspace member name; empty clears attribution' }, ...workspaceProp }, required: ['issueId', 'reportId'] }
     },
     {
       name: 'delete_time_report',

@@ -236,6 +236,12 @@ describe('Workspace tool dispatch — param forwarding', () => {
       }
     },
     {
+      name: 'get_issue_history',
+      args: { issueId: 'P-7' },
+      expectMethod: 'getIssueHistory',
+      validate: (call) => assert.equal(call.args[0], 'P-7')
+    },
+    {
       name: 'batch_create_issues',
       args: { project: 'P', issues: [{ title: 'T1' }] },
       expectMethod: 'batchCreateIssues',
@@ -334,9 +340,27 @@ describe('Workspace tool dispatch — param forwarding', () => {
       }
     },
     {
+      name: 'remove_relation',
+      args: { issueId: 'P-1', relatedIssueId: 'P-2' },
+      expectMethod: 'removeRelation',
+      validate: (call) => {
+        assert.equal(call.args[0], 'P-1');
+        assert.equal(call.args[1], 'P-2');
+      }
+    },
+    {
       name: 'add_blocked_by',
       args: { issueId: 'P-1', blockerIssueId: 'P-2' },
       expectMethod: 'addBlockedBy',
+      validate: (call) => {
+        assert.equal(call.args[0], 'P-1');
+        assert.equal(call.args[1], 'P-2');
+      }
+    },
+    {
+      name: 'remove_blocked_by',
+      args: { issueId: 'P-1', blockerIssueId: 'P-2' },
+      expectMethod: 'removeBlockedBy',
       validate: (call) => {
         assert.equal(call.args[0], 'P-1');
         assert.equal(call.args[1], 'P-2');
@@ -392,7 +416,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'create_milestone',
-      args: { project: 'P', name: 'v1', description: 'First', targetDate: '2026-06-01', status: 'Planned', descriptionFormat: 'markdown' },
+      args: { project: 'P', name: 'v1', description: 'First', targetDate: '2026-06-01', status: 'Planned', descriptionFormat: 'markdown', collaborators: ['Ada'] },
       expectMethod: 'createMilestone',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
@@ -401,6 +425,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
         assert.equal(call.args[3], '2026-06-01');
         assert.equal(call.args[4], 'Planned');
         assert.equal(call.args[5], 'markdown');
+        assert.deepEqual(call.args[6], ['Ada']);
       }
     },
     {
@@ -414,7 +439,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'update_milestone',
-      args: { project: 'P', name: 'v1', newName: 'v1.1', description: 'Updated', descriptionFormat: 'markdown', status: 'In Progress', targetDate: '2026-07-01' },
+      args: { project: 'P', name: 'v1', newName: 'v1.1', description: 'Updated', descriptionFormat: 'markdown', status: 'In Progress', targetDate: '2026-07-01', collaborators: ['Ada'] },
       expectMethod: 'updateMilestone',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
@@ -425,15 +450,17 @@ describe('Workspace tool dispatch — param forwarding', () => {
         assert.equal(updates.descriptionFormat, 'markdown');
         assert.equal(updates.status, 'In Progress');
         assert.equal(updates.targetDate, '2026-07-01');
+        assert.deepEqual(updates.collaborators, ['Ada']);
       }
     },
     {
       name: 'delete_milestone',
-      args: { project: 'P', name: 'v1' },
+      args: { project: 'P', name: 'v1', moveIssuesTo: 'v2' },
       expectMethod: 'deleteMilestone',
       validate: (call) => {
         assert.equal(call.args[0], 'P');
         assert.equal(call.args[1], 'v1');
+        assert.equal(call.args[2], 'v2');
       }
     },
     // Members
@@ -500,6 +527,18 @@ describe('Workspace tool dispatch — param forwarding', () => {
       args: { issueId: 'P-1' },
       expectMethod: 'listTimeReports',
       validate: (call) => assert.equal(call.args[0], 'P-1')
+    },
+    {
+      name: 'update_time_report',
+      args: { issueId: 'P-1', reportId: 'r1', hours: 2, description: 'Updated', date: '2026-06-03', employee: 'Ada' },
+      expectMethod: 'updateTimeReport',
+      validate: (call) => {
+        assert.equal(call.args[0], 'P-1');
+        assert.equal(call.args[1], 'r1');
+        assert.deepEqual(call.args[2], {
+          hours: 2, description: 'Updated', date: '2026-06-03', employee: 'Ada'
+        });
+      }
     },
     {
       name: 'delete_time_report',
@@ -794,7 +833,9 @@ describe('Required param coverage — no undefined forwarding', () => {
       add_label: { issueId: 'P-1', label: 'bug' },
       remove_label: { issueId: 'P-1', label: 'bug' },
       add_relation: { issueId: 'P-1', relatedIssueId: 'P-2' },
+      remove_relation: { issueId: 'P-1', relatedIssueId: 'P-2' },
       add_blocked_by: { issueId: 'P-1', blockerIssueId: 'P-2' },
+      remove_blocked_by: { issueId: 'P-1', blockerIssueId: 'P-2' },
       set_parent: { issueId: 'P-1', parentId: 'P-2' },
       delete_label: { name: 'L' },
       add_comment: { issueId: 'P-1', text: 'Hi' },
