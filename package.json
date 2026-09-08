@@ -1,6 +1,6 @@
 {
   "name": "@bgx4k3p/huly-mcp-server",
-  "version": "3.0.3",
+  "version": "3.1.0",
   "description": "MCP server for Huly issue tracking with stdio and Streamable HTTP transports",
   "type": "module",
   "license": "MIT",
@@ -66,6 +66,6 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "eslint": "^10.9.1"
+    "eslint": "^10.10.0"
   }
 }
