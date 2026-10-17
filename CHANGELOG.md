@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## 3.1.1 - 2026-10-17
+
+### Dependency security maintenance
+
+- Updated the MCP SDK to 1.32.1, JSDOM to 30.1.3, ws to 8.22.0, and
+  ESLint to 10.13.0. Refreshed compatible transitive dependencies, including
+  fixes in proxy-addr, undici, source-map-js, and brace-expansion.
+- Updated prosemirror-view to 1.42.6 in the lockfile.
+  Packed-package smoke tests now require prosemirror-view >=1.42.3 and
+  a single copy of each ProseMirror core package in local and global installs.
+- Kept Huly SDK packages at 0.7.423, the latest published npm version.
+  Documented remaining moderate Tiptap/Svelte advisories and removed the
+  blanket claim that transitive vulnerabilities are unexploitable.
+- Docker builds now use `node:26-alpine` and `npm ci --omit=dev`
+  to install the reviewed lockfile, update zlib, and remove npm from the
+  runtime image after dependency installation.
+  Updated CodeQL actions to 4.39.0.
+
 ## 3.1.0 - 2026-09-08
 
 ### SDK capability gaps closed

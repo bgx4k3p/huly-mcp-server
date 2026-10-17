@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -39,6 +39,29 @@ const tarball = realpathSync(resolve(process.argv[2] ?? tarballName()));
 const installDir = realpathSync(mkdtempSync(join(tmpdir(), 'huly-mcp-package-smoke-')));
 const globalInstallDir = realpathSync(mkdtempSync(join(tmpdir(), 'huly-mcp-global-smoke-')));
 
+function assertProseMirrorTree(prefix, global = false) {
+  const names = ['prosemirror-view', 'prosemirror-model', 'prosemirror-state', 'prosemirror-transform'];
+  const args = ['ls', '--all', '--parseable', '--prefix', prefix, ...names];
+  if (global) args.push('--global');
+  const paths = run('npm', args).stdout.trim().split('\n').filter(Boolean);
+  const packages = paths.map(path => ({
+    path: realpathSync(path),
+    ...JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'))
+  }));
+  for (const name of names) {
+    const matches = packages.filter(pkg => pkg.name === name);
+    if (new Set(matches.map(pkg => pkg.path)).size !== 1) {
+      throw new Error(`Packed install must resolve one copy of ${name}: ${JSON.stringify(matches)}`);
+    }
+    if (name === 'prosemirror-view') {
+      const [major, minor, patch] = matches[0].version.split('.').map(Number);
+      if (!(major > 1 || (major === 1 && (minor > 42 || (minor === 42 && patch >= 3))))) {
+        throw new Error(`Packed install has vulnerable prosemirror-view ${matches[0].version}; requires >=1.42.3`);
+      }
+    }
+  }
+}
+
 function assertStarts(entrypoint, installKind) {
   const result = spawnSync(process.execPath, [entrypoint], {
     input: '',
@@ -67,11 +90,13 @@ try {
   const packageDir = join(installDir, 'node_modules', pkg.name);
   const entrypoint = join(packageDir, pkg.bin['huly-mcp-server']);
   run('npm', ['ls', '--all', '--prefix', installDir]);
+  assertProseMirrorTree(installDir);
   assertStarts(entrypoint, 'project-local');
 
   run('npm', ['install', '--global', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', npmCache, '--prefix', globalInstallDir, tarball]);
   const globalPackageDir = join(globalInstallDir, 'lib', 'node_modules', pkg.name);
   run('npm', ['ls', '--global', '--all', '--prefix', globalInstallDir]);
+  assertProseMirrorTree(globalInstallDir, true);
   assertStarts(join(globalPackageDir, pkg.bin['huly-mcp-server']), 'global');
 
   console.error(`[package-smoke] ${pkg.name}@${pkg.version} project-local and global installs passed on ${process.version}`);
