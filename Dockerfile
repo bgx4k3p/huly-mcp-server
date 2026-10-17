@@ -1,14 +1,18 @@
-FROM node:22-alpine
+FROM node:26-alpine
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install --production
+RUN npm ci --omit=dev
+
+# npm is needed only to install dependencies, not to run this image.
+RUN apk upgrade --no-cache zlib \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY src/ src/
 
 ENV PORT=3001
 EXPOSE ${PORT}
 
-# HTTP REST server by default; override to src/mcp.mjs for stdio mode
+# Streamable HTTP MCP server by default; override to src/mcp.mjs for stdio mode
 CMD ["node", "src/server.mjs"]

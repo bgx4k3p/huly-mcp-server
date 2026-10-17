@@ -327,8 +327,15 @@ Clients must then include `Authorization: Bearer your-secret` in requests.
 
 ### Docker
 
+The image runs the server on Node.js 26 and the default Alpine variant.
+It serves MCP over HTTP on port 3001 by default; the command can be
+overridden for stdio.
+This runtime choice does not affect npm/npx installations, which use the
+host's supported Node.js version.
+Dependencies are installed at build time; npm is removed from the runtime image.
+
 ```bash
-docker build -t huly-mcp-server .
+docker build --pull -t huly-mcp-server .
 
 # Streamable HTTP server (recommended)
 docker run -d \
@@ -890,10 +897,12 @@ to the workspace default type otherwise.
 
 ## Security
 
-`npm audit` reports moderate vulnerabilities in Svelte (SSR XSS).
-These come from Huly SDK transitive dependencies — the SDK shares packages
-with Huly's web frontend. MCP server never renders HTML or uses Svelte.
-The vulnerabilities are **not exploitable** in this context.
+The Huly SDK brings transitive Tiptap 2 and Svelte 4 dependencies with
+moderate advisories. Their published fixes require major versions outside
+the SDK's supported dependency ranges. This server does not render Svelte
+components, but it does process rich text through Huly's Tiptap packages;
+these findings must not be dismissed as universally unexploitable.
+See [SECURITY.md](SECURITY.md) for the current dependency assessment.
 
 ---
 
