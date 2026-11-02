@@ -33,7 +33,283 @@ import {
 } from '../projection.mjs';
 import { chunter, tags, tracker } from './sdk.mjs';
 
+// Collaborator document reference stored in Issue.description once the body lives in the collaborator service.
+const COLLABORATOR_REF = /^[a-f0-9]+-\w+-\d+$/;
+
+/** Fixed field sets of the read tools that do not take a field projection. */
+const SEARCH_ISSUE_FIELDS = new Set([
+  'title', 'status', 'priority', 'type', 'assignee', 'component', 'milestone', 'parent', 'childCount',
+  'dueDate', 'createdOn', 'modifiedOn', 'completedAt'
+]);
+const MY_ISSUE_FIELDS = new Set([...SEARCH_ISSUE_FIELDS, 'labels', 'estimation', 'reportedTime']);
+
+const isSubIssue = issue => Boolean(issue.attachedTo) && issue.attachedToClass === tracker.class.Issue;
+const unique = values => [...new Set(values)];
+
+/** Group documents by the issue they are attached to. */
+function groupByAttachedTo(values) {
+  const grouped = new Map();
+  for (const value of values) {
+    if (!grouped.has(value.attachedTo)) grouped.set(value.attachedTo, []);
+    grouped.get(value.attachedTo).push(value);
+  }
+  return grouped;
+}
+
+/**
+ * Store a bounded collection on an issue entry, adding count/truncated metadata when the projection asks
+ * for it or the collection was cut.
+ */
+function assignBounded(entry, key, values, maximum, projection) {
+  const bounded = boundedCollection(values, maximum);
+  entry[key] = bounded.items;
+  if (projection.emitExpansionMetadata || bounded.truncated) {
+    entry[`${key}Count`] = bounded.count;
+    entry[`${key}Truncated`] = bounded.truncated;
+  }
+}
+
+/**
+ * Build one issue's output row from loaded lookups, including only the requested fields.
+ * @param {Object} issue - Issue document
+ * @param {Object} lookups - Result of `_issueLookups`
+ * @param {(name: string) => boolean} field - Whether a field was requested
+ * @returns {Object}
+ */
+function issueRow(issue, lookups, field) {
+  const row = { id: `${lookups.identifierOf(issue)}-${issue.number}` };
+  if (field('title')) row.title = issue.title;
+  if (field('status')) row.status = strictGet(lookups.statusMap, issue.status, 'Status');
+  if (field('priority')) row.priority = strictGet(PRIORITY_NAMES, issue.priority, 'Priority');
+  if (field('type')) row.type = strictGet(lookups.taskTypeMap, issue.kind, 'Task type');
+  if (field('assignee')) row.assignee = issue.assignee ? lookups.employeeMap.get(issue.assignee) ?? null : null;
+  if (field('component')) row.component = issue.component ? lookups.componentMap.get(issue.component) ?? null : null;
+  if (field('labels')) row.labels = (lookups.labelsByIssue.get(issue._id) || []).map(item => item.title);
+  if (field('parent')) row.parent = isSubIssue(issue) ? lookups.parentMap.get(issue.attachedTo) ?? null : null;
+  if (field('childCount')) row.childCount = issue.subIssues || 0;
+  if (field('milestone')) row.milestone = issue.milestone ? lookups.milestoneMap.get(issue.milestone) ?? null : null;
+  if (field('dueDate')) row.dueDate = issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null;
+  const times = issueTimeFields(issue);
+  if (field('estimation')) row.estimation = times.estimation;
+  if (field('reportedTime')) row.reportedTime = times.reportedTime;
+  // Only an issue with children carries a rollup, so a leaf costs no bytes.
+  const rollup = issueRollupFields(issue);
+  if (rollup) {
+    if (field('estimationTotal')) row.estimationTotal = rollup.estimationTotal;
+    if (field('reportedTimeTotal')) row.reportedTimeTotal = rollup.reportedTimeTotal;
+  }
+  if (field('createdOn')) row.createdOn = issue.createdOn;
+  if (field('modifiedOn')) row.modifiedOn = issue.modifiedOn;
+  if (field('completedAt')) row.completedAt = lookups.doneStatuses.has(issue.status) ? issue.modifiedOn : null;
+  return row;
+}
+
+/**
+ * Add the requested expansions (description, comments, activity, time reports, relations, children) to
+ * an issue entry.
+ * @param {Object} entry - Row being built
+ * @param {Object} issue - Issue document
+ * @param {Object} expansions - Result of `_issueExpansions`
+ * @param {Object} lookups - Result of `_issueLookups`
+ * @param {Object} projection - Normalized read options
+ * @param {Function} projectRelations - Relation projector bound to the client
+ */
+function applyIssueExpansions(entry, issue, expansions, lookups, projection, projectRelations) {
+  const included = name => projection.include.has(name);
+  const comments = expansions.commentsByIssue.get(issue._id) || [];
+  const timeReports = expansions.timeReportsByIssue.get(issue._id) || [];
+  if (included('description')) {
+    const preview = markdownPreview(expansions.descriptionByIssue.get(issue._id) ?? '', projection.descriptionPreviewChars);
+    entry.description = preview.text;
+    if (projection.emitExpansionMetadata || preview.truncated) {
+      entry.descriptionTruncated = preview.truncated;
+    }
+  }
+  if (included('comments')) {
+    assignBounded(entry, 'comments', comments.map(comment => ({
+      id: comment._id,
+      text: fromMarkup(comment.message),
+      createdBy: comment.createdBy || null,
+      createdOn: comment.createdOn,
+      modifiedOn: comment.modifiedOn
+    })), projection.limits.comments, projection);
+  }
+  if (included('activity')) {
+    const activity = [
+      ...comments.map(comment => ({
+        type: 'comment',
+        text: fromMarkup(comment.message),
+        date: comment.createdOn,
+        dateFormatted: comment.createdOn ? new Date(comment.createdOn).toISOString() : null
+      })),
+      ...timeReports.map(report => ({
+        type: 'time_logged',
+        hours: report.value,
+        description: fromMarkup(report.description),
+        date: report.date,
+        dateFormatted: toIsoDate(report.date)
+      }))
+    ].sort((a, b) => (a.date || 0) - (b.date || 0));
+    assignBounded(entry, 'activity', activity, projection.limits.activity, projection);
+  }
+  if (included('timeReports')) {
+    assignBounded(entry, 'timeReports', timeReports.map(report => ({
+      id: report._id,
+      hours: report.value,
+      description: fromMarkup(report.description),
+      date: toIsoDate(report.date)
+    })), projection.limits.timeReports, projection);
+  }
+  if (included('relations') || included('blockedBy')) {
+    const relationData = projectRelations(issue, expansions.relatedIssueMap, projection.limits.relations);
+    for (const key of ['relations', 'blockedBy']) {
+      if (!included(key)) continue;
+      entry[key] = relationData[key];
+      if (projection.emitExpansionMetadata || relationData[`${key}Truncated`]) {
+        entry[`${key}Count`] = relationData[`${key}Count`];
+        entry[`${key}Truncated`] = relationData[`${key}Truncated`];
+      }
+    }
+  }
+  if (included('children')) {
+    const identifier = lookups.identifierOf(issue);
+    assignBounded(entry, 'children', (expansions.childrenByIssue.get(issue._id) || []).map(child => ({
+      id: `${identifier}-${child.number}`,
+      title: child.title,
+      status: strictGet(lookups.statusMap, child.status, 'Status'),
+      type: strictGet(lookups.taskTypeMap, child.kind, 'Task type')
+    })), projection.limits.children, projection);
+  }
+}
+
 export class IssueReadMethods {
+  /**
+   * Load the lookup tables needed to build rows for a batch of issues. Only tables required by the
+   * requested fields and expansions are fetched.
+   * @param {Object} client - Huly SDK client
+   * @param {Object[]} issues - Issue documents (may span projects)
+   * @param {Object} options
+   * @param {Set<string>} options.fields - Requested row fields
+   * @param {Set<string>} [options.include] - Requested expansions
+   * @param {Object} [options.statusData] - Status maps the caller already loaded
+   * @param {Map} [options.milestoneMap] - Milestone id → output value the caller already loaded
+   * @param {Map} [options.employeeMap] - Employee id → name the caller already loaded
+   * @param {Object} [options.project] - The one project all issues belong to, when the caller knows it
+   * @returns {Promise<Object>} identifierOf, statusMap, doneStatuses, taskTypeMap, employeeMap,
+   *   componentMap, milestoneMap, labelsByIssue, parentMap
+   */
+  async _issueLookups(client, issues, {
+    fields, include = new Set(), statusData, milestoneMap, employeeMap, project
+  }) {
+    const has = name => fields.has(name);
+    const issueIds = issues.map(issue => issue._id);
+    const spaceIds = unique(issues.map(issue => issue.space));
+    const needsStatus = !statusData && (has('status') || has('completedAt') || include.has('children'));
+    const needsType = has('type') || include.has('children');
+    const needsMilestones = !milestoneMap && has('milestone');
+    const parentIds = has('parent') ? unique(issues.filter(isSubIssue).map(issue => issue.attachedTo)) : [];
+
+    const [loadedStatus, taskTypeMap, employeeData, components, milestones, labels, parentIssues] = await Promise.all([
+      needsStatus ? this._buildStatusMaps(client) : Promise.resolve(statusData),
+      needsType ? this._buildTaskTypeMap(client) : Promise.resolve(new Map()),
+      has('assignee') && !employeeMap ? this._buildEmployeeMap(client) : Promise.resolve({ employeeMap: employeeMap ?? new Map() }),
+      has('component') && spaceIds.length > 0
+        ? client.findAll(tracker.class.Component, { space: { $in: spaceIds } })
+        : Promise.resolve([]),
+      needsMilestones && spaceIds.length > 0
+        ? client.findAll(tracker.class.Milestone, { space: { $in: spaceIds } })
+        : Promise.resolve([]),
+      has('labels') && issueIds.length > 0
+        ? client.findAll(tags.class.TagReference, { attachedTo: { $in: issueIds } })
+        : Promise.resolve([]),
+      parentIds.length > 0
+        ? client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
+        : Promise.resolve([])
+    ]);
+
+    // Identifiers for the issues' projects and their parents' projects, fetching only unknown ones.
+    const identifiers = new Map(project ? [[project._id, project.identifier]] : []);
+    const unknownSpaces = unique([...(project ? [] : spaceIds), ...parentIssues.map(parent => parent.space)])
+      .filter(space => !identifiers.has(space));
+    if (unknownSpaces.length > 0) {
+      for (const found of await client.findAll(tracker.class.Project, { _id: { $in: unknownSpaces } })) {
+        identifiers.set(found._id, found.identifier);
+      }
+    }
+
+    const status = loadedStatus ?? { statusMap: new Map(), doneStatuses: new Set() };
+    return {
+      identifierOf: project
+        ? () => project.identifier
+        : issue => strictGet(identifiers, issue.space, 'Issue project'),
+      statusMap: status.statusMap,
+      doneStatuses: status.doneStatuses,
+      taskTypeMap,
+      employeeMap: employeeData.employeeMap,
+      componentMap: new Map(components.map(component => [component._id, component.label])),
+      milestoneMap: milestoneMap ?? new Map(milestones.map(milestone => [milestone._id, milestone.label])),
+      labelsByIssue: this._groupLabelsByIssue(labels),
+      parentMap: new Map(parentIssues.map(parent => [
+        parent._id,
+        `${identifiers.get(parent.space) ?? '?'}-${parent.number}`
+      ]))
+    };
+  }
+
+  /**
+   * Load the expansions requested by a read projection for a batch of issues in one project.
+   * @param {Object} client - Huly SDK client
+   * @param {Object[]} issues - Issue documents
+   * @param {Object} project - Project the issues belong to
+   * @param {Object} projection - Normalized read options
+   * @returns {Promise<Object>} commentsByIssue, timeReportsByIssue, childrenByIssue, relatedIssueMap,
+   *   descriptionByIssue
+   */
+  async _issueExpansions(client, issues, project, projection) {
+    const included = name => projection.include.has(name);
+    const issueIds = issues.map(issue => issue._id);
+    const [comments, timeReports, children, relatedIssueMap, descriptions] = await Promise.all([
+      included('comments') || included('activity')
+        ? client.findAll(chunter.class.ChatMessage, { attachedTo: { $in: issueIds } }, { sort: { createdOn: 1 } })
+        : Promise.resolve([]),
+      included('timeReports') || included('activity')
+        ? client.findAll(tracker.class.TimeSpendReport, { attachedTo: { $in: issueIds } }, { sort: { date: -1 } })
+        : Promise.resolve([]),
+      included('children')
+        ? client.findAll(tracker.class.Issue, {
+          attachedTo: { $in: issueIds },
+          attachedToClass: tracker.class.Issue,
+          space: project._id
+        })
+        : Promise.resolve([]),
+      included('relations') || included('blockedBy')
+        ? this._buildRelatedIssueMap(client, issues)
+        : Promise.resolve(new Map()),
+      included('description')
+        ? Promise.all(issues.map(async issue => [issue._id, await this._readIssueDescription(issue)]))
+        : Promise.resolve([])
+    ]);
+    return {
+      commentsByIssue: groupByAttachedTo(comments),
+      timeReportsByIssue: groupByAttachedTo(timeReports),
+      childrenByIssue: groupByAttachedTo(children),
+      relatedIssueMap,
+      descriptionByIssue: new Map(descriptions)
+    };
+  }
+
+  /**
+   * Issue description as markdown, read from the collaborator service when the body lives there.
+   * @param {Object} issue - Issue document
+   * @returns {Promise<string>}
+   */
+  async _readIssueDescription(issue) {
+    const rawDesc = issue.description;
+    return typeof rawDesc === 'string' && COLLABORATOR_REF.test(rawDesc)
+      ? await this._readCollaboratorField(issue._id, issue._class, 'description', rawDesc)
+      : fromMarkup(rawDesc);
+  }
+
   _issueTimeFields(issue) {
     return issueTimeFields(issue);
   }
@@ -123,13 +399,7 @@ export class IssueReadMethods {
     );
     const client = await this._getClient();
 
-    const proj = await client.findOne(tracker.class.Project, {
-      identifier: project.toUpperCase()
-    });
-
-    if (!proj) {
-      throw new Error(`Project not found: ${project}`);
-    }
+    const proj = await this._findProject(client, project);
 
     const query = { space: proj._id };
 
@@ -152,7 +422,7 @@ export class IssueReadMethods {
         ? client.findAll(tracker.class.Milestone, { space: proj._id })
         : Promise.resolve([])
     ]);
-    const { statuses, statusMap, doneStatuses } = statusData;
+    const { statuses } = statusData;
 
     if (status) {
       const matchingStatuses = statuses.filter(s => nameMatch(s.name, status));
@@ -212,191 +482,21 @@ export class IssueReadMethods {
       return listEnvelope([]);
     }
 
-    // Fetch only lookup tables required by the requested projection.
-    const issueIds = issues.map(i => i._id);
-    const needsType = projection.fields.has('type') || projection.include.has('children');
-    const [allLabels, taskTypeMap, components, employeeData] = await Promise.all([
-      projection.fields.has('labels')
-        ? client.findAll(tags.class.TagReference, { attachedTo: { $in: issueIds } })
-        : Promise.resolve([]),
-      needsType ? this._buildTaskTypeMap(client) : Promise.resolve(new Map()),
-      projection.fields.has('component')
-        ? client.findAll(tracker.class.Component, { space: proj._id })
-        : Promise.resolve([]),
-      projection.fields.has('assignee')
-        ? this._buildEmployeeMap(client)
-        : Promise.resolve({ employeeMap: new Map() })
+    const [lookups, expansions] = await Promise.all([
+      this._issueLookups(client, issues, {
+        fields: projection.fields,
+        include: projection.include,
+        statusData,
+        milestoneMap,
+        project: proj
+      }),
+      this._issueExpansions(client, issues, proj, projection)
     ]);
-    const labelsByIssue = this._groupLabelsByIssue(allLabels);
-    const componentMap = new Map(components.map(c => [c._id, c.label]));
-    const { employeeMap } = employeeData;
-
-    // Parent issue map for hierarchy (batch lookup)
-    const parentIds = projection.fields.has('parent')
-      ? [...new Set(issues
-        .filter(i => i.attachedTo && i.attachedToClass === tracker.class.Issue)
-        .map(i => i.attachedTo))]
-      : [];
-    const parentIssues = parentIds.length > 0
-      ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
-      : [];
-    const parentSpaceIds = [...new Set(parentIssues.map(p => p.space))];
-    const parentProjects = parentSpaceIds.length > 0
-      ? await client.findAll(tracker.class.Project, { _id: { $in: parentSpaceIds } })
-      : [];
-    const parentProjMap = new Map(parentProjects.map(p => [p._id, p.identifier]));
-    const parentMap = new Map(parentIssues.map(p => [
-      p._id,
-      `${parentProjMap.get(p.space) ?? '?'}-${p.number}`
-    ]));
-
-    const groupByAttachedTo = values => {
-      const grouped = new Map();
-      for (const value of values) {
-        if (!grouped.has(value.attachedTo)) grouped.set(value.attachedTo, []);
-        grouped.get(value.attachedTo).push(value);
-      }
-      return grouped;
-    };
-    const [allComments, allTimeReports, allChildren, relatedIssueMap, descriptions] = await Promise.all([
-      projection.include.has('comments') || projection.include.has('activity')
-        ? client.findAll(chunter.class.ChatMessage, { attachedTo: { $in: issueIds } }, { sort: { createdOn: 1 } })
-        : Promise.resolve([]),
-      projection.include.has('timeReports') || projection.include.has('activity')
-        ? client.findAll(tracker.class.TimeSpendReport, { attachedTo: { $in: issueIds } }, { sort: { date: -1 } })
-        : Promise.resolve([]),
-      projection.include.has('children')
-        ? client.findAll(tracker.class.Issue, {
-          attachedTo: { $in: issueIds },
-          attachedToClass: tracker.class.Issue,
-          space: proj._id
-        })
-        : Promise.resolve([]),
-      projection.include.has('relations') || projection.include.has('blockedBy')
-        ? this._buildRelatedIssueMap(client, issues)
-        : Promise.resolve(new Map()),
-      projection.include.has('description')
-        ? Promise.all(issues.map(async issue => {
-          const rawDesc = issue.description;
-          const text = typeof rawDesc === 'string' && /^[a-f0-9]+-\w+-\d+$/.test(rawDesc)
-            ? await this._readCollaboratorField(issue._id, issue._class, 'description', rawDesc)
-            : fromMarkup(rawDesc);
-          return [issue._id, text];
-        }))
-        : Promise.resolve([])
-    ]);
-    const commentsByIssue = groupByAttachedTo(allComments);
-    const timeReportsByIssue = groupByAttachedTo(allTimeReports);
-    const childrenByIssue = groupByAttachedTo(allChildren);
-    const descriptionByIssue = new Map(descriptions);
-
-    const assignBounded = (entry, key, values, maximum) => {
-      const bounded = boundedCollection(values, maximum);
-      entry[key] = bounded.items;
-      if (projection.emitExpansionMetadata || bounded.truncated) {
-        entry[`${key}Count`] = bounded.count;
-        entry[`${key}Truncated`] = bounded.truncated;
-      }
-    };
-
     const field = name => projection.fields.has(name);
-    const included = name => projection.include.has(name);
-
+    const projectRelations = this._projectRelations.bind(this);
     const result = issues.map(issue => {
-      const entry = { id: `${proj.identifier}-${issue.number}` };
-      if (field('title')) entry.title = issue.title;
-      if (field('status')) entry.status = strictGet(statusMap, issue.status, 'Status');
-      if (field('priority')) entry.priority = strictGet(PRIORITY_NAMES, issue.priority, 'Priority');
-      if (field('type')) entry.type = strictGet(taskTypeMap, issue.kind, 'Task type');
-      if (field('assignee')) entry.assignee = issue.assignee ? employeeMap.get(issue.assignee) ?? null : null;
-      if (field('component')) entry.component = issue.component ? componentMap.get(issue.component) ?? null : null;
-      if (field('labels')) entry.labels = (labelsByIssue.get(issue._id) || []).map(item => item.title);
-      if (field('parent')) {
-        entry.parent = issue.attachedTo && issue.attachedToClass === tracker.class.Issue
-          ? parentMap.get(issue.attachedTo) ?? null
-          : null;
-      }
-      if (field('childCount')) entry.childCount = issue.subIssues || 0;
-      if (field('milestone')) entry.milestone = issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null;
-      if (field('dueDate')) entry.dueDate = issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null;
-      const timeFields = this._issueTimeFields(issue);
-      if (field('estimation')) entry.estimation = timeFields.estimation;
-      if (field('reportedTime')) entry.reportedTime = timeFields.reportedTime;
-      // Only an issue with children carries a rollup, so a leaf costs no bytes.
-      const rollup = issueRollupFields(issue);
-      if (rollup) {
-        if (field('estimationTotal')) entry.estimationTotal = rollup.estimationTotal;
-        if (field('reportedTimeTotal')) entry.reportedTimeTotal = rollup.reportedTimeTotal;
-      }
-      if (field('createdOn')) entry.createdOn = issue.createdOn;
-      if (field('modifiedOn')) entry.modifiedOn = issue.modifiedOn;
-      if (field('completedAt')) entry.completedAt = doneStatuses.has(issue.status) ? issue.modifiedOn : null;
-
-      if (included('description')) {
-        const preview = markdownPreview(descriptionByIssue.get(issue._id) ?? '', projection.descriptionPreviewChars);
-        entry.description = preview.text;
-        if (projection.emitExpansionMetadata || preview.truncated) {
-          entry.descriptionTruncated = preview.truncated;
-        }
-      }
-      if (included('comments')) {
-        const comments = (commentsByIssue.get(issue._id) || []).map(comment => ({
-          id: comment._id,
-          text: fromMarkup(comment.message),
-          createdBy: comment.createdBy || null,
-          createdOn: comment.createdOn,
-          modifiedOn: comment.modifiedOn
-        }));
-        assignBounded(entry, 'comments', comments, projection.limits.comments);
-      }
-      if (included('activity')) {
-        const activity = [
-          ...(commentsByIssue.get(issue._id) || []).map(comment => ({
-            type: 'comment',
-            text: fromMarkup(comment.message),
-            date: comment.createdOn,
-            dateFormatted: comment.createdOn ? new Date(comment.createdOn).toISOString() : null
-          })),
-          ...(timeReportsByIssue.get(issue._id) || []).map(report => ({
-            type: 'time_logged',
-            hours: report.value,
-            description: fromMarkup(report.description),
-            date: report.date,
-            dateFormatted: toIsoDate(report.date)
-          }))
-        ].sort((a, b) => (a.date || 0) - (b.date || 0));
-        assignBounded(entry, 'activity', activity, projection.limits.activity);
-      }
-      if (included('timeReports')) {
-        const reports = (timeReportsByIssue.get(issue._id) || []).map(report => ({
-          id: report._id,
-          hours: report.value,
-          description: fromMarkup(report.description),
-          date: toIsoDate(report.date)
-        }));
-        assignBounded(entry, 'timeReports', reports, projection.limits.timeReports);
-      }
-      if (included('relations') || included('blockedBy')) {
-        const relationData = this._projectRelations(issue, relatedIssueMap, projection.limits.relations);
-        for (const key of ['relations', 'blockedBy']) {
-          if (!included(key)) continue;
-          entry[key] = relationData[key];
-          if (projection.emitExpansionMetadata || relationData[`${key}Truncated`]) {
-            entry[`${key}Count`] = relationData[`${key}Count`];
-            entry[`${key}Truncated`] = relationData[`${key}Truncated`];
-          }
-        }
-      }
-      if (included('children')) {
-        const children = (childrenByIssue.get(issue._id) || []).map(child => ({
-          id: `${proj.identifier}-${child.number}`,
-          title: child.title,
-          status: strictGet(statusMap, child.status, 'Status'),
-          type: strictGet(taskTypeMap, child.kind, 'Task type')
-        }));
-        assignBounded(entry, 'children', children, projection.limits.children);
-      }
-
+      const entry = issueRow(issue, lookups, field);
+      applyIssueExpansions(entry, issue, expansions, lookups, projection, projectRelations);
       return projectIssueFields(withExtra(issue, entry), projection);
     });
 
@@ -414,167 +514,26 @@ export class IssueReadMethods {
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
     const field = name => projection.fields.has(name);
-    const included = name => projection.include.has(name);
-    const needsStatus = field('status') || field('completedAt') || included('children');
-    const needsType = field('type') || included('children');
-    const [statusData, taskTypeMap, employeeData, components, issueLabels] = await Promise.all([
-      needsStatus
-        ? this._buildStatusMaps(client)
-        : Promise.resolve({ statusMap: new Map(), doneStatuses: new Set() }),
-      needsType ? this._buildTaskTypeMap(client) : Promise.resolve(new Map()),
-      field('assignee') ? this._buildEmployeeMap(client) : Promise.resolve({ employeeMap: new Map() }),
-      field('component')
-        ? client.findAll(tracker.class.Component, { space: project._id })
-        : Promise.resolve([]),
-      field('labels')
-        ? client.findAll(tags.class.TagReference, { attachedTo: issue._id })
-        : Promise.resolve([])
+    // A single read returns the milestone with its id and status, not just its name.
+    const milestone = field('milestone') && issue.milestone
+      ? await client.findOne(tracker.class.Milestone, { _id: issue.milestone })
+      : null;
+    const milestoneMap = new Map(milestone ? [[milestone._id, {
+      id: milestone._id,
+      name: milestone.label,
+      status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status')
+    }]] : []);
+    const [lookups, expansions] = await Promise.all([
+      this._issueLookups(client, [issue], {
+        fields: projection.fields,
+        include: projection.include,
+        milestoneMap,
+        project
+      }),
+      this._issueExpansions(client, [issue], project, projection)
     ]);
-    const { statusMap, doneStatuses } = statusData;
-    const { employeeMap } = employeeData;
-    const componentMap = new Map(components.map(c => [c._id, c.label]));
-
-    const descriptionPromise = included('description')
-      ? (async () => {
-        const rawDesc = issue.description;
-        return typeof rawDesc === 'string' && /^[a-f0-9]+-\w+-\d+$/.test(rawDesc)
-          ? this._readCollaboratorField(issue._id, issue._class, 'description', rawDesc)
-          : fromMarkup(rawDesc);
-      })()
-      : Promise.resolve(undefined);
-    const parentPromise = field('parent') && issue.attachedTo && issue.attachedToClass === tracker.class.Issue
-      ? (async () => {
-        const parentIssue = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
-        if (!parentIssue) return null;
-        const parentProject = await client.findOne(tracker.class.Project, { _id: parentIssue.space });
-        return parentProject ? `${parentProject.identifier}-${parentIssue.number}` : null;
-      })()
-      : Promise.resolve(null);
-    const milestonePromise = field('milestone') && issue.milestone
-      ? client.findOne(tracker.class.Milestone, { _id: issue.milestone })
-      : Promise.resolve(null);
-    const [descriptionContent, parentId, milestone, comments, timeReports, children, relatedIssueMap] = await Promise.all([
-      descriptionPromise,
-      parentPromise,
-      milestonePromise,
-      included('comments') || included('activity')
-        ? client.findAll(chunter.class.ChatMessage, { attachedTo: issue._id }, { sort: { createdOn: 1 } })
-        : Promise.resolve([]),
-      included('timeReports') || included('activity')
-        ? client.findAll(tracker.class.TimeSpendReport, { attachedTo: issue._id }, { sort: { date: -1 } })
-        : Promise.resolve([]),
-      included('children')
-        ? client.findAll(tracker.class.Issue, {
-          space: project._id,
-          attachedTo: issue._id,
-          attachedToClass: tracker.class.Issue
-        })
-        : Promise.resolve([]),
-      included('relations') || included('blockedBy')
-        ? this._buildRelatedIssueMap(client, [issue])
-        : Promise.resolve(new Map())
-    ]);
-
-    const result = { id: `${project.identifier}-${issue.number}` };
-    if (field('title')) result.title = issue.title;
-    if (field('status')) result.status = strictGet(statusMap, issue.status, 'Status');
-    if (field('priority')) result.priority = strictGet(PRIORITY_NAMES, issue.priority, 'Priority');
-    if (field('type')) result.type = strictGet(taskTypeMap, issue.kind, 'Task type');
-    if (field('assignee')) result.assignee = issue.assignee ? employeeMap.get(issue.assignee) ?? null : null;
-    if (field('component')) result.component = issue.component ? componentMap.get(issue.component) ?? null : null;
-    if (field('labels')) result.labels = issueLabels.map(item => item.title);
-    if (field('parent')) result.parent = parentId;
-    if (field('childCount')) result.childCount = issue.subIssues || 0;
-    if (field('milestone')) {
-      result.milestone = milestone ? {
-        id: milestone._id,
-        name: milestone.label,
-        status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status')
-      } : null;
-    }
-    if (field('dueDate')) result.dueDate = issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null;
-    const issueTimes = this._issueTimeFields(issue);
-    if (field('estimation')) result.estimation = issueTimes.estimation;
-    if (field('reportedTime')) result.reportedTime = issueTimes.reportedTime;
-    const issueRollup = issueRollupFields(issue);
-    if (issueRollup) {
-      if (field('estimationTotal')) result.estimationTotal = issueRollup.estimationTotal;
-      if (field('reportedTimeTotal')) result.reportedTimeTotal = issueRollup.reportedTimeTotal;
-    }
-    if (field('createdOn')) result.createdOn = issue.createdOn;
-    if (field('modifiedOn')) result.modifiedOn = issue.modifiedOn;
-    if (field('completedAt')) result.completedAt = doneStatuses.has(issue.status) ? issue.modifiedOn : null;
-
-    if (included('description')) {
-      const preview = markdownPreview(descriptionContent ?? '', projection.descriptionPreviewChars);
-      result.description = preview.text;
-      if (projection.emitExpansionMetadata || preview.truncated) {
-        result.descriptionTruncated = preview.truncated;
-      }
-    }
-    const assignBounded = (key, values, maximum) => {
-      const bounded = boundedCollection(values, maximum);
-      result[key] = bounded.items;
-      if (projection.emitExpansionMetadata || bounded.truncated) {
-        result[`${key}Count`] = bounded.count;
-        result[`${key}Truncated`] = bounded.truncated;
-      }
-    };
-    if (included('comments')) {
-      assignBounded('comments', comments.map(comment => ({
-        id: comment._id,
-        text: fromMarkup(comment.message),
-        createdBy: comment.createdBy || null,
-        createdOn: comment.createdOn,
-        modifiedOn: comment.modifiedOn
-      })), projection.limits.comments);
-    }
-    if (included('activity')) {
-      const activity = [
-        ...comments.map(comment => ({
-          type: 'comment',
-          text: fromMarkup(comment.message),
-          date: comment.createdOn,
-          dateFormatted: comment.createdOn ? new Date(comment.createdOn).toISOString() : null
-        })),
-        ...timeReports.map(report => ({
-          type: 'time_logged',
-          hours: report.value,
-          description: fromMarkup(report.description),
-          date: report.date,
-          dateFormatted: toIsoDate(report.date)
-        }))
-      ].sort((a, b) => (a.date || 0) - (b.date || 0));
-      assignBounded('activity', activity, projection.limits.activity);
-    }
-    if (included('timeReports')) {
-      assignBounded('timeReports', timeReports.map(report => ({
-        id: report._id,
-        hours: report.value,
-        description: fromMarkup(report.description),
-        date: toIsoDate(report.date)
-      })), projection.limits.timeReports);
-    }
-    if (included('relations') || included('blockedBy')) {
-      const relationData = this._projectRelations(issue, relatedIssueMap, projection.limits.relations);
-      for (const key of ['relations', 'blockedBy']) {
-        if (!included(key)) continue;
-        result[key] = relationData[key];
-        if (projection.emitExpansionMetadata || relationData[`${key}Truncated`]) {
-          result[`${key}Count`] = relationData[`${key}Count`];
-          result[`${key}Truncated`] = relationData[`${key}Truncated`];
-        }
-      }
-    }
-    if (included('children')) {
-      assignBounded('children', children.map(child => ({
-        id: `${project.identifier}-${child.number}`,
-        title: child.title,
-        status: strictGet(statusMap, child.status, 'Status'),
-        type: strictGet(taskTypeMap, child.kind, 'Task type')
-      })), projection.limits.children);
-    }
-
+    const result = issueRow(issue, lookups, field);
+    applyIssueExpansions(result, issue, expansions, lookups, projection, this._projectRelations.bind(this));
     return projectIssueFields(withExtra(issue, result), projection);
   }
 
@@ -592,10 +551,7 @@ export class IssueReadMethods {
     const searchQuery = { $search: query };
 
     if (projectIdent) {
-      const proj = await client.findOne(tracker.class.Project, {
-        identifier: projectIdent.toUpperCase()
-      });
-      if (!proj) throw new Error(`Project not found: ${projectIdent}`);
+      const proj = await this._findProject(client, projectIdent);
       searchQuery.space = proj._id;
     }
 
@@ -610,52 +566,9 @@ export class IssueReadMethods {
       }
     });
     const issues = fetchResult.items;
-
-    const { statusMap, doneStatuses } = await this._buildStatusMaps(client);
-
-    const projects = await client.findAll(tracker.class.Project, {});
-    const projMap = new Map(projects.map(p => [p._id, p.identifier]));
-
-    const taskTypeMap = await this._buildTaskTypeMap(client);
-    const { employeeMap } = await this._buildEmployeeMap(client);
-
-    // Component map (ID → name) — gather all unique spaces from results
-    const spaceIds = [...new Set(issues.map(i => i.space))];
-    const allComponents = spaceIds.length > 0
-      ? await client.findAll(tracker.class.Component, { space: { $in: spaceIds } })
-      : [];
-    const componentMap = new Map(allComponents.map(c => [c._id, c.label]));
-
-    // Milestone map (ID → name)
-    const allMilestones = spaceIds.length > 0
-      ? await client.findAll(tracker.class.Milestone, { space: { $in: spaceIds } })
-      : [];
-    const milestoneMap = new Map(allMilestones.map(m => [m._id, m.label]));
-
-    const parentIds = [...new Set(issues
-      .filter(i => i.attachedTo && i.attachedToClass === tracker.class.Issue)
-      .map(i => i.attachedTo))];
-    const parentIssues = parentIds.length > 0
-      ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
-      : [];
-    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) ?? '?'}-${p.number}`]));
-
-    const items = issues.map(i => withExtra(i, {
-      id: `${strictGet(projMap, i.space, 'Issue project')}-${i.number}`,
-      title: i.title,
-      status: strictGet(statusMap, i.status, 'Status'),
-      priority: strictGet(PRIORITY_NAMES, i.priority, 'Priority'),
-      type: strictGet(taskTypeMap, i.kind, 'Task type'),
-      assignee: i.assignee ? employeeMap.get(i.assignee) ?? null : null,
-      component: i.component ? componentMap.get(i.component) ?? null : null,
-      milestone: i.milestone ? milestoneMap.get(i.milestone) ?? null : null,
-      parent: (i.attachedTo && i.attachedToClass === tracker.class.Issue) ? parentMap.get(i.attachedTo) ?? null : null,
-      childCount: i.subIssues || 0,
-      dueDate: i.dueDate ? new Date(i.dueDate).toISOString().split('T')[0] : null,
-      createdOn: i.createdOn,
-      modifiedOn: i.modifiedOn,
-      completedAt: doneStatuses.has(i.status) ? i.modifiedOn : null
-    }));
+    const lookups = await this._issueLookups(client, issues, { fields: SEARCH_ISSUE_FIELDS });
+    const field = name => SEARCH_ISSUE_FIELDS.has(name);
+    const items = issues.map(issue => withExtra(issue, issueRow(issue, lookups, field)));
     return listEnvelope(items, fetchResult.nextCursor);
   }
 
@@ -704,10 +617,7 @@ export class IssueReadMethods {
     const query = { assignee: me._id };
 
     if (projectIdent) {
-      const proj = await client.findOne(tracker.class.Project, {
-        identifier: projectIdent.toUpperCase()
-      });
-      if (!proj) throw new Error(`Project not found: ${projectIdent}`);
+      const proj = await this._findProject(client, projectIdent);
       query.space = proj._id;
     }
 
@@ -737,63 +647,13 @@ export class IssueReadMethods {
       }
     });
     const issues = fetchResult.items;
-
-    const projects = await client.findAll(tracker.class.Project, {});
-    const projMap = new Map(projects.map(p => [p._id, p.identifier]));
-
-    // Batch fetch all labels for efficiency (avoids N+1)
-    const issueIds = issues.map(i => i._id);
-    const allLabels = issueIds.length > 0
-      ? await client.findAll(tags.class.TagReference, { attachedTo: { $in: issueIds } })
-      : [];
-    const labelsByIssue = this._groupLabelsByIssue(allLabels);
-
-    const taskTypeMap = await this._buildTaskTypeMap(client);
-
-    // Component map (ID → name)
-    const spaceIds = [...new Set(issues.map(i => i.space))];
-    const allComponents = spaceIds.length > 0
-      ? await client.findAll(tracker.class.Component, { space: { $in: spaceIds } })
-      : [];
-    const componentMap = new Map(allComponents.map(c => [c._id, c.label]));
-
-    // Milestone map (ID → name)
-    const allMilestones = spaceIds.length > 0
-      ? await client.findAll(tracker.class.Milestone, { space: { $in: spaceIds } })
-      : [];
-    const milestoneMap = new Map(allMilestones.map(m => [m._id, m.label]));
-
-    const parentIds = [...new Set(issues
-      .filter(i => i.attachedTo && i.attachedToClass === tracker.class.Issue)
-      .map(i => i.attachedTo))];
-    const parentIssues = parentIds.length > 0
-      ? await client.findAll(tracker.class.Issue, { _id: { $in: parentIds } })
-      : [];
-    const parentMap = new Map(parentIssues.map(p => [p._id, `${projMap.get(p.space) ?? '?'}-${p.number}`]));
-
-    const result = [];
-    for (const issue of issues) {
-      const issueLabels = labelsByIssue.get(issue._id) || [];
-
-      result.push(withExtra(issue, {
-        id: `${strictGet(projMap, issue.space, 'Issue project')}-${issue.number}`,
-        title: issue.title,
-        status: strictGet(statusMap, issue.status, 'Status'),
-        priority: strictGet(PRIORITY_NAMES, issue.priority, 'Priority'),
-        type: strictGet(taskTypeMap, issue.kind, 'Task type'),
-        assignee: issue.assignee ? employeeMap.get(issue.assignee) ?? null : null,
-        component: issue.component ? componentMap.get(issue.component) ?? null : null,
-        labels: issueLabels.map(l => l.title),
-        parent: (issue.attachedTo && issue.attachedToClass === tracker.class.Issue) ? parentMap.get(issue.attachedTo) ?? null : null,
-        childCount: issue.subIssues || 0,
-        milestone: issue.milestone ? milestoneMap.get(issue.milestone) ?? null : null,
-        dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null,
-        ...this._issueTimeFields(issue),
-        createdOn: issue.createdOn,
-        modifiedOn: issue.modifiedOn,
-        completedAt: doneStatuses.has(issue.status) ? issue.modifiedOn : null
-      }));
-    }
+    const lookups = await this._issueLookups(client, issues, {
+      fields: MY_ISSUE_FIELDS,
+      statusData: { statusMap, doneStatuses },
+      employeeMap
+    });
+    const field = name => MY_ISSUE_FIELDS.has(name);
+    const result = issues.map(issue => withExtra(issue, issueRow(issue, lookups, field)));
 
     return listEnvelope(result, fetchResult.nextCursor);
   }
@@ -806,13 +666,7 @@ export class IssueReadMethods {
   async summarizeProject(projectIdent) {
     const client = await this._getClient();
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
+    const project = await this._findProject(client, projectIdent);
 
     const issues = await client.findAll(tracker.class.Issue, { space: project._id });
     const { statuses, statusMap } = await this._buildStatusMaps(client);

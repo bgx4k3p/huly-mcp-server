@@ -17,12 +17,6 @@ import {
 import { contactPlugin, generateId, tags, task, tracker } from './sdk.mjs';
 
 export class TemplatesMethods {
-  async _templateProject(client, projectIdent) {
-    const project = await client.findOne(tracker.class.Project, { identifier: projectIdent.toUpperCase() });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
-    return project;
-  }
-
   async _findIssueTemplate(client, project, templateId) {
     const template = await client.findOne(tracker.class.IssueTemplate, { _id: templateId, space: project._id });
     if (!template) throw new Error(`Issue template not found in ${project.identifier}: ${templateId}`);
@@ -57,7 +51,7 @@ export class TemplatesMethods {
     }
     if (input.type !== undefined) {
       data.kind = input.type.trim() === '' ? await this._getDefaultTaskType(client, project)
-        : await this._findTaskTypeByName(client, project.identifier, input.type);
+        : await this._findTaskTypeByName(client, project, input.type);
     }
     if (input.labels !== undefined) {
       if (!Array.isArray(input.labels)) throw new Error('Template labels must be an array');
@@ -142,7 +136,7 @@ export class TemplatesMethods {
 
   async listIssueTemplates(projectIdent, options = {}) {
     const client = await this._getClient();
-    const project = await this._templateProject(client, projectIdent);
+    const project = await this._findProject(client, projectIdent);
     const templates = await client.findAll(tracker.class.IssueTemplate, { space: project._id });
     const page = this._cursoredFindAll(templates, {
       ...options, cursorScope: { workspace: this.workspace, tool: 'list_issue_templates', project: project.identifier }
@@ -152,14 +146,14 @@ export class TemplatesMethods {
 
   async getIssueTemplate(projectIdent, templateId) {
     const client = await this._getClient();
-    const project = await this._templateProject(client, projectIdent);
+    const project = await this._findProject(client, projectIdent);
     const template = await this._findIssueTemplate(client, project, templateId);
     return (await this._readIssueTemplates(client, project, [template]))[0];
   }
 
   async createIssueTemplate(projectIdent, input = {}) {
     const client = await this._getClient();
-    const project = await this._templateProject(client, projectIdent);
+    const project = await this._findProject(client, projectIdent);
     const data = await this._templateUpdates(client, project, input, true);
     const id = generateId();
     await client.createDoc(tracker.class.IssueTemplate, project._id, { ...data, comments: 0, attachments: 0 }, id);
@@ -168,7 +162,7 @@ export class TemplatesMethods {
 
   async updateIssueTemplate(projectIdent, templateId, input = {}) {
     const client = await this._getClient();
-    const project = await this._templateProject(client, projectIdent);
+    const project = await this._findProject(client, projectIdent);
     const template = await this._findIssueTemplate(client, project, templateId);
     const data = await this._templateUpdates(client, project, input);
     if (Object.keys(data).length > 0) {
@@ -179,7 +173,7 @@ export class TemplatesMethods {
 
   async deleteIssueTemplate(projectIdent, templateId) {
     const client = await this._getClient();
-    const project = await this._templateProject(client, projectIdent);
+    const project = await this._findProject(client, projectIdent);
     const template = await this._findIssueTemplate(client, project, templateId);
     await client.removeDoc(tracker.class.IssueTemplate, project._id, template._id);
     return { id: template._id, message: `Issue template "${template.title}" deleted` };

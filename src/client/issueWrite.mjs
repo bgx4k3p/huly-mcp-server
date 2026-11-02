@@ -56,18 +56,12 @@ export class IssueWriteMethods {
   async createIssue(projectIdent, title, description, priority, status, labels, type, extra = {}) {
     const client = await this._getClient();
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
+    const project = await this._findProject(client, projectIdent);
 
     // Resolve task type first — status lookup depends on it
     let taskTypeId;
     if (type) {
-      taskTypeId = await this._findTaskTypeByName(client, projectIdent, type);
+      taskTypeId = await this._findTaskTypeByName(client, project, type);
     } else {
       taskTypeId = await this._getDefaultTaskType(client, project);
     }
@@ -198,7 +192,7 @@ export class IssueWriteMethods {
     // Resolve type first so status can be scoped to the new type
     let resolvedTaskTypeId = issue.kind;
     if (type !== undefined) {
-      resolvedTaskTypeId = await this._findTaskTypeByName(client, project.identifier, type);
+      resolvedTaskTypeId = await this._findTaskTypeByName(client, project, type);
       updates.kind = resolvedTaskTypeId;
       updatedFields.push('type');
     }
@@ -274,13 +268,7 @@ export class IssueWriteMethods {
   async batchCreateIssues(projectIdent, issues) {
     const client = await this._getClient();
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
+    const project = await this._findProject(client, projectIdent);
 
     if (!Array.isArray(issues) || issues.length === 0) {
       throw new Error('issues must be a non-empty array');
@@ -317,7 +305,7 @@ export class IssueWriteMethods {
         if (item.type) {
           const key = item.type.toLowerCase();
           if (!taskTypeIdsByName.has(key)) {
-            taskTypeIdsByName.set(key, await this._findTaskTypeByName(client, projectIdent, item.type, cachedTaskTypes));
+            taskTypeIdsByName.set(key, await this._findTaskTypeByName(client, project, item.type, cachedTaskTypes));
           }
           taskTypeId = taskTypeIdsByName.get(key);
         }
@@ -427,13 +415,7 @@ export class IssueWriteMethods {
 
     const { project: sourceProject, issue } = await this._parseAndFindIssue(client, issueId);
 
-    const destProject = await client.findOne(tracker.class.Project, {
-      identifier: targetProject.toUpperCase()
-    });
-
-    if (!destProject) {
-      throw new Error(`Target project not found: ${targetProject}`);
-    }
+    const destProject = await this._findProject(client, targetProject);
 
     if (sourceProject._id === destProject._id) {
       return { message: `Issue ${issueId} is already in project ${targetProject}` };

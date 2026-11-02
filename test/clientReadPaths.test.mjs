@@ -285,7 +285,7 @@ describe('getIssue expansions', () => {
     // Scoped to the project so a child moved to another project is excluded
     // rather than returned under this project's identifier prefix.
     assert.deepEqual(childQuery, [{
-      space: 'proj-space', attachedTo: 'issue-1', attachedToClass: ISSUE_CLASS
+      space: 'proj-space', attachedTo: { $in: ['issue-1'] }, attachedToClass: ISSUE_CLASS
     }]);
   });
 
@@ -357,7 +357,7 @@ describe('getIssue expansions', () => {
     assert.equal(issue.timeReportsTruncated, true);
 
     const [reportCall] = select('findAll', tracker.class.TimeSpendReport);
-    assert.deepEqual(reportCall.query, { attachedTo: 'issue-1' });
+    assert.deepEqual(reportCall.query, { attachedTo: { $in: ['issue-1'] } });
     assert.deepEqual(reportCall.options, { sort: { date: -1 } });
     assert.equal(select('findAll', chunter.class.ChatMessage).length, 0);
   });

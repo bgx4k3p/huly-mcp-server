@@ -4,9 +4,30 @@
  * Methods are composed onto HulyClient; `this` is the client instance.
  */
 import { fromMarkup, nameMatch, STATUS_CATEGORY_NAMES, withExtra } from '../helpers.mjs';
+import { typeDisplayName } from './lookups.mjs';
 import { task, tracker } from './sdk.mjs';
 
 export class WorkflowMethods {
+  /**
+   * Task types a project offers: those of its project type, or every issue task type when the project type
+   * declares none.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @returns {Promise<Object[]>} TaskType documents
+   */
+  async _issueTaskTypes(client, project) {
+    const allTaskTypes = await client.findAll(task.class.TaskType, {});
+    const projectType = await this._projectType(client, project);
+    if (projectType?.tasks) {
+      const taskTypeIds = new Set(projectType.tasks);
+      return allTaskTypes.filter(tt => taskTypeIds.has(tt._id));
+    }
+    return allTaskTypes.filter(tt =>
+      tt.ofClass === tracker.class.Issue ||
+      tt.targetClass === tracker.class.Issue
+    );
+  }
+
   /**
    * List all available task types for a project.
    * @param {string} projectIdent - Project identifier
@@ -15,35 +36,13 @@ export class WorkflowMethods {
   async listTaskTypes(projectIdent, options = {}) {
     const client = await this._getClient();
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
+    const project = await this._findProject(client, projectIdent);
 
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
-
-    // Scope task types to project via its ProjectType
-    const allTaskTypes = await client.findAll(task.class.TaskType, {});
-    const projectTypes = await client.findAll(task.class.ProjectType, {});
-    const projectType = projectTypes.find(pt => pt._id === project.type);
-
-    let typesToReturn;
-    if (projectType && projectType.tasks) {
-      // Return only task types belonging to this project's type
-      const taskTypeIds = new Set(projectType.tasks);
-      typesToReturn = allTaskTypes.filter(tt => taskTypeIds.has(tt._id));
-    } else {
-      // Fallback: return tracker-related task types
-      typesToReturn = allTaskTypes.filter(tt =>
-        tt.ofClass === tracker.class.Issue ||
-        tt.targetClass === tracker.class.Issue
-      );
-    }
+    const typesToReturn = await this._issueTaskTypes(client, project);
 
     const enriched = typesToReturn.map(tt => withExtra(tt, {
       id: tt._id,
-      name: tt.name || tt._id.split(':').pop(),
+      name: typeDisplayName(tt),
       description: fromMarkup(tt.description),
       kind: tt.kind || null,
       ofClass: tt.ofClass,
@@ -73,12 +72,12 @@ export class WorkflowMethods {
 
     const enriched = projectTypes.map(pt => withExtra(pt, {
       id: pt._id,
-      name: pt.name || pt._id.split(':').pop(),
+      name: typeDisplayName(pt),
       description: fromMarkup(pt.description) || pt.shortDescription || null,
       taskTypes: (pt.tasks || [])
         .map(id => taskTypeById.get(id))
         .filter(Boolean)
-        .map(tt => tt.name || tt._id.split(':').pop())
+        .map(typeDisplayName)
     }));
     return this._cursoredFindAll(enriched, {
       ...options,
@@ -120,12 +119,8 @@ export class WorkflowMethods {
     let relevantTaskTypes = allTaskTypes;
 
     if (projectIdent) {
-      const project = await client.findOne(tracker.class.Project, {
-        identifier: projectIdent.toUpperCase()
-      });
-      if (!project) throw new Error(`Project not found: ${projectIdent}`);
-      const projectTypes = await client.findAll(task.class.ProjectType, {});
-      const projectType = projectTypes.find(pt => pt._id === project.type);
+      const project = await this._findProject(client, projectIdent);
+      const projectType = await this._projectType(client, project);
       // An unresolvable project type is a data problem, not a licence to return
       // every status in the workspace as though it were project-scoped. A type
       // that simply declares no task types legitimately scopes to nothing.
@@ -201,35 +196,19 @@ export class WorkflowMethods {
   async getTaskType(projectIdent, name) {
     const client = await this._getClient();
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
-    const allTaskTypes = await client.findAll(task.class.TaskType, {});
-    const projectTypes = await client.findAll(task.class.ProjectType, {});
-    const projectType = projectTypes.find(pt => pt._id === project.type);
-
-    let typesToSearch;
-    if (projectType && projectType.tasks) {
-      const taskTypeIds = new Set(projectType.tasks);
-      typesToSearch = allTaskTypes.filter(tt => taskTypeIds.has(tt._id));
-    } else {
-      typesToSearch = allTaskTypes.filter(tt =>
-        tt.ofClass === tracker.class.Issue ||
-        tt.targetClass === tracker.class.Issue
-      );
-    }
+    const typesToSearch = await this._issueTaskTypes(client, project);
 
     const found = typesToSearch.find(tt => nameMatch(tt.name, name));
     if (!found) {
-      const names = typesToSearch.map(tt => tt.name || tt._id.split(':').pop()).join(', ');
+      const names = typesToSearch.map(typeDisplayName).join(', ');
       throw new Error(`Task type not found: "${name}". Available: ${names}`);
     }
 
     return withExtra(found, {
       id: found._id,
-      name: found.name || found._id.split(':').pop(),
+      name: typeDisplayName(found),
       kind: found.kind || null,
       ofClass: found.ofClass || null,
       allowedAsChildOf: found.allowedAsChildOf || [],

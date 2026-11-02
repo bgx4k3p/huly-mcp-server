@@ -131,13 +131,7 @@ export class ProjectsMethods {
    */
   async getProject(identifier, options = {}) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: identifier.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${identifier}`);
-    }
+    const project = await this._findProject(client, identifier);
 
     const base = {
       id: project._id,
@@ -366,10 +360,7 @@ export class ProjectsMethods {
    */
   async updateProject(projectIdent, updates = {}) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const ops = await this._projectUpdateFields(client, project, updates);
     if (updates.name !== undefined) ops.name = updates.name;
@@ -449,10 +440,7 @@ export class ProjectsMethods {
 
   async archiveProject(projectIdent, archived = true) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    }, { showArchived: true });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent, { showArchived: true });
 
     await client.updateDoc(tracker.class.Project, project.space || project._id, project._id, {
       archived
@@ -468,10 +456,7 @@ export class ProjectsMethods {
 
   async deleteProject(projectIdent) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     await client.removeDoc(tracker.class.Project, project.space || project._id, project._id);
 

@@ -191,8 +191,7 @@ export class AccountMethods {
    */
   static async getAccountInfo(url, creds) {
     const { authClient, accountId } = await this._getAuthClient(url, creds);
-    const info = await authClient.getAccountInfo(accountId);
-    return info;
+    return await authClient.getAccountInfo(accountId);
   }
 
   /**
@@ -200,8 +199,7 @@ export class AccountMethods {
    */
   static async getUserProfile(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const profile = await authClient.getUserProfile();
-    return profile;
+    return await authClient.getUserProfile();
   }
 
   /**
@@ -278,8 +276,7 @@ export class AccountMethods {
    */
   static async listIntegrations(url, creds, filter) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const integrations = await authClient.listIntegrations(filter || {});
-    return integrations;
+    return await authClient.listIntegrations(filter || {});
   }
 
   /**
@@ -287,8 +284,7 @@ export class AccountMethods {
    */
   static async getIntegration(url, creds, integrationKey) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const integration = await authClient.getIntegration(integrationKey);
-    return integration;
+    return await authClient.getIntegration(integrationKey);
   }
 
   /**
@@ -297,8 +293,7 @@ export class AccountMethods {
    */
   static async createIntegration(url, creds, integration) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const result = await authClient.createIntegration(integration);
-    return result;
+    return await authClient.createIntegration(integration);
   }
 
   /**
@@ -307,8 +302,7 @@ export class AccountMethods {
    */
   static async updateIntegration(url, creds, integration) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const result = await authClient.updateIntegration(integration);
-    return result;
+    return await authClient.updateIntegration(integration);
   }
 
   /**
@@ -326,8 +320,7 @@ export class AccountMethods {
    */
   static async getMailboxes(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const mailboxes = await authClient.getMailboxes();
-    return mailboxes;
+    return await authClient.getMailboxes();
   }
 
   /**
@@ -335,8 +328,7 @@ export class AccountMethods {
    */
   static async createMailbox(url, creds, name, domain) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const result = await authClient.createMailbox(name, domain);
-    return result;
+    return await authClient.createMailbox(name, domain);
   }
 
   /**
@@ -353,8 +345,7 @@ export class AccountMethods {
    */
   static async findPersonBySocialKey(url, creds, socialKey) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const person = await authClient.findPersonBySocialKey(socialKey);
-    return person;
+    return await authClient.findPersonBySocialKey(socialKey);
   }
 
   /**
@@ -362,8 +353,7 @@ export class AccountMethods {
    */
   static async getSocialIds(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const socialIds = await authClient.getSocialIds();
-    return socialIds;
+    return await authClient.getSocialIds();
   }
 
   /**
@@ -371,8 +361,7 @@ export class AccountMethods {
    */
   static async addEmailSocialId(url, creds, targetEmail) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const result = await authClient.addEmailSocialId(targetEmail);
-    return result;
+    return await authClient.addEmailSocialId(targetEmail);
   }
 
   /**
@@ -380,7 +369,6 @@ export class AccountMethods {
    */
   static async getSubscriptions(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
-    const subscriptions = await authClient.getSubscriptions(undefined, false);
-    return subscriptions;
+    return await authClient.getSubscriptions(undefined, false);
   }
 }

@@ -104,7 +104,7 @@ describe('task type resolution', () => {
       ]
     });
     await assert.rejects(
-      () => stubClient(sdk)._findTaskTypeByName(sdk, 'PROJ', 'Epic'),
+      () => stubClient(sdk)._findTaskTypeByName(sdk, project, 'Epic'),
       /Task type "Epic" not found\. Available types: Issue, Bug/
     );
   });
@@ -112,7 +112,7 @@ describe('task type resolution', () => {
   it('rejects an unknown project rather than searching every task type', async () => {
     const sdk = harness({ projects: [], projectTypes: [], taskTypes: [] });
     await assert.rejects(
-      () => stubClient(sdk)._findTaskTypeByName(sdk, 'NOPE', 'Issue'),
+      () => stubClient(sdk).createIssue('NOPE', 'Typed', undefined, undefined, undefined, undefined, 'Issue'),
       /Project not found: NOPE/
     );
   });

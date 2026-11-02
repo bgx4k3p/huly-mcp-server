@@ -9,10 +9,7 @@ import { generateId, tracker } from './sdk.mjs';
 export class ComponentsMethods {
   async listComponents(projectIdent, options = {}) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
 
@@ -30,10 +27,7 @@ export class ComponentsMethods {
 
   async createComponent(projectIdent, name, description, lead, format) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const existing = await client.findOne(tracker.class.Component, {
       space: project._id,
@@ -69,10 +63,7 @@ export class ComponentsMethods {
 
   async updateComponent(projectIdent, name, updates = {}) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
     const component = components.find(c => nameMatch(c.label, name));
@@ -111,10 +102,7 @@ export class ComponentsMethods {
 
   async deleteComponent(projectIdent, name) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
     const component = components.find(c => nameMatch(c.label, name));
@@ -136,10 +124,7 @@ export class ComponentsMethods {
    */
   async getComponent(projectIdent, name) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
     const component = components.find(c => nameMatch(c.label, name));

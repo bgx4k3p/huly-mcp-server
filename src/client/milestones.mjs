@@ -33,13 +33,7 @@ export class MilestonesMethods {
     const include = normalizeIncludeSet(options.include, MILESTONE_INCLUDE_FIELDS);
     const issuesLimit = normalizePageLimit(options.issuesLimit, 20, 100);
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
+    const project = await this._findProject(client, projectIdent);
 
     const query = { space: project._id };
 
@@ -129,13 +123,7 @@ export class MilestonesMethods {
     const include = normalizeIncludeSet(options.include, MILESTONE_INCLUDE_FIELDS);
     const issuesLimit = normalizePageLimit(options.issuesLimit, 20, 100);
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
+    const project = await this._findProject(client, projectIdent);
 
     const milestones = await client.findAll(tracker.class.Milestone, {
       space: project._id
@@ -195,13 +183,7 @@ export class MilestonesMethods {
   async createMilestone(projectIdent, name, description, targetDate, status, format, collaborators = []) {
     const client = await this._getClient();
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
+    const project = await this._findProject(client, projectIdent);
 
     const allMilestones = await client.findAll(tracker.class.Milestone, { space: project._id });
     const existing = allMilestones.find(m => nameMatch(m.label, name));
@@ -313,10 +295,7 @@ export class MilestonesMethods {
 
   async updateMilestone(projectIdent, name, updates = {}) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
     const milestone = milestones.find(m => nameMatch(m.label, name));
@@ -372,10 +351,7 @@ export class MilestonesMethods {
 
   async deleteMilestone(projectIdent, name, moveIssuesTo) {
     const client = await this._getClient();
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
-    if (!project) throw new Error(`Project not found: ${projectIdent}`);
+    const project = await this._findProject(client, projectIdent);
 
     const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
     const milestone = milestones.find(m => nameMatch(m.label, name));

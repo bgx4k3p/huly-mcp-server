@@ -6,7 +6,30 @@
 import { DONE_CATEGORY, LOOKUP_CACHE_TTL_MS, nameMatch } from '../helpers.mjs';
 import { contactPlugin, tags, task, tracker } from './sdk.mjs';
 
+/**
+ * Display name of a task or project type; types created without a name fall back to the last segment of their id.
+ * @param {Object} type - TaskType or ProjectType document
+ * @returns {string}
+ */
+export function typeDisplayName(type) {
+  return type.name || type._id.split(':').pop();
+}
+
 export class LookupsMethods {
+  /**
+   * Find a project by its identifier (case-insensitive).
+   * @param {Object} client - Huly SDK client
+   * @param {string} identifier - Project identifier, e.g. "PROJ"
+   * @param {Object} [options] - SDK find options, e.g. `{ showArchived: true }`
+   * @returns {Promise<Object>} Project document
+   * @throws {Error} When no project has that identifier
+   */
+  async _findProject(client, identifier, options) {
+    const project = await client.findOne(tracker.class.Project, { identifier: identifier.toUpperCase() }, options);
+    if (!project) throw new Error(`Project not found: ${identifier}`);
+    return project;
+  }
+
   /**
    * Parse an issue identifier and find the corresponding issue and project.
    * @param {Object} client - Huly SDK client
@@ -25,13 +48,7 @@ export class LookupsMethods {
 
     const [, projectId, issueNum] = match;
 
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectId.toUpperCase()
-    });
-
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
+    const project = await this._findProject(client, projectId);
 
     const issue = await client.findOne(tracker.class.Issue, {
       space: project._id,
@@ -46,38 +63,35 @@ export class LookupsMethods {
   }
 
   /**
-   * Find a task type ID by its name within a project.
+   * The project's ProjectType document, or undefined when it cannot be resolved.
    * @param {Object} client - Huly SDK client
-   * @param {string} projectIdent - Project identifier
-   * @param {string} typeName - Task type name
-   * @returns {Promise<string>}
+   * @param {Object} project - Project document
+   * @returns {Promise<Object|undefined>}
    */
-  async _findTaskTypeByName(client, projectIdent, typeName, cachedTaskTypes) {
-    const project = await client.findOne(tracker.class.Project, {
-      identifier: projectIdent.toUpperCase()
-    });
+  async _projectType(client, project) {
+    return await client.findOne(task.class.ProjectType, { _id: project.type }) ?? undefined;
+  }
 
-    if (!project) {
-      throw new Error(`Project not found: ${projectIdent}`);
-    }
-
-    // Use cached task types if provided (avoids N+1 in batch operations)
+  /**
+   * Find a task type id by name among the task types of a project's type (case-insensitive).
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @param {string} typeName - Task type name
+   * @param {Object[]} [cachedTaskTypes] - All TaskType documents, when the caller already loaded them
+   * @returns {Promise<string>} Task type id
+   * @throws {Error} When no task type of the project has that name
+   */
+  async _findTaskTypeByName(client, project, typeName, cachedTaskTypes) {
     const taskTypes = cachedTaskTypes || await client.findAll(task.class.TaskType, {});
-
-    // Scope to project type if possible
-    const projectTypes = await client.findAll(task.class.ProjectType, {});
-    const projectType = projectTypes.find(pt => pt._id === project.type);
+    const projectType = await this._projectType(client, project);
     const scopedTypes = projectType?.tasks
       ? taskTypes.filter(tt => projectType.tasks.includes(tt._id))
       : taskTypes;
 
-    const found = scopedTypes.find(tt => {
-      const name = tt.name || tt._id.split(':').pop();
-      return nameMatch(name, typeName);
-    });
+    const found = scopedTypes.find(tt => nameMatch(typeDisplayName(tt), typeName));
 
     if (!found) {
-      const availableTypes = scopedTypes.map(tt => tt.name || tt._id.split(':').pop()).join(', ');
+      const availableTypes = scopedTypes.map(typeDisplayName).join(', ');
       throw new Error(`Task type "${typeName}" not found. Available types: ${availableTypes}`);
     }
 
@@ -89,15 +103,14 @@ export class LookupsMethods {
    * Returns the first task type scoped to the project type.
    */
   async _getDefaultTaskType(client, project) {
-    const projectTypes = await client.findAll(task.class.ProjectType, {});
-    const projectType = projectTypes.find(pt => pt._id === project.type);
+    const projectType = await this._projectType(client, project);
 
     if (projectType?.tasks?.length) {
       const taskTypes = await client.findAll(task.class.TaskType, {});
       const scoped = taskTypes.filter(tt => projectType.tasks.includes(tt._id));
       if (scoped.length) {
         // Prefer the type named "Task" (the common default), not the first in list (often Epic)
-        const taskType = scoped.find(tt => nameMatch(tt.name || tt._id.split(':').pop(), 'Task'));
+        const taskType = scoped.find(tt => nameMatch(typeDisplayName(tt), 'Task'));
         return (taskType || scoped[0])._id;
       }
     }
