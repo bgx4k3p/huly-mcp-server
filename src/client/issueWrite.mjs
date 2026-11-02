@@ -424,8 +424,7 @@ export class IssueWriteMethods {
     // Remap the status when the destination workflow lacks the current one
     const destTaskTypeId = issue.kind ?? await this._getDefaultTaskType(client, destProject);
     const destStatuses = await this._getScopedStatuses(client, destTaskTypeId);
-    const srcStatusMap = await this._buildStatusMaps(client);
-    const currentStatusName = srcStatusMap.statusMap.get(issue.status);
+    const currentStatusName = (await client.findOne(tracker.class.IssueStatus, { _id: issue.status }))?.name;
     let destStatusId;
     if (currentStatusName) {
       const destStatus = destStatuses.find(s => nameMatch(s.name, currentStatusName));

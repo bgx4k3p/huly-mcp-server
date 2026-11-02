@@ -668,47 +668,44 @@ export class IssueReadMethods {
 
     const project = await this._findProject(client, projectIdent);
 
-    const issues = await client.findAll(tracker.class.Issue, { space: project._id });
-    const { statuses, statusMap } = await this._buildStatusMaps(client);
+    // Only the fields the summary counts; a project can hold thousands of issues.
+    const [issues, { statuses, statusMap }, milestones] = await Promise.all([
+      client.findAll(tracker.class.Issue, { space: project._id }, {
+        projection: {
+          number: 1, title: 1, status: 1, priority: 1, dueDate: 1, assignee: 1, estimation: 1, reportedTime: 1
+        }
+      }),
+      this._buildStatusMaps(client),
+      client.findAll(tracker.class.Milestone, { space: project._id })
+    ]);
     const closedStatuses = new Set(statuses
       .filter(s => s.category === DONE_CATEGORY || s.category === LOST_CATEGORY)
       .map(s => s._id));
-    const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
 
-    // Count by status
-    const byStatus = {};
-    for (const issue of issues) {
-      const name = strictGet(statusMap, issue.status, 'Status');
-      byStatus[name] = (byStatus[name] || 0) + 1;
-    }
-
-    // Count by priority
-    const byPriority = {};
-    for (const issue of issues) {
-      const name = strictGet(PRIORITY_NAMES, issue.priority, 'Priority');
-      byPriority[name] = (byPriority[name] || 0) + 1;
-    }
-
-    // Overdue issues
     const now = Date.now();
-    const overdue = issues.filter(i => {
-      if (!i.dueDate) return false;
-      return i.dueDate < now && !closedStatuses.has(i.status);
-    });
-
-    const overdueList = overdue.map(i => ({
-      id: `${project.identifier}-${i.number}`,
-      title: i.title,
-      dueDate: new Date(i.dueDate).toISOString().split('T')[0],
-      priority: strictGet(PRIORITY_NAMES, i.priority, 'Priority')
-    }));
-
-    // Unassigned count
-    const unassigned = issues.filter(i => !i.assignee).length;
-
-    // Estimation stats
-    const totalEstimation = issues.reduce((sum, i) => sum + toHours(i.estimation), 0);
-    const totalReported = issues.reduce((sum, i) => sum + toHours(i.reportedTime), 0);
+    const byStatus = {};
+    const byPriority = {};
+    const overdueList = [];
+    let unassigned = 0;
+    let totalEstimation = 0;
+    let totalReported = 0;
+    for (const issue of issues) {
+      const statusName = strictGet(statusMap, issue.status, 'Status');
+      byStatus[statusName] = (byStatus[statusName] || 0) + 1;
+      const priorityName = strictGet(PRIORITY_NAMES, issue.priority, 'Priority');
+      byPriority[priorityName] = (byPriority[priorityName] || 0) + 1;
+      if (issue.dueDate && issue.dueDate < now && !closedStatuses.has(issue.status)) {
+        overdueList.push({
+          id: `${project.identifier}-${issue.number}`,
+          title: issue.title,
+          dueDate: new Date(issue.dueDate).toISOString().split('T')[0],
+          priority: priorityName
+        });
+      }
+      if (!issue.assignee) unassigned++;
+      totalEstimation += toHours(issue.estimation);
+      totalReported += toHours(issue.reportedTime);
+    }
 
     return {
       project: {

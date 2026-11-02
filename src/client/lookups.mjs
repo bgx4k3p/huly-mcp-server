@@ -129,20 +129,17 @@ export class LookupsMethods {
    * @returns {Promise<Object[]>} IssueStatus documents
    */
   async _getScopedStatuses(client, taskTypeId) {
-    const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
-    if (!allStatuses.length) throw new Error('No statuses found in workspace');
-
-    // Find the task type to get its scoped status list
-    const taskTypes = await client.findAll(task.class.TaskType, {});
-    const taskType = taskTypes.find(tt => tt._id === taskTypeId);
-
+    const taskType = await client.findOne(task.class.TaskType, { _id: taskTypeId });
     if (taskType?.statuses?.length) {
-      // Preserve workflow order from TaskType.statuses array
-      const statusById = new Map(allStatuses.map(s => [s._id, s]));
+      const found = await client.findAll(tracker.class.IssueStatus, { _id: { $in: taskType.statuses } });
+      // Preserve workflow order from TaskType.statuses
+      const statusById = new Map(found.map(s => [s._id, s]));
       const scoped = taskType.statuses.map(id => statusById.get(id)).filter(Boolean);
       if (scoped.length) return scoped;
     }
 
+    const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
+    if (!allStatuses.length) throw new Error('No statuses found in workspace');
     return allStatuses;
   }
 

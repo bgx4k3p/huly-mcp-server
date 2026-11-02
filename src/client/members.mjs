@@ -52,11 +52,12 @@ export class MembersMethods {
     });
     if (records.length === 0) return result;
 
-    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
-    const employeeByAccount = new Map(
-      employees.filter(employee => employee.personUuid)
-        .map(employee => [employee.personUuid, employee])
-    );
+    const accounts = [...new Set(records.map(record => record.collaborator))];
+    const employees = await client.findAll(contactPlugin.mixin.Employee, {
+      active: true,
+      personUuid: { $in: accounts }
+    });
+    const employeeByAccount = new Map(employees.map(employee => [employee.personUuid, employee]));
     for (const record of records) {
       if (!result.has(record.attachedTo)) continue;
       const employee = employeeByAccount.get(record.collaborator);
