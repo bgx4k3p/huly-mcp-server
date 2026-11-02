@@ -810,7 +810,7 @@ also a member. Removing a member also removes their project-role assignments.
 | Tool | Description |
 | --- | --- |
 | `list_members` | List all active workspace members |
-| `get_member` | Find a member by name (fuzzy match) |
+| `get_member` | Find a member by name (case-insensitive) |
 
 ### Comments
 
@@ -830,7 +830,7 @@ also a member. Removing a member also removes their project-role assignments.
 | `list_time_reports` | List time reports for an issue | -- |
 | `get_time_report` | Get a specific time report by ID | -- |
 | `update_time_report` | Update hours, description, date, or employee attribution | -- |
-| `delete_time_report` | Delete a time report | -- |
+| `delete_time_report` | Delete a time report from its issue | -- |
 
 ### Metadata
 
