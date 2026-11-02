@@ -13,6 +13,7 @@ import {
   normalizeDueDate,
   normalizePageLimit,
   strictGet,
+  toIsoDay,
   toMarkup,
   withExtra
 } from '../helpers.mjs';
@@ -37,7 +38,7 @@ function milestoneRow(milestone, { collaborators, issueCount, issues }) {
     name: milestone.label,
     description: fromMarkup(milestone.description),
     status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
-    targetDate: milestone.targetDate ? new Date(milestone.targetDate).toISOString().split('T')[0] : null,
+    targetDate: toIsoDay(milestone.targetDate),
     comments: milestone.comments || 0,
     ...(issueCount === undefined ? {} : { issueCount }),
     collaborators
@@ -260,7 +261,7 @@ export class MilestonesMethods {
       name,
       description: description || '',
       status: MILESTONE_STATUS_NAMES[statusValue],
-      targetDate: new Date(targetTimestamp).toISOString().split('T')[0],
+      targetDate: toIsoDay(targetTimestamp),
       collaborators: resolvedCollaborators
     };
   }

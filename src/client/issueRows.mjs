@@ -7,7 +7,8 @@ import {
   issueTimeFields,
   PRIORITY_NAMES,
   strictGet,
-  toIsoDate
+  toIsoDate,
+  toIsoDay
 } from '../helpers.mjs';
 import { boundedCollection, markdownPreview } from '../projection.mjs';
 import { tracker } from './sdk.mjs';
@@ -76,7 +77,7 @@ export function issueRow(issue, lookups, field) {
   if (field('parent')) row.parent = isSubIssue(issue) ? lookups.parentMap.get(issue.attachedTo) ?? null : null;
   if (field('childCount')) row.childCount = issue.subIssues || 0;
   if (field('milestone')) row.milestone = issue.milestone ? lookups.milestoneMap.get(issue.milestone) ?? null : null;
-  if (field('dueDate')) row.dueDate = issue.dueDate ? new Date(issue.dueDate).toISOString().split('T')[0] : null;
+  if (field('dueDate')) row.dueDate = toIsoDay(issue.dueDate);
   const times = issueTimeFields(issue);
   if (field('estimation')) row.estimation = times.estimation;
   if (field('reportedTime')) row.reportedTime = times.reportedTime;

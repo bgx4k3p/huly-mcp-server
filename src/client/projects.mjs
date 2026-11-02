@@ -13,6 +13,7 @@ import {
   PRIORITY_NAMES,
   strictGet,
   toHours,
+  toIsoDay,
   withExtra
 } from '../helpers.mjs';
 import { normalizeIncludeSet } from '../projection.mjs';
@@ -89,9 +90,7 @@ export class ProjectsMethods {
         row.milestones = (milestonesByProject.get(project._id) || []).map(milestone => ({
           name: milestone.label,
           status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
-          targetDate: milestone.targetDate
-            ? new Date(milestone.targetDate).toISOString().split('T')[0]
-            : null
+          targetDate: toIsoDay(milestone.targetDate)
         }));
       }
       if (include.has('components')) {
@@ -197,7 +196,7 @@ export class ProjectsMethods {
         overdueList.push({
           id: `${project.identifier}-${issue.number}`,
           title: issue.title,
-          dueDate: new Date(issue.dueDate).toISOString().split('T')[0],
+          dueDate: toIsoDay(issue.dueDate),
           priority: priorityName
         });
       }
@@ -222,7 +221,7 @@ export class ProjectsMethods {
       milestones: milestones.map(m => ({
         name: m.label,
         status: strictGet(MILESTONE_STATUS_NAMES, m.status, 'Milestone status'),
-        targetDate: m.targetDate ? new Date(m.targetDate).toISOString().split('T')[0] : null
+        targetDate: toIsoDay(m.targetDate)
       })),
       timeTracking: {
         totalEstimatedHours: totalEstimation,

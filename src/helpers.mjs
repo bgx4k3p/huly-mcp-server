@@ -360,6 +360,18 @@ function parseDate(value) {
 }
 
 /**
+ * Format a stored timestamp or date string as a calendar date (YYYY-MM-DD). Missing and unparseable values,
+ * including 0, become null, so one bad stored value cannot fail a whole read.
+ * @param {number|string|null|undefined} value
+ * @returns {string|null}
+ */
+export function toIsoDay(value) {
+  if (!value) return null;
+  const ms = typeof value === 'number' ? value : new Date(value).getTime();
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : null;
+}
+
+/**
  * Parse an optional due date for storage. Blank or missing means no due date.
  * @param {string|number|null|undefined} value - ISO date or timestamp
  * @returns {number|null} Millisecond timestamp, or null to clear
