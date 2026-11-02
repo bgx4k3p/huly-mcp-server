@@ -6,7 +6,7 @@ process.env.HULY_TOKEN = 'secret-token';
 process.env.HULY_WORKSPACE = 'my-workspace';
 process.env.HULY_PROJECT = 'PROJ';
 
-const { handleToolCall, createMcpServer } = await import('../src/mcpShared.mjs');
+const { handleToolCall, createMcpServer } = await import('../src/mcp/server.mjs');
 
 describe('MCP shared runtime context', () => {
   function callHandler(server) {
@@ -67,15 +67,43 @@ describe('MCP shared runtime context', () => {
     assert.match(result.content[0].text, /Unsupported argument/);
   });
 
+  it('rejects arguments that do not match the tool schema before any code runs', async () => {
+    const { server } = createMcpServer();
+    const call = callHandler(server);
+    const callTool = (name, args) => call({ method: 'tools/call', params: { name, arguments: args } }, {});
+
+    for (const [name, args, pattern] of [
+      ['update_issue', { issueId: 'PROJ-1', assignee: null }, /assignee must be string/],
+      ['update_issue', { issueId: 'PROJ-1', estimation: '4.5' }, /estimation must be number/],
+      ['update_issue', { assignee: 'Ada' }, /must have required property 'issueId'/],
+      ['search_issues', { query: 42 }, /query must be string/],
+      ['create_issue', { project: 'PROJ', title: 'T', labels: 'bug' }, /labels must be array/],
+      ['list_issues', { project: 'PROJ', include: ['bogus'] }, /include\/0 must be equal to one of the allowed values/]
+    ]) {
+      const result = await callTool(name, args);
+      assert.equal(result.isError, true, `${name} ${JSON.stringify(args)} must be rejected`);
+      assert.match(JSON.parse(result.content[0].text).error, pattern);
+      assert.match(JSON.parse(result.content[0].text).error, new RegExp(`Invalid arguments for ${name}`));
+    }
+  });
+
+  it('compiles a validator for every advertised tool schema', async () => {
+    const { validateToolArguments } = await import('../src/mcp/validation.mjs');
+    const { TOOLS } = createMcpServer();
+    for (const tool of TOOLS) {
+      assert.doesNotThrow(() => validateToolArguments(tool, {}).valid ?? true, tool.name);
+    }
+  });
+
   it('advertises get_huly_context in the MCP tool list', async () => {
     const { TOOLS } = createMcpServer();
     assert.ok(TOOLS.some(tool => tool.name === 'get_huly_context'));
   });
 
   it('supports smaller project and read tool profiles without changing full', () => {
-    const full = createMcpServer({}, { toolProfile: 'full' }).TOOLS;
-    const project = createMcpServer({}, { toolProfile: 'project' }).TOOLS;
-    const read = createMcpServer({}, { toolProfile: 'read' }).TOOLS;
+    const full = createMcpServer({ toolProfile: 'full' }).TOOLS;
+    const project = createMcpServer({ toolProfile: 'project' }).TOOLS;
+    const read = createMcpServer({ toolProfile: 'read' }).TOOLS;
 
     assert.equal(full.length, 91);
     assert.ok(project.length < full.length);
@@ -84,11 +112,11 @@ describe('MCP shared runtime context', () => {
     assert.equal(project.some(tool => tool.name === 'change_password'), false);
     assert.ok(read.some(tool => tool.name === 'get_issue'));
     assert.equal(read.some(tool => tool.name === 'create_issue'), false);
-    assert.throws(() => createMcpServer({}, { toolProfile: 'tiny' }), /HULY_TOOL_PROFILE/);
+    assert.throws(() => createMcpServer({ toolProfile: 'tiny' }), /HULY_TOOL_PROFILE/);
   });
 
   it('rejects calls to tools outside the selected profile', async () => {
-    const call = callHandler(createMcpServer({}, { toolProfile: 'read' }).server);
+    const call = callHandler(createMcpServer({ toolProfile: 'read' }).server);
     const result = await call({
       method: 'tools/call',
       params: { name: 'create_issue', arguments: { project: 'PROJ', title: 'blocked' } }
@@ -155,8 +183,8 @@ describe('MCP shared runtime context', () => {
   });
 
   it('keeps response defaults isolated across concurrent MCP sessions', async () => {
-    const compactCall = callHandler(createMcpServer({}, { responseMode: 'compact' }).server);
-    const rawCall = callHandler(createMcpServer({}, { responseMode: 'raw' }).server);
+    const compactCall = callHandler(createMcpServer({ responseMode: 'compact' }).server);
+    const rawCall = callHandler(createMcpServer({ responseMode: 'raw' }).server);
     const request = {
       method: 'tools/call',
       params: { name: 'get_huly_context', arguments: {} }

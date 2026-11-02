@@ -242,3 +242,54 @@ describe('project type resolution', () => {
     assert.equal(calls.createDoc.length, 0);
   });
 });
+
+describe('project identifier rules', () => {
+  function recordingClient(existing = null) {
+    const calls = [];
+    const client = new HulyClient({ url: 'https://huly.example.test', token: 't', workspace: 'w' });
+    client._getClient = async () => ({
+      findOne: async (classRef, query, options) => { calls.push({ op: 'findOne', query, options }); return existing; },
+      findAll: async () => { calls.push({ op: 'findAll' }); return []; },
+      createDoc: async () => { calls.push({ op: 'createDoc' }); }
+    });
+    return { client, calls };
+  }
+
+  // Huly accepts longer identifiers with digits (e.g. MOVEF19N); only shapes an issue id cannot carry are refused.
+  for (const identifier of ['MY-PROJ', 'MY PROJ', 'ÄBC', '']) {
+    it(`rejects the identifier ${JSON.stringify(identifier)} before touching the workspace`, async () => {
+      const { client, calls } = recordingClient();
+      await assert.rejects(() => client.createProject(identifier, 'Name'), /letters and digits only/);
+      assert.deepEqual(calls, []);
+    });
+  }
+
+  it('treats an archived project with the same identifier as taken', async () => {
+    const { client, calls } = recordingClient({ _id: 'old', identifier: 'OLD', archived: true });
+    await assert.rejects(() => client.createProject('old', 'Name'), /already exists/);
+    assert.deepEqual(calls[0].options, { showArchived: true });
+  });
+});
+
+describe('archived projects', () => {
+  for (const [label, run] of [
+    ['deleted', client => client.deleteProject('OLD')],
+    ['updated', client => client.updateProject('OLD', { name: 'Renamed' })]
+  ]) {
+    it(`can still be ${label}`, async () => {
+      const queries = [];
+      const client = new HulyClient({ url: 'https://huly.example.test', token: 't', workspace: 'w' });
+      client._getClient = async () => ({
+        findOne: async (_class, query, options) => {
+          queries.push(options);
+          return options?.showArchived ? { _id: 'old', space: 'core:space:Space', identifier: 'OLD', archived: true } : null;
+        },
+        findAll: async () => [],
+        removeDoc: async () => {},
+        updateDoc: async () => {}
+      });
+      await run(client);
+      assert.deepEqual(queries[0], { showArchived: true });
+    });
+  }
+});

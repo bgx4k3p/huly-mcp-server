@@ -31,9 +31,9 @@ was `*Truncated`.
 | Profile | Tools | Catalog bytes | Approx. bytes/4 |
 | --- | ---: | ---: | ---: |
 | Installed 2.4.6 full baseline | 82 | 45,016 | 11,254 |
-| V3 `full` | 82 | 43,740 | 10,935 |
-| V3 `project` | 55 | 33,594 | 8,399 |
-| V3 `read` | 36 | 18,688 | 4,672 |
+| Current `full` | 91 | 53,740 | 13,435 |
+| Current `project` | 64 | 43,594 | 10,899 |
+| Current `read` | 39 | 19,947 | 4,987 |
 
 The byte/4 column is not a provider token count. The deterministic catalog
 budgets are enforced in unit tests. `full` remains the default to avoid hiding

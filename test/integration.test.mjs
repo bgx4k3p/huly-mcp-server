@@ -29,7 +29,7 @@ describe('Unit Tests', () => {
     let PRIORITY_MAP, PRIORITY_NAMES;
 
     before(async () => {
-      const mod = await import('../src/client.mjs');
+      const mod = await import('../src/helpers.mjs');
       PRIORITY_MAP = mod.PRIORITY_MAP;
       PRIORITY_NAMES = mod.PRIORITY_NAMES;
     });
@@ -73,7 +73,7 @@ describe('Unit Tests', () => {
     let MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES;
 
     before(async () => {
-      const mod = await import('../src/client.mjs');
+      const mod = await import('../src/helpers.mjs');
       MILESTONE_STATUS_MAP = mod.MILESTONE_STATUS_MAP;
       MILESTONE_STATUS_NAMES = mod.MILESTONE_STATUS_NAMES;
     });
@@ -670,7 +670,8 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     it('sets a due date', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const result = await client.setDueDate(lifecycleIssueId, '2026-12-31');
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { dueDate: '2026-12-31' });
       assert.ok(result, 'Should return a result');
       const issue = await client.getIssue(lifecycleIssueId);
       const due = new Date(issue.dueDate);
@@ -681,7 +682,8 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     it('sets an estimation', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const result = await client.setEstimation(lifecycleIssueId, 4);
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { estimation: 4 });
       assert.ok(result, 'Should return a result');
       const issue = await client.getIssue(lifecycleIssueId);
       assert.equal(issue.estimation, 4);
@@ -833,23 +835,25 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  // ── assign_issue ──────────────────────────────────────────
+  // ── update_issue: assignee ────────────────────────────────
 
-  describe('assign_issue', () => {
+  describe('update_issue assignee', () => {
     it('assigns the lifecycle issue to a member', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
       const members = (await client.listMembers()).items;
       assert.ok(members.length > 0, 'Need at least one member');
-      const result = await client.assignIssue(lifecycleIssueId, members[0].name);
-      assert.ok(result);
-      assert.ok(result.message.includes('Assigned'));
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { assignee: members[0].name });
+      assert.deepEqual(result.updated, ['assignee']);
+      assert.equal((await client.getIssue(lifecycleIssueId)).assignee, members[0].name);
     });
 
     it('unassigns the issue', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const result = await client.assignIssue(lifecycleIssueId, '');
-      assert.ok(result);
-      assert.ok(result.message.includes('Unassigned'));
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { assignee: '' });
+      assert.deepEqual(result.updated, ['assignee']);
+      assert.equal((await client.getIssue(lifecycleIssueId)).assignee, null);
     });
   });
 
@@ -979,7 +983,9 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   // ── Project management ──────────────────────────────────
 
   describe('create_project + delete_project', () => {
-    const tempProj = 'TPRJ';
+    // Unique per run and transport: an archived project keeps its identifier, so a fixed one would collide.
+    const runSuffix = `${TRANSPORT === 'rest' ? 'R' : 'W'}${String(Date.now()).slice(-5)}`;
+    const tempProj = `TP${runSuffix}`;
 
     it('creates a new project', async () => {
       const result = await client.createProject(tempProj, 'Temp Project', 'For testing', false, 'Classic project');
@@ -996,15 +1002,10 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       assert.ok(result.archived);
     });
 
-    // Note: unarchive not tested because the Huly SDK excludes archived projects from queries.
-    // Once archived, the project cannot be found via findOne/findAll.
-
-    it('deletes the project (create fresh for delete)', async () => {
-      // Create a new one to delete since TPRJ is now archived and invisible
-      const tempProj2 = 'TPR2';
-      await client.createProject(tempProj2, 'Temp 2', 'For delete test', false, 'Classic project');
-      const result = await client.deleteProject(tempProj2);
+    it('deletes the archived project', async () => {
+      const result = await client.deleteProject(tempProj);
       assert.ok(result.message.includes('deleted'));
+      await assert.rejects(() => client.getProject(tempProj), /Project not found/);
     });
 
     it('creates a private project that the creator can list, read, and write', async () => {
@@ -1136,7 +1137,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('deletes a time report', async () => {
-      const result = await client.deleteTimeReport(reportId);
+      const result = await client.deleteTimeReport(testIssueId, reportId);
       assert.ok(result.message.includes('deleted'));
       assert.equal(result.hours, 2.5);
     });
@@ -1583,7 +1584,7 @@ describe('Regression Audit Tests', { timeout: 120_000 }, () => {
       );
     });
 
-    it('assignIssue does not substring-match employee names', async () => {
+    it('update_issue does not substring-match assignee names', async () => {
       // Create an issue first
       const issue = await client.createIssue(AUDIT_PROJECT, 'Assign test');
       // Get actual members to construct a partial name
@@ -1593,7 +1594,7 @@ describe('Regression Audit Tests', { timeout: 120_000 }, () => {
         const partial = fullName.slice(0, 2); // First 2 chars — should NOT match
         if (partial !== fullName) {
           await assert.rejects(
-            () => client.assignIssue(issue.id, partial),
+            () => client.updateIssue(issue.id, undefined, undefined, undefined, undefined, undefined, { assignee: partial }),
             (err) => {
               assert.ok(err.message.includes('not found'), `Expected "not found" in: ${err.message}`);
               return true;

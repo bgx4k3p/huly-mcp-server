@@ -39,7 +39,7 @@ const { ConnectionPool } = await import('../src/pool.mjs');
 const { HulyClient } = await import('../src/client.mjs');
 const {
   HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, HULY_WORKSPACE,
-  POOL_TTL_MS, POOL_CLEANUP_INTERVAL_MS
+  POOL_TTL_MS, POOL_MAX_AGE_MS, POOL_CLEANUP_INTERVAL_MS
 } = await import('../src/config.mjs');
 restoreEnv(ambient);
 
@@ -278,6 +278,20 @@ describe('ConnectionPool.getClient', () => {
   });
 });
 
+describe('ConnectionPool default workspace', () => {
+  it('follows the live HULY_WORKSPACE, as tool calls do', async () => {
+    const saved = process.env.HULY_WORKSPACE;
+    process.env.HULY_WORKSPACE = 'ws-live';
+    try {
+      await withPool(async ({ pool }) => {
+        assert.equal((await pool.getClient()).workspace, 'ws-live');
+      });
+    } finally {
+      if (saved === undefined) delete process.env.HULY_WORKSPACE; else process.env.HULY_WORKSPACE = saved;
+    }
+  });
+});
+
 describe('ConnectionPool.clearClient', () => {
   it('disconnects and forgets only the named workspace', async () => {
     await withPool(async ({ pool, connects, disconnects }) => {
@@ -355,6 +369,19 @@ describe('ConnectionPool._evictStale', () => {
       gate.resolve();
       assert.equal((await pending).workspace, 'ws-pending');
     }, { onConnect: (_client, attempt) => (attempt === 3 ? gate.promise : undefined) });
+  });
+  it('replaces a connection past its maximum age even while it is busy', async () => {
+    await withPool(async ({ pool, disconnects }) => {
+      const busy = await pool.getClient('ws-busy');
+      const entry = pool._entries.get('ws-busy');
+      entry.lastUsed = Date.now();
+      entry.connectedAt = Date.now() - POOL_MAX_AGE_MS - 1;
+
+      const replacement = await pool.getClient('ws-busy');
+
+      assert.deepEqual(disconnects, [busy], 'the aged connection is closed');
+      assert.notEqual(replacement, busy, 'a fresh connection replaces it, picking up a Huly upgrade');
+    });
   });
 });
 
@@ -602,16 +629,11 @@ describe('config env resolution', () => {
 
     assert.equal(config.HULY_URL, 'http://localhost:8087');
     assert.equal(config.POOL_TTL_MS, 1_800_000);
-    assert.equal(config.PORT, 3001);
-    assert.equal(config.RATE_LIMIT, 200);
-    assert.equal(config.ALLOWED_ORIGINS, '*');
-    assert.equal(config.MCP_AUTH_TOKEN, null, 'an absent token must disable auth explicitly, not with undefined');
+    assert.equal(config.POOL_MAX_AGE_MS, 86_400_000);
     assert.equal(config.HULY_WORKSPACE, undefined);
     assert.equal(config.HULY_PROJECT, undefined);
     assert.deepEqual(config.HULY_CREDS, { email: undefined, password: undefined });
     assert.equal(config.POOL_CLEANUP_INTERVAL_MS, 300_000);
-    assert.equal(config.RATE_WINDOW_MS, 60_000);
-    assert.equal(config.MAX_BODY_SIZE, 1_048_576);
   });
 
   it('prefers the environment over every default and parses numbers as numbers', async () => {
@@ -620,19 +642,14 @@ describe('config env resolution', () => {
       HULY_WORKSPACE: 'ws-env',
       HULY_PROJECT: 'PROJ',
       HULY_POOL_TTL_MS: '60000',
-      PORT: '8080',
-      HULY_RATE_LIMIT: '25',
-      MCP_AUTH_TOKEN: 'mcp-secret',
-      ALLOWED_ORIGINS: 'https://a.test,https://b.test'
+      HULY_POOL_MAX_AGE_MS: '120000'
     });
 
     assert.equal(config.HULY_URL, 'https://huly.example.test');
     assert.equal(config.HULY_WORKSPACE, 'ws-env');
     assert.equal(config.HULY_PROJECT, 'PROJ');
-    assert.equal(config.MCP_AUTH_TOKEN, 'mcp-secret');
-    assert.equal(config.ALLOWED_ORIGINS, 'https://a.test,https://b.test');
-    assert.deepEqual([config.POOL_TTL_MS, config.PORT, config.RATE_LIMIT], [60_000, 8080, 25]);
-    for (const value of [config.POOL_TTL_MS, config.PORT, config.RATE_LIMIT]) {
+    assert.deepEqual([config.POOL_TTL_MS, config.POOL_MAX_AGE_MS], [60_000, 120_000]);
+    for (const value of [config.POOL_TTL_MS, config.POOL_MAX_AGE_MS]) {
       assert.equal(typeof value, 'number', 'numeric settings must be parsed, not left as strings');
     }
   });

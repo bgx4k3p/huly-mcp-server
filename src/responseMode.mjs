@@ -1,15 +1,22 @@
+/**
+ * Response modes for tool results: 'compact' (reviewed projection) and 'raw' (minified, including SDK
+ * `extra` fields), selected per call, per session or by HULY_RESPONSE_MODE.
+ */
 const RESPONSE_MODES = new Set(['compact', 'raw']);
 const RESPONSE_MODE_META_KEY = 'com.huly/responseMode';
 const MAX_ERROR_MESSAGE_LENGTH = 500;
 const MAX_COMPACT_ARRAY_ITEMS = 100;
-
-// Deliberately empty for now. Add a key only after reviewing its stability,
-// sensitivity, and usefulness to MCP clients.
-export const COMPACT_EXTRA_ALLOWLIST = new Set();
-export const DEFAULT_RESPONSE_MODE = 'compact';
+const DEFAULT_RESPONSE_MODE = 'compact';
 export const SUPPORTED_RESPONSE_MODES = Object.freeze([...RESPONSE_MODES]);
 
-function parseMode(value, source) {
+/**
+ * Parse a response mode case-insensitively.
+ * @param {*} value
+ * @param {string} source - Name used in the error message
+ * @returns {string|undefined} 'compact' or 'raw', or undefined for null, undefined or ''
+ * @throws {Error} When the value is another mode
+ */
+export function parseMode(value, source) {
   if (value === undefined || value === null || value === '') return undefined;
   const normalized = String(value).trim().toLowerCase();
   if (!RESPONSE_MODES.has(normalized)) {
@@ -18,6 +25,11 @@ function parseMode(value, source) {
   return normalized;
 }
 
+/**
+ * Report whether a value is a plain object (Object or null prototype).
+ * @param {*} value
+ * @returns {boolean}
+ */
 function isPlainObject(value) {
   if (!value || typeof value !== 'object') return false;
   const prototype = Object.getPrototypeOf(value);
@@ -25,8 +37,11 @@ function isPlainObject(value) {
 }
 
 /**
- * Remove unreviewed SDK passthrough fields without dropping documented nulls,
- * empty arrays, empty objects, or other contract values.
+ * Compact projection: drop the unreviewed SDK passthrough (`extra`) and cap long arrays, without dropping
+ * documented nulls, empty arrays, empty objects or other contract values. An array property over
+ * 100 items is cut to 100 and gains `<key>Count` and `<key>Truncated` unless those keys already exist.
+ * @param {*} value - Tool result or any nested value
+ * @returns {*}
  */
 export function projectCompact(value) {
   if (Array.isArray(value)) return value.map(projectCompact);
@@ -35,15 +50,7 @@ export function projectCompact(value) {
   const entries = [];
   const collectionMetadata = [];
   for (const [key, child] of Object.entries(value)) {
-    if (key === 'extra') {
-      if (isPlainObject(child)) {
-        const allowed = Object.entries(child)
-          .filter(([extraKey]) => COMPACT_EXTRA_ALLOWLIST.has(extraKey))
-          .map(([extraKey, extraValue]) => [extraKey, projectCompact(extraValue)]);
-        if (allowed.length > 0) entries.push(['extra', Object.fromEntries(allowed)]);
-      }
-      continue;
-    }
+    if (key === 'extra') continue;
     if (Array.isArray(child) && child.length > MAX_COMPACT_ARRAY_ITEMS) {
       entries.push([key, child.slice(0, MAX_COMPACT_ARRAY_ITEMS).map(projectCompact)]);
       collectionMetadata.push([`${key}Count`, child.length]);
@@ -58,6 +65,14 @@ export function projectCompact(value) {
   return Object.fromEntries(entries);
 }
 
+/**
+ * Serialize a tool result to JSON in the given mode. In compact mode a top-level array becomes
+ * {items, count, totalCount, hasMore, truncated} with at most 100 items.
+ * @param {*} result - Tool result
+ * @param {string} [mode='compact'] - 'compact' or 'raw'; empty uses compact
+ * @returns {string}
+ * @throws {Error} When the mode is invalid
+ */
 export function serializeToolResult(result, mode = DEFAULT_RESPONSE_MODE) {
   const parsedMode = parseMode(mode, 'response mode') ?? DEFAULT_RESPONSE_MODE;
   if (parsedMode === 'raw') return JSON.stringify(result);
@@ -77,6 +92,12 @@ export function serializeToolResult(result, mode = DEFAULT_RESPONSE_MODE) {
   return JSON.stringify(projectCompact(result));
 }
 
+/**
+ * Turn an error into a tool error payload: control characters become spaces and the message is
+ * capped at 500 characters.
+ * @param {*} error
+ * @returns {{error: string}} 'Tool call failed' when there is no usable message
+ */
 export function normalizeToolError(error) {
   const raw = typeof error?.message === 'string' && error.message.trim()
     ? error.message
@@ -89,6 +110,12 @@ export function normalizeToolError(error) {
  * Create an immutable response policy for one MCP server/session.
  * Per-call mode wins over the captured session option, which wins over the
  * environment value. No request can mutate another client's mode.
+ * @param {Object} [options]
+ * @param {string} [options.responseMode] - Session mode
+ * @param {string} [options.environmentMode] - Environment mode; defaults to HULY_RESPONSE_MODE
+ * @returns {{defaultMode: string, resolve: Function, serialize: Function}} Frozen policy; resolve(meta)
+ *   reads _meta["com.huly/responseMode"] and returns the mode to use
+ * @throws {Error} When a configured mode is invalid (resolve throws for an invalid per-call mode)
  */
 export function createResponseSerializer(options = {}) {
   const sessionMode = parseMode(options.responseMode, 'session response mode');

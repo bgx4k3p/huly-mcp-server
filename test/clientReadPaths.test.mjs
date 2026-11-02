@@ -74,6 +74,20 @@ function harness(seed = {}) {
       calls.push({
         method: 'updateCollection', classRef, space, id, attachedTo, attachedToClass, collection, data
       });
+      if (classRef !== ISSUE_CLASS) return;
+      // Like the Huly server, keep each parent's childInfo in step with the move.
+      const issues = docsOf(ISSUE_CLASS);
+      const child = issues.find(doc => doc._id === id);
+      const previous = child && issues.find(doc => doc._id === child.attachedTo);
+      if (previous) previous.childInfo = (previous.childInfo || []).filter(info => info.childId !== id);
+      const next = attachedToClass === ISSUE_CLASS && issues.find(doc => doc._id === attachedTo);
+      if (next) {
+        next.childInfo = [
+          ...(next.childInfo || []).filter(info => info.childId !== id),
+          { childId: id, estimation: child?.estimation ?? 0, reportedTime: child?.reportedTime ?? 0 }
+        ];
+      }
+      if (child) Object.assign(child, data);
     },
     addCollection: async (classRef, space, attachedTo, attachedToClass, collection, data) => {
       calls.push({ method: 'addCollection', classRef, space, attachedTo, attachedToClass, collection, data });
@@ -163,7 +177,7 @@ describe('getProject expansions', () => {
       { name: 'v1', status: 'In Progress', targetDate: '2026-04-01' }
     ]);
     assert.deepEqual(select('findAll', tracker.class.Milestone).map(call => call.query),
-      [{ space: 'proj-space' }]);
+      [{ space: { $in: ['proj-space'] } }]);
     assert.equal(select('findAll', tracker.class.Component).length, 0);
     assert.equal(select('findAll', tags.class.TagElement).length, 0);
     assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 0,
@@ -189,7 +203,7 @@ describe('getProject expansions', () => {
     ]);
     assert.deepEqual(project.members, ['Ada Lovelace', 'Grace Hopper']);
     assert.deepEqual(select('findAll', tracker.class.Component).map(call => call.query),
-      [{ space: 'proj-space' }]);
+      [{ space: { $in: ['proj-space'] } }]);
     assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 1,
       'both expansions must share a single employee lookup');
     assert.equal(select('findAll', tracker.class.Milestone).length, 0);
@@ -285,7 +299,7 @@ describe('getIssue expansions', () => {
     // Scoped to the project so a child moved to another project is excluded
     // rather than returned under this project's identifier prefix.
     assert.deepEqual(childQuery, [{
-      space: 'proj-space', attachedTo: 'issue-1', attachedToClass: ISSUE_CLASS
+      space: 'proj-space', attachedTo: { $in: ['issue-1'] }, attachedToClass: ISSUE_CLASS
     }]);
   });
 
@@ -357,7 +371,7 @@ describe('getIssue expansions', () => {
     assert.equal(issue.timeReportsTruncated, true);
 
     const [reportCall] = select('findAll', tracker.class.TimeSpendReport);
-    assert.deepEqual(reportCall.query, { attachedTo: 'issue-1' });
+    assert.deepEqual(reportCall.query, { attachedTo: { $in: ['issue-1'] } });
     assert.deepEqual(reportCall.options, { sort: { date: -1 } });
     assert.equal(select('findAll', chunter.class.ChatMessage).length, 0);
   });
@@ -461,6 +475,18 @@ describe('getMilestone issue expansion', () => {
   const milestoneIssue = (id, number, overrides = {}) => ({
     _id: id, space: 'proj-space', number, title: `Issue ${number}`,
     status: 's-todo', kind: 'tt-issue', milestone: 'ms-1', ...overrides
+  });
+
+  it('bounds the issue expansion deterministically, lowest numbers first, whatever order storage returns', async () => {
+    const { client } = milestoneHarness([
+      milestoneIssue('i-9', 9), milestoneIssue('i-3', 3), milestoneIssue('i-7', 7), milestoneIssue('i-1', 1)
+    ]);
+
+    const single = await client.getMilestone('proj', 'v1', { include: ['issues'], issuesLimit: 2 });
+    const listed = await client.listMilestones('proj', undefined, { include: ['issues'], issuesLimit: 2 });
+
+    assert.deepEqual(single.issues.map(issue => issue.id), ['PROJ-1', 'PROJ-3']);
+    assert.deepEqual(listed.items.find(item => item.name === 'v1').issues.map(issue => issue.id), ['PROJ-1', 'PROJ-3']);
   });
 
   it('scopes the issue query to the project and reports the full count next to a bounded page', async () => {
@@ -684,6 +710,38 @@ describe('listStatuses scoping', () => {
     assert.equal(second.nextCursor, undefined);
   });
 
+  it('finds a status by name beyond the first page of the project\'s statuses', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      _id: `s-${i}`, name: `Stage ${i}`, category: 'task:statusCategory:Active', color: 1, createdOn: 100 + i
+    }));
+    const { client } = harness({
+      projects: projects(),
+      statuses: many,
+      taskTypes: [{ _id: 'tt-issue', name: 'Issue', statuses: many.map(s => s._id) }],
+      projectTypes: [{ _id: 'pt-classic', name: 'Classic', tasks: ['tt-issue'] }]
+    });
+
+    // Default list pages hold 50, and Stage 0 is the oldest, so it falls on the second page.
+    const status = await client.getStatus('PROJ', 'stage 0');
+    assert.equal(status.id, 's-0');
+  });
+
+  it('renders status descriptions from markup the same way whether or not the list is scoped', async () => {
+    const markup = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Work started' }] }] });
+    const statuses = [{ _id: 's-todo', name: 'Todo', category: 'task:statusCategory:ToDo', color: 1, description: markup, createdOn: 2 }];
+    const { client } = harness({
+      projects: projects(),
+      statuses,
+      taskTypes: [{ _id: 'tt-issue', name: 'Issue', statuses: ['s-todo'] }],
+      projectTypes: [{ _id: 'pt-classic', name: 'Classic', tasks: ['tt-issue'] }]
+    });
+
+    const unscoped = await client.listStatuses();
+    const scoped = await client.listStatuses('PROJ');
+    assert.equal(unscoped.items[0].description, 'Work started');
+    assert.equal(scoped.items[0].description, 'Work started');
+  });
+
   it('rejects a task type that exists elsewhere but not in the addressed project', async () => {
     const { client } = statusHarness();
 
@@ -738,10 +796,8 @@ describe('_detachParent', () => {
       classRef: ISSUE_CLASS,
       space: 'other-space',
       id: 'old-parent-id',
-      data: {
-        childInfo: [{ childId: 'sibling-id', estimation: 0, reportedTime: 0 }],
-        subIssues: 1
-      }
+      // The server already removed the child from childInfo; only the count it does not maintain is written.
+      data: { subIssues: 1 }
     }]);
     assert.deepEqual(select('updateCollection'), [{
       method: 'updateCollection',
@@ -751,12 +807,7 @@ describe('_detachParent', () => {
       attachedTo: 'proj-space',
       attachedToClass: PROJECT_CLASS,
       collection: 'issues',
-      data: {
-        parents: [],
-        attachedTo: 'proj-space',
-        attachedToClass: PROJECT_CLASS,
-        collection: 'issues'
-      }
+      data: { attachedTo: 'proj-space', attachedToClass: PROJECT_CLASS, collection: 'issues' }
     }]);
     assert.deepEqual(result, {
       message: 'Removed parent from PROJ-2', issueId: 'PROJ-2', parentId: null

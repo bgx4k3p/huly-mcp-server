@@ -5,7 +5,7 @@ import { issueTimeFields, issueRollupFields, toHours } from '../src/helpers.mjs'
 import { HulyClient } from '../src/client.mjs';
 
 process.env.HULY_URL ??= 'https://huly.example.test';
-const { createMcpServer } = await import('../src/mcpShared.mjs');
+const { createMcpServer } = await import('../src/mcp/server.mjs');
 const { TOOLS } = createMcpServer();
 
 describe('time numeric normalization', () => {
@@ -42,7 +42,7 @@ describe('time numeric normalization', () => {
       { estimationTotal: 1, reportedTimeTotal: 1 });
   });
 
-  it('logTime writes numeric report values and numeric issue totals', async () => {
+  it('logTime writes a numeric report value and reports the stored total as hours', async () => {
     let reportPayload;
     let issueUpdate;
     const fakeSdk = {
@@ -51,7 +51,8 @@ describe('time numeric normalization', () => {
       },
       updateDoc: async (_classRef, _space, _id, data) => {
         issueUpdate = data;
-      }
+      },
+      findOne: async () => ({ _id: 'issue-id', reportedTime: '1.75' })
     };
     const client = new HulyClient({
       url: 'https://huly.example.test',
@@ -67,7 +68,7 @@ describe('time numeric normalization', () => {
     const result = await client.logTime('PROJ-1', '1.25', 'work');
 
     assert.equal(reportPayload.value, 1.25);
-    assert.equal(issueUpdate.reportedTime, 1.75);
+    assert.equal(issueUpdate, undefined, 'Huly maintains the issue total; log_time must not write it');
     assert.equal(result.reportedTime, 1.75);
   });
 
@@ -80,7 +81,8 @@ describe('time numeric normalization', () => {
     });
     client._getClient = async () => ({
       addCollection: async (...args) => { writes.push(args); },
-      updateDoc: async (...args) => { writes.push(args); }
+      updateDoc: async (...args) => { writes.push(args); },
+      findOne: async () => ({ _id: 'issue-id', reportedTime: 0 })
     });
     client._parseAndFindIssue = async () => ({
       project: { _id: 'project-space' },
@@ -103,7 +105,7 @@ describe('time numeric normalization', () => {
 
     // 0 stays legal: it is a real, if unusual, amount of time to log.
     await client.logTime('PROJ-1', 0, 'work');
-    assert.equal(writes.length, 2);
+    assert.equal(writes.length, 1, 'only the report is written; Huly maintains the issue total');
   });
 });
 
@@ -141,7 +143,8 @@ describe('advertised parameter contracts', () => {
     let reportPayload;
     const client = stubClient({
       addCollection: async (_c, _s, _a, _ac, _col, data) => { reportPayload = data; },
-      updateDoc: async () => {}
+      updateDoc: async () => {},
+      findOne: async () => ({ _id: 'issue-id', reportedTime: 0 })
     });
     client._parseAndFindIssue = async () => ({
       project: { _id: 'project-space' },

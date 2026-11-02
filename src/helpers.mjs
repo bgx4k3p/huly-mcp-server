@@ -1,49 +1,10 @@
 /**
- * Shared helpers, constants, and markup utilities for the Huly MCP server.
- *
- * JSDOM polyfills MUST be at the very top before any Huly SDK imports.
+ * Shared constants and helpers for the Huly MCP server: priority, status and color mappings,
+ * hours and date parsing, signed pagination cursors, list envelopes, and conversion between
+ * text (Markdown, HTML, plain) and Huly's ProseMirror markup.
  */
 
-// Provide full browser DOM via jsdom for @hcengineering/api-client and prosemirror
-import { JSDOM } from 'jsdom';
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'http://localhost' });
-Object.defineProperty(globalThis, 'window', { value: dom.window, writable: true });
-Object.defineProperty(globalThis, 'document', { value: dom.window.document, writable: true });
-Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, writable: true });
-globalThis.HTMLElement = dom.window.HTMLElement;
-globalThis.Node = dom.window.Node;
-globalThis.MutationObserver = dom.window.MutationObserver;
-globalThis.getComputedStyle = dom.window.getComputedStyle;
-globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 0);
-globalThis.cancelAnimationFrame = clearTimeout;
-globalThis.CustomEvent = dom.window.CustomEvent;
-
-// Stub indexedDB — the Huly SDK's client-resources caches the model in IndexedDB.
-// The WebSocket transport needs onsuccess to fire with a fake DB so the model
-// loading promise resolves. REST transport doesn't use this but it's harmless.
-if (typeof globalThis.indexedDB === 'undefined') {
-  globalThis.indexedDB = {
-    open: () => {
-      const fakeDb = {
-        objectStoreNames: { contains: () => true },
-        createObjectStore: () => ({}),
-        onclose: null,
-        transaction: () => ({
-          objectStore: () => ({
-            get: () => { const r = { onsuccess: null, result: undefined }; setTimeout(() => r.onsuccess?.({ target: r }), 0); return r; },
-            put: () => { const r = { onsuccess: null }; setTimeout(() => r.onsuccess?.({ target: r }), 0); return r; },
-          }),
-        }),
-      };
-      const req = { result: fakeDb, error: null, onerror: null, onsuccess: null, onupgradeneeded: null };
-      setTimeout(() => {
-        if (req.onupgradeneeded) req.onupgradeneeded();
-        if (req.onsuccess) req.onsuccess({ target: req });
-      }, 0);
-      return req;
-    }
-  };
-}
+import './domPolyfill.mjs';
 
 import { createRequire } from 'module';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -77,7 +38,7 @@ export const MILESTONE_STATUS_MAP = {
 
 export const MILESTONE_STATUS_NAMES = ['Planned', 'In Progress', 'Completed', 'Canceled'];
 
-export const COLOR_PALETTE = {
+const COLOR_PALETTE = {
   red: 0, salmon: 1, pink: 2, hotpink: 3, magenta: 4,
   purple: 5, indigo: 6, violet: 7, navy: 8, blue: 9,
   sky: 10, cyan: 11, teal: 12, ocean: 13, mint: 14,
@@ -106,10 +67,8 @@ export const DEFAULT_DETAIL_PAGE_SIZE = 20;
 export const FILTER_ID_BATCH_SIZE = 100;
 export const FILTER_QUERY_CONCURRENCY = 4;
 export const MAX_LABEL_FILTER_ISSUES = 5000;
-export const LOOKUP_CACHE_TTL_MS = 60000;
 export const MAX_PAGE_SIZE = 100;
 export const MAX_DETAIL_PAGE_SIZE = 50;
-export const MAX_COMPACT_ARRAY_ITEMS = 100;
 export const CURSOR_TTL_MS = 24 * 60 * 60 * 1000;
 
 const processCursorSecret = randomBytes(32);
@@ -118,6 +77,8 @@ const processCursorSecret = randomBytes(32);
  * Lenient hours coercion for READ paths. A single malformed stored value must
  * not fail a whole page, so anything unusable reads as 0. Never use this on a
  * caller-supplied value: use parseHours, which refuses instead of discarding.
+ * @param {*} value - Stored hours value
+ * @returns {number} Finite number, or 0
  */
 export function toHours(value) {
   const number = Number(value);
@@ -129,8 +90,9 @@ export function toHours(value) {
  * nothing while reporting success, so a value that cannot be an hour count is
  * rejected rather than written.
  * @param {*} value - Caller-supplied hours
- * @param {string} [field] - Field name for the error message
- * @returns {number}
+ * @param {string} [field='hours'] - Field name for the error message
+ * @returns {number} Non-negative finite number
+ * @throws {Error} When the value is missing, boolean, blank, non-numeric or negative
  */
 export function parseHours(value, field = 'hours') {
   if (value === null || value === undefined || typeof value === 'boolean' ||
@@ -147,6 +109,11 @@ export function parseHours(value, field = 'hours') {
   return number;
 }
 
+/**
+ * Read an issue's own estimation and reported time as hours, coercing bad values to 0.
+ * @param {Object} issue - Raw issue document
+ * @returns {{estimation: number, reportedTime: number}}
+ */
 export function issueTimeFields(issue) {
   return {
     estimation: toHours(issue?.estimation),
@@ -163,7 +130,8 @@ export function issueTimeFields(issue) {
  * its own parent's direct total, which is why this is deliberately not
  * recursive.
  * @param {Object} issue - Raw issue document carrying childInfo
- * @returns {{estimationTotal: number, reportedTimeTotal: number}|null} null when the issue has no children
+ * @returns {{estimationTotal: number, reportedTimeTotal: number}|null} The issue's own time plus each direct
+ *   child's childInfo time, or null when the issue has no children
  */
 export function issueRollupFields(issue) {
   const children = issue?.childInfo;
@@ -174,17 +142,34 @@ export function issueRollupFields(issue) {
   };
 }
 
+/**
+ * Return a copy of a value with object keys sorted recursively, for stable JSON hashing.
+ * @param {*} value
+ * @returns {*}
+ */
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableValue(value[key])]));
 }
 
+/**
+ * Return the HMAC key for pagination cursors: options.secret, then HULY_CURSOR_SECRET, HULY_TOKEN,
+ * HULY_PASSWORD (read live from the env), then a random per-process secret.
+ * @param {Object} [options]
+ * @param {string|Buffer} [options.secret] - Explicit secret
+ * @returns {string|Buffer}
+ */
 function cursorSecret(options = {}) {
   return options.secret ?? process.env.HULY_CURSOR_SECRET ??
     process.env.HULY_TOKEN ?? process.env.HULY_PASSWORD ?? processCursorSecret;
 }
 
+/**
+ * Hash a query scope (filters and other cursor-binding parameters) to a short stable string.
+ * @param {*} scope - JSON-serializable scope; null or undefined hashes as {}
+ * @returns {string} First 16 base64url characters of the SHA-256 digest
+ */
 export function cursorScopeHash(scope) {
   return createHash('sha256')
     .update(JSON.stringify(stableValue(scope ?? {})))
@@ -192,6 +177,13 @@ export function cursorScopeHash(scope) {
     .slice(0, 16);
 }
 
+/**
+ * Extract the (createdOn, id) ordering tuple from a raw or formatted record, falling back to
+ * modifiedOn and to fields under `extra`.
+ * @param {Object} value - Record
+ * @returns {{createdOn: number, id: string}}
+ * @throws {Error} When the record has no finite timestamp or no id
+ */
 export function cursorTuple(value) {
   const createdOn = Number(value?.createdOn ?? value?.extra?.createdOn ??
     value?.modifiedOn ?? value?.extra?.modifiedOn ?? 0);
@@ -200,19 +192,42 @@ export function cursorTuple(value) {
   return { createdOn, id };
 }
 
+/**
+ * Compare cursor tuples for newest-first order: createdOn descending, then id descending.
+ * @param {{createdOn: number, id: string}} left
+ * @param {{createdOn: number, id: string}} right
+ * @returns {number} Negative when left sorts first, positive when right does, 0 when equal
+ */
 export function compareCursorTuple(left, right) {
   if (right.createdOn !== left.createdOn) return right.createdOn - left.createdOn;
   if (right.id === left.id) return 0;
   return right.id < left.id ? -1 : 1;
 }
 
+/**
+ * Report whether a record sorts strictly after a boundary tuple in newest-first order.
+ * @param {Object} value - Record
+ * @param {{createdOn: number, id: string}} boundary
+ * @returns {boolean}
+ * @throws {Error} When the record has no cursor fields
+ */
 export function isTupleAfter(value, boundary) {
   const tuple = cursorTuple(value);
   return tuple.createdOn < boundary.createdOn ||
     (tuple.createdOn === boundary.createdOn && tuple.id < boundary.id);
 }
 
-/** Encode a signed, versioned, filter-bound pagination cursor. */
+/**
+ * Encode a signed, versioned, scope-bound pagination cursor (base64url payload and truncated HMAC).
+ * @param {Object} after - Last record on the current page
+ * @param {Object} [options]
+ * @param {Object} [options.watermark] - Record marking the newest result at pagination start; defaults to after
+ * @param {*} [options.scope] - Query scope the cursor is bound to
+ * @param {number} [options.now=Date.now()] - Issue time in milliseconds
+ * @param {string|Buffer} [options.secret] - HMAC key; see cursorSecret
+ * @returns {string}
+ * @throws {Error} When after or the watermark has no cursor fields
+ */
 export function encodeCursor(after, options = {}) {
   const afterTuple = cursorTuple(after);
   const watermarkTuple = cursorTuple(options.watermark ?? after);
@@ -232,7 +247,18 @@ export function encodeCursor(after, options = {}) {
   return `${payload}.${signature}`;
 }
 
-/** Decode and validate a signed pagination cursor. */
+/**
+ * Decode and validate a signed pagination cursor.
+ * @param {string} cursor - Cursor from a previous page
+ * @param {Object} [options]
+ * @param {*} [options.scope] - Query scope; must match the scope the cursor was issued for
+ * @param {number} [options.now=Date.now()] - Current time in milliseconds
+ * @param {number} [options.ttlMs=CURSOR_TTL_MS] - Maximum cursor age
+ * @param {string|Buffer} [options.secret] - HMAC key; see cursorSecret
+ * @returns {{version: number, watermark: {createdOn: number, id: string}, after: {createdOn: number, id: string}}}
+ * @throws {Error} When the cursor is malformed, has a bad signature, belongs to another query, is older
+ *   than the TTL, or is issued more than five minutes in the future
+ */
 export function decodeCursor(cursor, options = {}) {
   try {
     if (typeof cursor !== 'string' || cursor.length > 1024) throw new Error();
@@ -291,6 +317,9 @@ export function decodeCursor(cursor, options = {}) {
  * Build the v3 list envelope. Pagination metadata is stated by the producer,
  * which knows whether a page was cut short, rather than inferred downstream
  * from the shape of the payload.
+ * @param {Array} items - Page items
+ * @param {string} [nextCursor] - Cursor for the next page, when there is one
+ * @returns {{items: Array, count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}}
  */
 export function listEnvelope(items, nextCursor) {
   return {
@@ -303,8 +332,10 @@ export function listEnvelope(items, nextCursor) {
 }
 
 /**
- * Resolve an optional due date. setDueDate already validated; createIssue,
- * updateIssue, and batchCreateIssues did not, and stored NaN instead.
+ * Format a stored timestamp or date string as an ISO 8601 string for output.
+ * Unparseable values become null, so one bad stored value cannot fail a whole read.
+ * @param {number|string|null|undefined} value
+ * @returns {string|null}
  */
 export function toIsoDate(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -314,19 +345,50 @@ export function toIsoDate(value) {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
-export function normalizeDueDate(value) {
-  if (value === undefined || value === null || String(value).trim() === '') return null;
+/**
+ * Parse a date value to a millisecond timestamp.
+ * @param {string|number} value - ISO date or timestamp
+ * @returns {number}
+ * @throws {Error} When the value is not a parseable date
+ */
+function parseDate(value) {
   const parsed = new Date(value).getTime();
   if (!Number.isFinite(parsed)) {
-    throw new Error(`Invalid date: ${value}. Use ISO format, for example 2026-04-01.`);
+    throw new Error(`Invalid date: ${String(value)}. Use ISO format, for example 2026-04-01.`);
   }
   return parsed;
 }
 
 /**
- * Map a priority name to its numeric code. An unrecognised name must fail:
- * silently storing "none" while echoing the requested value back misreports
- * the write. listIssues already rejects; the write paths did not.
+ * Format a stored timestamp or date string as a calendar date (YYYY-MM-DD). Missing and unparseable values,
+ * including 0, become null, so one bad stored value cannot fail a whole read.
+ * @param {number|string|null|undefined} value
+ * @returns {string|null}
+ */
+export function toIsoDay(value) {
+  if (!value) return null;
+  const ms = typeof value === 'number' ? value : new Date(value).getTime();
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : null;
+}
+
+/**
+ * Parse an optional due date for storage. Blank or missing means no due date.
+ * @param {string|number|null|undefined} value - ISO date or timestamp
+ * @returns {number|null} Millisecond timestamp, or null to clear
+ * @throws {Error} When the value is not a parseable date
+ */
+export function normalizeDueDate(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  return parseDate(value);
+}
+
+/**
+ * Map a priority name to its numeric code. An unrecognised name fails rather than silently storing
+ * "none" while echoing the requested value back.
+ * @param {string|null|undefined} value - Priority name (case-insensitive)
+ * @param {number} [fallback=0] - Code used when no priority is given
+ * @returns {number}
+ * @throws {Error} When the name is not a known priority
  */
 export function resolvePriority(value, fallback = 0) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -335,16 +397,25 @@ export function resolvePriority(value, fallback = 0) {
   return mapped;
 }
 
-/** Resolve a time-report date, rejecting values the SDK would store as NaN. */
+/**
+ * Resolve a time-report date, rejecting values the SDK would store as NaN.
+ * @param {string|number|null|undefined} value - ISO date or timestamp; blank means now
+ * @returns {number} Millisecond timestamp
+ * @throws {Error} When the value is not a parseable date
+ */
 export function normalizeReportDate(value) {
   if (value === undefined || value === null || value === '') return Date.now();
-  const parsed = new Date(value).getTime();
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Invalid date: ${String(value)}. Use ISO format, for example 2026-04-01.`);
-  }
-  return parsed;
+  return parseDate(value);
 }
 
+/**
+ * Validate a page-size limit, using the fallback when none is given.
+ * @param {number|null|undefined} value - Requested limit
+ * @param {number} [fallback=DEFAULT_PAGE_SIZE] - Limit used when value is null or undefined
+ * @param {number} [maximum=MAX_PAGE_SIZE] - Largest allowed limit
+ * @returns {number}
+ * @throws {Error} When the limit is not an integer from 1 to maximum
+ */
 export function normalizePageLimit(value, fallback = DEFAULT_PAGE_SIZE, maximum = MAX_PAGE_SIZE) {
   const limit = value === undefined || value === null ? fallback : value;
   if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > maximum) {
@@ -354,8 +425,11 @@ export function normalizePageLimit(value, fallback = DEFAULT_PAGE_SIZE, maximum 
 }
 
 /**
- * Resolve a color value: name ("blue"), palette index (9), or RGB (0x5E6AD2).
- * Returns a number suitable for the Huly color field.
+ * Resolve a color value: palette name ("blue", case-insensitive) or a number, which is returned
+ * as-is (palette index or RGB such as 0x5E6AD2). Unknown names and other types use the fallback.
+ * @param {string|number|null|undefined} value
+ * @param {number} [fallback=DEFAULT_LABEL_COLOR] - Color used when value is missing or unrecognised
+ * @returns {number} Value for the Huly color field
  */
 export function resolveColor(value, fallback = DEFAULT_LABEL_COLOR) {
   if (value == null) return fallback;
@@ -370,8 +444,13 @@ export function resolveColor(value, fallback = DEFAULT_LABEL_COLOR) {
 // ── Utilities ──────────────────────────────────────────────────
 
 /**
- * Strict map/array lookup — throws if key is missing.
+ * Strict map/array/object lookup that throws when the key is missing (value undefined).
  * Use instead of `map.get(key) || fallback` to surface data corruption.
+ * @param {Map|Array|Object} mapOrArray - Collection to read
+ * @param {*} key - Key or index
+ * @param {string} label - Name used in the error message
+ * @returns {*}
+ * @throws {Error} When the key has no value
  */
 export function strictGet(mapOrArray, key, label) {
   const val = mapOrArray instanceof Map ? mapOrArray.get(key) : mapOrArray[key];
@@ -382,7 +461,10 @@ export function strictGet(mapOrArray, key, label) {
 }
 
 /**
- * Case-insensitive name comparison.
+ * Case-insensitive name comparison that also treats "Cancelled" and "Canceled" as equal.
+ * @param {string|null|undefined} a
+ * @param {string|null|undefined} b
+ * @returns {boolean}
  */
 export function nameMatch(a, b) {
   const la = (a || '').toLowerCase();
@@ -398,6 +480,9 @@ export function nameMatch(a, b) {
  * Known fields are at the top level with resolved/formatted values.
  * Any raw SDK fields not in the known set go into an `extra` object.
  * This future-proofs the API — new SDK fields appear automatically in `extra`.
+ * @param {Object} raw - Raw SDK document
+ * @param {Object} known - Formatted known fields
+ * @returns {Object} known, plus `extra` when raw has keys not in known
  */
 export function withExtra(raw, known) {
   const knownKeys = new Set(Object.keys(known));
@@ -412,20 +497,11 @@ export function withExtra(raw, known) {
 
 // ── Markup Conversion ──────────────────────────────────────────
 
-/**
- * Convert text to ProseMirror JSON markup string for the collaborator service.
- *
- * Huly stores rich text as ProseMirror JSON documents in a collaborator service
- * (Yjs-backed). The issue/milestone/comment document holds a reference ID;
- * the actual content lives in the collaborator. All text writes must go through
- * the collaborator client to be visible in the Huly UI.
- *
- * Flow: user text -> ProseMirror JSON -> jsonToMarkup() -> collaborator.updateMarkup()
- */
 let _markupSchema = null;
 
 /**
- * The ProseMirror schema Huly's editor actually validates against.
+ * Return the ProseMirror schema Huly's editor validates against, built once and cached.
+ * @returns {Object} ProseMirror Schema
  */
 function markupSchema() {
   _markupSchema ??= jsonToPmNode({ type: 'doc', content: [{ type: 'paragraph' }] }).type.schema;
@@ -441,7 +517,10 @@ function markupSchema() {
  * fails Node.check() and the Huly UI renders the whole description blank.
  *
  * Marks are re-applied through Mark.addToSet, so the schema's own exclusion
- * rules decide which survive rather than a hardcoded precedence list.
+ * rules decide which survive rather than a hardcoded precedence list. Marks unknown to the
+ * schema are dropped.
+ * @param {Object} node - ProseMirror JSON node, mutated in place (recursively)
+ * @returns {Object} The same node
  */
 function sanitizeMarkupNode(node) {
   if (Array.isArray(node.content)) node.content.forEach(sanitizeMarkupNode);
@@ -459,8 +538,10 @@ function sanitizeMarkupNode(node) {
 }
 
 /**
- * Re-normalize an already-stored markup string so it satisfies the editor
- * schema. Used to repair documents written before mark sanitization existed.
+ * Re-normalize a stored markup string so it satisfies the editor schema: forbidden mark
+ * combinations are removed and an empty document becomes one empty paragraph.
+ * @param {string} markup - Markup string
+ * @returns {string} Normalized markup string
  */
 export function normalizeMarkup(markup) {
   const json = markupToJSON(markup);
@@ -471,6 +552,18 @@ export function normalizeMarkup(markup) {
   return jsonToMarkup(sanitizeMarkupNode(json));
 }
 
+/**
+ * Convert text to a ProseMirror JSON markup string for the collaborator service.
+ *
+ * Huly stores issue descriptions and other collaborative rich text in a Yjs-backed
+ * collaborator service; the document holds a reference ID and the content lives in
+ * the collaborator. Text writes must go through the collaborator client to be visible
+ * in the Huly UI. Empty text yields one empty paragraph; forbidden mark combinations
+ * are removed.
+ * @param {string} text - Source text
+ * @param {string} [format='markdown'] - 'markdown', 'html' or 'plain'; other values are treated as Markdown
+ * @returns {string} Markup string
+ */
 export function toCollaboratorMarkup(text, format = 'markdown') {
   // { doc, content: [] } fails the editor schema — doc requires block+ — so an
   // empty description must use Huly's canonical empty node, one empty paragraph.
@@ -492,7 +585,10 @@ export function toCollaboratorMarkup(text, format = 'markdown') {
 }
 
 /**
- * Convert ProseMirror JSON markup string back to user-readable text.
+ * Convert a ProseMirror JSON markup string back to user-readable text.
+ * @param {string} markup - Markup string
+ * @param {string} [format='markdown'] - 'html' or 'markdown'; other values produce Markdown
+ * @returns {string} Converted text; '' for empty markup; the input itself when it cannot be converted
  */
 export function fromCollaboratorMarkup(markup, format = 'markdown') {
   if (!markup || isEmptyMarkup(markup)) return '';
@@ -519,10 +615,13 @@ export function fromCollaboratorMarkup(markup, format = 'markdown') {
  *
  * The SDK's MarkupContent wrapper must NOT be used here. It is only unwrapped
  * by PlatformClientImpl.processMarkup, and this server holds a bare
- * TxOperations on both transports (see connect()), so a MarkupContent is
+ * TxOperations on both transports (see connect() in client/connection.mjs), so a MarkupContent is
  * persisted verbatim as {"content":..,"kind":..}. The Huly UI then renders an
  * empty description, while fromMarkup() still unwraps it on read — which makes
  * a round-trip through this server look correct.
+ * @param {string} text - Source text
+ * @param {string} [format='markdown'] - 'markdown', 'html' or 'plain'
+ * @returns {string} Markup string
  */
 export function toMarkup(text, format = 'markdown') {
   return toCollaboratorMarkup(text, format);
@@ -530,8 +629,11 @@ export function toMarkup(text, format = 'markdown') {
 
 /**
  * Extract text from a Huly description/message field.
- * Handles: MarkupContent objects, ProseMirror JSON strings, plain strings,
- * and collaborator reference strings.
+ * Handles: MarkupContent objects (returns `content`), ProseMirror JSON doc strings
+ * (converted to Markdown), collaborator reference strings and plain strings (returned as-is).
+ * @param {*} value - Field value
+ * @returns {string} Text; '' for empty values
+ * @throws {Error} When a string starts with { or [ but is not valid JSON
  */
 export function fromMarkup(value) {
   if (!value) return '';

@@ -1,18 +1,22 @@
 /**
  * ConnectionPool - Caches HulyClient instances by workspace slug.
  *
- * Supports multiple simultaneous workspace connections.
- * Default workspace comes from HULY_WORKSPACE env var.
- * Evicts stale connections after a configurable TTL.
+ * Supports multiple simultaneous workspace connections, all using the credentials from
+ * config.mjs. The default workspace is resolved the same way tool calls resolve it
+ * (resolveDefaultWorkspace). Connections idle longer than POOL_TTL_MS (HULY_POOL_TTL_MS), or
+ * older than POOL_MAX_AGE_MS (HULY_POOL_MAX_AGE_MS), are replaced on next use or by a periodic sweep.
  */
 
 import { HulyClient } from './client.mjs';
 import {
-  HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, HULY_WORKSPACE,
-  POOL_TTL_MS, POOL_CLEANUP_INTERVAL_MS
+  HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, resolveDefaultWorkspace,
+  POOL_TTL_MS, POOL_MAX_AGE_MS, POOL_CLEANUP_INTERVAL_MS
 } from './config.mjs';
 
 export class ConnectionPool {
+  /**
+   * Create an empty pool and start the stale-connection sweep (an unref'd interval timer).
+   */
   constructor() {
     /** @type {Map<string, { client: HulyClient|null, lastUsed: number, connecting: Promise<HulyClient>|null }>} */
     this._entries = new Map();
@@ -28,9 +32,11 @@ export class ConnectionPool {
    *
    * @param {string} [workspace] - Workspace slug (optional, uses default if omitted)
    * @returns {Promise<HulyClient>}
+   * @throws {Error} When no workspace is given or configured, the connection fails, or the
+   *   workspace is cleared while the connection is being established
    */
   async getClient(workspace) {
-    const ws = workspace || HULY_WORKSPACE;
+    const ws = workspace || resolveDefaultWorkspace();
 
     if (!ws) {
       throw new Error('No workspace specified and HULY_WORKSPACE env var is not set');
@@ -38,8 +44,7 @@ export class ConnectionPool {
 
     const entry = this._entries.get(ws);
     if (entry) {
-      // Check if stale
-      if (entry.client && Date.now() - entry.lastUsed > POOL_TTL_MS) {
+      if (this._isStale(entry, Date.now())) {
         console.warn(`[pool] Evicting stale connection for workspace: ${ws}`);
         entry.client.disconnect();
         this._entries.delete(ws);
@@ -62,10 +67,10 @@ export class ConnectionPool {
         workspace: ws
       });
       await client.connect();
-      // clearClient/clearAll during an in-flight connect used to be undone by
-      // this write, caching a connection the caller asked to close and — since
-      // clearAll also stops the sweep timer — leaking it for the process
-      // lifetime. Only claim the slot if it is still ours.
+      // If clearClient/clearAll ran during this connect, the slot no longer
+      // holds this promise. Writing it back would cache a connection the caller
+      // asked to close and, since clearAll also stops the sweep timer, leak it
+      // for the process lifetime. Only claim the slot if it is still ours.
       if (this._entries.get(ws)?.connecting !== connectPromise) {
         client.disconnect();
         // Returning the client here would hand the caller a disconnected
@@ -75,7 +80,7 @@ export class ConnectionPool {
           `Connection for workspace "${ws}" was closed while it was being established; retry the request.`
         );
       }
-      this._entries.set(ws, { client, lastUsed: Date.now(), connecting: null });
+      this._entries.set(ws, { client, lastUsed: Date.now(), connectedAt: Date.now(), connecting: null });
       return client;
     })();
 
@@ -90,12 +95,13 @@ export class ConnectionPool {
   }
 
   /**
-   * Force-disconnect and remove a cached client for the given workspace.
+   * Force-disconnect and remove a cached client for the given workspace. An in-flight
+   * connection for it is discarded when it completes.
    *
    * @param {string} [workspace] - Workspace slug (optional, uses default if omitted)
    */
   clearClient(workspace) {
-    const ws = workspace || HULY_WORKSPACE;
+    const ws = workspace || resolveDefaultWorkspace();
     if (!ws) return;
 
     const entry = this._entries.get(ws);
@@ -106,7 +112,8 @@ export class ConnectionPool {
   }
 
   /**
-   * Disconnect all cached clients.
+   * Disconnect all cached clients and stop the stale-connection sweep. In-flight connections
+   * are discarded when they complete.
    */
   clearAll() {
     clearInterval(this._cleanupTimer);
@@ -117,12 +124,24 @@ export class ConnectionPool {
   }
 
   /**
+   * Whether a connected entry should be replaced: unused for longer than the TTL, or older than the maximum
+   * age however busy it is, so a long-running server picks up a Huly upgrade.
+   * @param {Object} entry - Pool entry
+   * @param {number} now - Current time in ms
+   * @returns {boolean}
+   */
+  _isStale(entry, now) {
+    return Boolean(entry.client) &&
+      (now - entry.lastUsed > POOL_TTL_MS || now - entry.connectedAt > POOL_MAX_AGE_MS);
+  }
+
+  /**
    * Evict connections that haven't been used within the TTL window.
    */
   _evictStale() {
     const now = Date.now();
     for (const [ws, entry] of this._entries) {
-      if (entry.client && now - entry.lastUsed > POOL_TTL_MS) {
+      if (this._isStale(entry, now)) {
         console.warn(`[pool] Evicting stale connection for workspace: ${ws}`);
         entry.client.disconnect();
         this._entries.delete(ws);

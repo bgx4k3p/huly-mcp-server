@@ -120,8 +120,8 @@ describe('issue projection client behavior', () => {
 
   it('never truncates get_issue descriptions by default and bounds requested details', async () => {
     const comments = [
-      { _id: 'c1', message: 'first', createdOn: 1 },
-      { _id: 'c2', message: 'second', createdOn: 2 }
+      { _id: 'c1', attachedTo: baseIssue._id, message: 'first', createdOn: 1 },
+      { _id: 'c2', attachedTo: baseIssue._id, message: 'second', createdOn: 2 }
     ];
     const { client } = createHarness({ comments });
     client._parseAndFindIssue = async () => ({

@@ -16,7 +16,7 @@ import { HulyClient } from './client.mjs';
  *
  * Keep this beside the dispatch tables so adding a handler without classifying
  * its behavior fails the metadata regression test. MCP defaults are applied by
- * mcpShared.mjs; these sets describe behavior, not merely naming conventions.
+ * mcp/policy.mjs; these sets describe behavior, not merely naming conventions.
  */
 export const READ_ONLY_TOOL_NAMES = new Set([
   'get_huly_context',
@@ -221,7 +221,7 @@ export const workspaceTools = {
   update_time_report: (a, c) => c.updateTimeReport(a.issueId, a.reportId, {
     hours: a.hours, description: a.description, date: a.date, employee: a.employee
   }),
-  delete_time_report: (a, c) => c.deleteTimeReport(a.reportId),
+  delete_time_report: (a, c) => c.deleteTimeReport(a.issueId, a.reportId),
 
   // Projects
   create_project: (a, c) =>

@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HulyClient } from '../src/client.mjs';
-import { createMcpServer } from '../src/mcpShared.mjs';
+import { createMcpServer } from '../src/mcp/server.mjs';
 
 const require = createRequire(import.meta.url);
 const core = require('@hcengineering/core').default;

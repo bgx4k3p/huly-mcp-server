@@ -2,6 +2,93 @@
 
 All notable changes to this project are documented in this file.
 
+## 3.2.0 - 2026-11-02
+
+### Changes that need attention
+
+- **HTTP mode fails closed.** The server listens on `127.0.0.1` by default
+  (`HOST`), and refuses to listen on any other interface without an access
+  token. The Docker image sets `HOST=0.0.0.0`, so a container now needs
+  `MCP_AUTH_TOKENS` or `MCP_AUTH_TOKEN` to start.
+- **No browser origins by default.** A browser `Origin` that is not listed in
+  `ALLOWED_ORIGINS` gets 403. Clients that send no `Origin` are unaffected.
+- **No port fallback.** If `PORT` is taken the server exits instead of moving
+  to a random port. `PORT=0` still picks any free port.
+- **Tool arguments are validated** against each tool's schema. Wrong types,
+  `null` and missing required arguments are rejected with a message naming the
+  argument; numeric strings are no longer accepted for number fields.
+- **`delete_time_report` requires `issueId`**, like `get_time_report` and
+  `update_time_report`, and only deletes a report on that issue.
+- **Names match case-insensitively everywhere** (labels, components,
+  milestones, members), and creating or renaming one to a name that differs
+  only by case is refused. `get_member` matches full names, not substrings.
+- **`create_issue` and `batch_create_issues` report the stored status and
+  priority** as reads name them (for example `High`, `No Priority`).
+- Not-found errors use one format: `<Kind> not found: <name>. Available: ...`.
+
+### HTTP mode
+
+- Named access tokens: `MCP_AUTH_TOKENS=name:token,...`, compared in constant
+  time. A session belongs to the token that opened it, and the token name is
+  logged with each request.
+- Sessions close after `HULY_SESSION_IDLE_MS` without requests, at most
+  `HULY_MAX_SESSIONS` are open, and an unknown or expired session id gets 404 so
+  clients start a new session. Sessions register as soon as they initialize.
+- Rate limiting runs before authentication. `HULY_TRUST_PROXY=true` takes the
+  client address from `X-Forwarded-For` behind a reverse proxy.
+- Malformed requests get 400, oversized bodies 413; no request can stop the
+  process. Settings are validated at startup. `/health` no longer reports the
+  version or session count.
+- Pooled connections are replaced after `HULY_POOL_MAX_AGE_MS` (24 h by default),
+  so a long-running server picks up a Huly upgrade.
+
+### Fixes
+
+- New issues get distinct ranks in creation order, including when several
+  sessions create issues at once; previously every issue shared one rank.
+- Issue numbers are reserved only after every input is validated, so rejected
+  creates, batch items and moves no longer leave gaps; the reserved number is
+  read atomically.
+- A write that loses its connection is no longer re-run, which could create a
+  duplicate issue; only read-only tools retry.
+- `log_time` leaves the issue's reported time to Huly, which keeps it exact
+  under concurrent logging.
+- Comments can only be read, updated or deleted through their own issue.
+- `move_issue` moves the issue with its sub-issues and attached comments, time
+  reports, labels and attachments, as the Huly web app does. Task type and
+  status are made valid for the target project; component and milestone are
+  mapped by name or cleared, and the result lists every change.
+- Setting or removing a parent no longer writes fields Huly maintains itself,
+  which could leave stale entries in the previous parent; breadcrumbs of
+  sub-issues below a moved issue are refreshed.
+- Self-relations, self-blocking and parent cycles are refused; `add_relation`
+  completes a relation that only one side recorded.
+- `get_status` searches every status, and default statuses come from the chosen
+  task type's workflow.
+- `get_my_issues` identifies the caller by the signed-in account.
+- `batch_create_issues` carries on past an item that fails to write and reports
+  its reserved id.
+- `update_project` and `delete_project` find archived projects; `create_project`
+  validates identifiers and treats archived projects as taken.
+- Getters return the same fields as their lists; milestone issue lists are
+  ordered by number; a corrupt stored date no longer fails a whole page.
+- In stdio mode nothing but JSON-RPC can reach stdout, even while modules load.
+- `--get-token` reports a failure as one message.
+
+### Dependencies
+
+- Updated the MCP SDK to 1.32.2, ws to 8.22.1, ESLint to 10.14.0 and the CodeQL
+  action to 4.39.1. Refreshed body-parser to 2.4.0 (denial-of-service advisory,
+  via the MCP SDK). ws 8.22.1 was two days old at release; it contains bug fixes
+  only.
+- Added `ajv` (already installed by the MCP SDK) as a direct dependency for
+  argument validation.
+
+### Internal
+
+- Split the client, MCP layer and HTTP transport into focused modules, removed
+  dead and duplicated code, and documented every function.
+
 ## 3.1.1 - 2026-10-17
 
 ### Dependency security maintenance

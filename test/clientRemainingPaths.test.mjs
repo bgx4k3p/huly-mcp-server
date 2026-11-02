@@ -38,37 +38,40 @@ function recorder(fixtures = {}) {
   };
 }
 
-describe('setDueDate', () => {
-  it('writes a parsed timestamp and reports the value it stored', async () => {
+describe('updateIssue due date and estimation', () => {
+  it('writes a parsed due date timestamp', async () => {
     const sdk = recorder();
-    const result = await stubClient(sdk).setDueDate('PROJ-42', '2026-04-01');
+    const result = await stubClient(sdk).updateIssue('PROJ-42', undefined, undefined, undefined, undefined, undefined,
+      { dueDate: '2026-04-01' });
     const write = sdk.calls.find(c => c.op === 'updateDoc');
     assert.equal(write.data.dueDate, new Date('2026-04-01').getTime());
     assert.equal(write.space, 'p1');
     assert.equal(write.id, 'i1');
-    assert.match(result.message, /Due date set to 2026-04-01/);
+    assert.deepEqual(result.updated, ['dueDate']);
   });
 
-  it('clears the date with an explicit null rather than omitting the field', async () => {
+  it('clears the due date with an explicit null rather than omitting the field', async () => {
     const sdk = recorder();
-    const result = await stubClient(sdk).setDueDate('PROJ-42', '');
+    await stubClient(sdk).updateIssue('PROJ-42', undefined, undefined, undefined, undefined, undefined, { dueDate: '' });
     const write = sdk.calls.find(c => c.op === 'updateDoc');
     assert.ok('dueDate' in write.data, 'omitting the key would leave the old date in place');
     assert.equal(write.data.dueDate, null);
-    assert.match(result.message, /cleared/);
   });
 
-  it('rejects an unparseable date without writing', async () => {
+  it('rejects an unparseable due date without writing', async () => {
     const sdk = recorder();
-    await assert.rejects(() => stubClient(sdk).setDueDate('PROJ-42', 'next friday'), /Invalid date/);
+    await assert.rejects(
+      () => stubClient(sdk).updateIssue('PROJ-42', undefined, undefined, undefined, undefined, undefined,
+        { dueDate: 'next friday' }),
+      /Invalid date/
+    );
     assert.equal(sdk.calls.filter(c => c.op === 'updateDoc').length, 0);
   });
-});
 
-describe('setEstimation', () => {
   it('coerces the estimate to a number before it reaches the SDK', async () => {
     const sdk = recorder();
-    await stubClient(sdk).setEstimation('PROJ-42', '2.5');
+    await stubClient(sdk).updateIssue('PROJ-42', undefined, undefined, undefined, undefined, undefined,
+      { estimation: '2.5' });
     const write = sdk.calls.find(c => c.op === 'updateDoc');
     assert.equal(write.data.estimation, 2.5);
     assert.equal(typeof write.data.estimation, 'number');
@@ -76,25 +79,22 @@ describe('setEstimation', () => {
 
   it('rejects a non-numeric estimate instead of silently storing zero', async () => {
     const sdk = recorder();
-
     await assert.rejects(
-      () => stubClient(sdk).setEstimation('PROJ-42', 'abc'),
+      () => stubClient(sdk).updateIssue('PROJ-42', undefined, undefined, undefined, undefined, undefined,
+        { estimation: 'abc' }),
       /estimation must be a number, received "abc"/
     );
-
-    // Coercing to 0 would report success while discarding the caller's intent,
-    // storing an estimate they never asked for.
+    // Coercing to 0 would report success while discarding the caller's intent.
     assert.equal(sdk.calls.find(c => c.op === 'updateDoc'), undefined);
   });
 
   it('rejects a negative estimate', async () => {
     const sdk = recorder();
-
     await assert.rejects(
-      () => stubClient(sdk).setEstimation('PROJ-42', -3),
+      () => stubClient(sdk).updateIssue('PROJ-42', undefined, undefined, undefined, undefined, undefined,
+        { estimation: -3 }),
       /estimation cannot be negative, received -3/
     );
-
     assert.equal(sdk.calls.find(c => c.op === 'updateDoc'), undefined);
   });
 });
@@ -126,15 +126,16 @@ describe('getMember and getLabel', () => {
     const sdk = recorder({ employees: [{ _id: 'e1', name: 'Ada' }, { _id: 'e2', name: 'Bo' }] });
     await assert.rejects(
       () => stubClient(sdk).getMember('Zoe'),
-      /Member not found: "Zoe"\. Available: Ada, Bo/
+      /Member not found: Zoe\. Available: Ada, Bo/
     );
   });
 
-  it('matches a member on a case-insensitive substring', async () => {
+  it('matches a member by full name, ignoring case', async () => {
     const sdk = recorder({ employees: [{ _id: 'e1', name: 'Ada Lovelace', role: 'OWNER' }] });
-    const member = await stubClient(sdk).getMember('lovelace');
+    const member = await stubClient(sdk).getMember('ada LOVELACE');
     assert.equal(member.id, 'e1');
     assert.equal(member.role, 'OWNER');
+    await assert.rejects(() => stubClient(sdk).getMember('lovelace'), /Member not found: lovelace/);
   });
 
   it('reports a missing label and preserves palette index zero', async () => {

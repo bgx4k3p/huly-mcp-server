@@ -14,7 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { accountTools, workspaceTools } from '../src/dispatch.mjs';
-import { createMcpServer } from '../src/mcpShared.mjs';
+import { createMcpServer } from '../src/mcp/server.mjs';
 
 // ════════════════════════════════════════════════════════════════
 // Test helpers
@@ -542,9 +542,9 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'delete_time_report',
-      args: { reportId: 'r1' },
+      args: { issueId: 'PROJ-1', reportId: 'r1' },
       expectMethod: 'deleteTimeReport',
-      validate: (call) => assert.equal(call.args[0], 'r1')
+      validate: (call) => assert.deepEqual(call.args, ['PROJ-1', 'r1'])
     },
     // Projects
     {

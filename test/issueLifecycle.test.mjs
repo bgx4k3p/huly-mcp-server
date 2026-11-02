@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { HulyClient } from '../src/client.mjs';
+import { issueRank } from '../src/issueRank.mjs';
 
 const require = createRequire(import.meta.url);
 const tracker = require('@hcengineering/tracker').default;
@@ -10,6 +11,7 @@ const tags = require('@hcengineering/tags').default;
 const task = require('@hcengineering/task').default;
 const contactPlugin = require('@hcengineering/contact').default;
 const chunter = require('@hcengineering/chunter').default;
+const { makeRank } = require('@hcengineering/rank');
 
 const MODEL_SPACE = 'core:space:Space';
 
@@ -118,19 +120,33 @@ function createHarness(data = {}) {
   };
 
   const calls = [];
+  const issueCollections = new Map([
+    ['subIssues', { name: 'subIssues', type: { _class: 'core:class:Collection', of: tracker.class.Issue } }],
+    ['comments', { name: 'comments', type: { _class: 'core:class:Collection', of: chunter.class.ChatMessage } }],
+    ['reports', { name: 'reports', type: { _class: 'core:class:Collection', of: tracker.class.TimeSpendReport } }],
+    ['labels', { name: 'labels', type: { _class: 'core:class:Collection', of: tags.class.TagReference } }]
+  ]);
+  const hierarchy = {
+    getAllAttributes: classRef => (classRef === tracker.class.Issue ? issueCollections : new Map()),
+    isDerived: (classRef, base) => classRef === base
+  };
   const sdk = {
-    findOne: async (classRef, query) => {
-      calls.push({ method: 'findOne', classRef, query });
-      return collectionFor(classRef).find(record => matches(record, query)) ?? null;
+    getHierarchy: () => hierarchy,
+    findOne: async (classRef, query, options) => {
+      calls.push({ method: 'findOne', classRef, query, options });
+      const found = collectionFor(classRef).filter(record => matches(record, query));
+      const [[field, order] = []] = Object.entries(options?.sort ?? {});
+      if (field) found.sort((a, b) => order * (a[field] < b[field] ? -1 : a[field] > b[field] ? 1 : 0));
+      return found[0] ?? null;
     },
     findAll: async (classRef, query = {}, options) => {
       calls.push({ method: 'findAll', classRef, query, options });
       return collectionFor(classRef).filter(record => matches(record, query));
     },
-    updateDoc: async (classRef, space, id, data) => {
+    updateDoc: async (classRef, space, id, data, retrieve) => {
       calls.push({ method: 'updateDoc', classRef, space, id, data });
       const target = collectionFor(classRef).find(record => record._id === id);
-      if (!target) return;
+      if (!target) return {};
       for (const [key, value] of Object.entries(data)) {
         if (key !== '$inc') {
           target[key] = value;
@@ -140,6 +156,8 @@ function createHarness(data = {}) {
           target[field] = (target[field] ?? 0) + delta;
         }
       }
+      // Like the server, return the updated document only when asked to retrieve it.
+      return retrieve ? { object: { ...target } } : {};
     },
     addCollection: async (classRef, space, attachedTo, attachedToClass, collection, data, id) => {
       calls.push({
@@ -169,6 +187,7 @@ function createHarness(data = {}) {
   client._getClient = async () => sdk;
 
   const collaboratorWrites = [];
+  client._collabClient = {};
   client._writeCollaboratorField = async (objectId, objectClass, text, format) => {
     collaboratorWrites.push({ objectId, objectClass, text, format });
   };
@@ -209,9 +228,7 @@ describe('createIssue payload', () => {
     assert.equal(write.attachedToClass, tracker.class.Project);
     assert.equal(write.collection, 'issues');
 
-    const { rank, ...data } = write.data;
-    assert.equal(typeof rank, 'string');
-    assert.deepEqual(data, {
+    assert.deepEqual(write.data, {
       title: 'Ship it',
       identifier: 'PROJ-11',
       description: '',
@@ -227,7 +244,8 @@ describe('createIssue payload', () => {
       reportedTime: 0,
       childInfo: [],
       parents: [],
-      kind: 'task-type'
+      kind: 'task-type',
+      rank: issueRank(undefined, 11)
     });
     assert.equal(result.id, 'PROJ-11');
   });
@@ -243,6 +261,76 @@ describe('createIssue payload', () => {
     assert.equal(select('addCollection').length, 0);
   });
 
+  for (const [label, args, pattern] of [
+    ['unknown assignee', [undefined, undefined, { assignee: 'Nobody' }], /Employee not found/],
+    ['unknown component', [undefined, undefined, { component: 'Nope' }], /Component not found/],
+    ['unknown milestone', [undefined, undefined, { milestone: 'Nope' }], /Milestone not found/],
+    ['unknown task type', [undefined, 'Saga', {}], /Task type "Saga" not found/],
+    ['invalid estimation', [undefined, undefined, { estimation: 'abc' }], /estimation must be a number/],
+    ['invalid due date', [undefined, undefined, { dueDate: 'someday' }], /Invalid date/],
+    ['unknown priority', ['critical', undefined, {}], /Priority not found/],
+    ['unknown status', [undefined, undefined, {}, 'Triage'], /Status "Triage" not found/]
+  ]) {
+    it(`spends no issue number when the input has an ${label}`, async () => {
+      const { client, select, state } = createHarness();
+      const [priority, type, extra, status] = args;
+
+      await assert.rejects(
+        () => client.createIssue('PROJ', 'Rejected', undefined, priority, status, undefined, type, extra),
+        pattern
+      );
+      assert.equal(select('updateDoc', tracker.class.Project).length, 0);
+      assert.equal(state.projects[0].sequence, 10);
+      assert.equal(select('addCollection').length, 0);
+    });
+  }
+
+  it('takes the issue number from the reservation result, not a separate read', async () => {
+    const { client, select, state } = createHarness();
+    // Another client creates an issue between this reservation and any follow-up read.
+    const sdk = await client._getClient();
+    const updateDoc = sdk.updateDoc;
+    sdk.updateDoc = async (...args) => {
+      const result = await updateDoc(...args);
+      if (args[0] === tracker.class.Project) state.projects[0].sequence += 1;
+      return result;
+    };
+
+    const result = await client.createIssue('PROJ', 'Raced');
+
+    assert.equal(result.id, 'PROJ-11');
+    assert.equal(select('addCollection', tracker.class.Issue)[0].data.number, 11);
+  });
+
+  it('fails instead of guessing a number when Huly does not return the updated project', async () => {
+    const { client, select } = createHarness();
+    const sdk = await client._getClient();
+    sdk.updateDoc = async () => ({});
+
+    await assert.rejects(() => client.createIssue('PROJ', 'Unnumbered'), /did not return the updated sequence/);
+    assert.equal(select('addCollection').length, 0);
+  });
+
+  it('reports the status and priority it stored, named as reads name them', async () => {
+    const { client, select } = createHarness({ projects: [baseProject({ defaultIssueStatus: 'status-progress' })] });
+
+    const result = await client.createIssue('PROJ', 'Defaults', undefined, 'HIGH');
+
+    assert.equal(select('addCollection', tracker.class.Issue)[0].data.status, 'status-progress');
+    assert.equal(result.status, 'In Progress', 'must not claim Todo when the project default is another status');
+    assert.equal(result.priority, 'High');
+  });
+
+  it('defaults to a status in the chosen task type\'s workflow, not the project default outside it', async () => {
+    const { client, select } = createHarness();
+
+    // The project default is Todo, but the Bug workflow holds only Triage.
+    const result = await client.createIssue('PROJ', 'A bug', undefined, undefined, undefined, undefined, 'Bug');
+
+    assert.equal(select('addCollection', tracker.class.Issue)[0].data.status, 'status-triage');
+    assert.equal(result.status, 'Triage');
+  });
+
   it('routes the description through the collaborator using the requested format', async () => {
     const { client, select, collaboratorWrites } = createHarness();
 
@@ -253,16 +341,26 @@ describe('createIssue payload', () => {
 
     const [write] = select('addCollection', tracker.class.Issue);
     assert.equal(write.data.description, '');
-    const [refUpdate] = select('updateDoc', tracker.class.Issue);
-    assert.equal(refUpdate.space, 'project-id');
-    assert.equal(refUpdate.id, write.id);
-    assert.ok(refUpdate.data.description.startsWith(`${write.id}-description-`));
+    // The collaborator service sets the issue's reference to the body itself.
+    assert.deepEqual(select('updateDoc', tracker.class.Issue), []);
     assert.deepEqual(collaboratorWrites, [{
       objectId: write.id,
       objectClass: tracker.class.Issue,
       text: '# Heading',
       format: 'html'
     }]);
+  });
+
+  it('refuses a description without the collaborator service before reserving a number', async () => {
+    const { client, select, state } = createHarness();
+    client._collabClient = null;
+
+    await assert.rejects(() => client.createIssue('PROJ', 'Documented', 'Body'), /collaborator service/);
+    await assert.rejects(() => client.batchCreateIssues('PROJ', [{ title: 'A' }, { title: 'B', description: 'Body' }]),
+      /collaborator service/);
+    assert.equal(select('updateDoc', tracker.class.Project).length, 0);
+    assert.equal(state.projects[0].sequence, 10);
+    assert.equal(select('addCollection').length, 0);
   });
 
   it('does not touch the description document when no description is given', async () => {
@@ -284,6 +382,28 @@ describe('updateIssue payload', () => {
     });
     return harness;
   }
+
+  it('clears the assignee on a blank name without scanning members', async () => {
+    const { client, select } = updateHarness();
+
+    await client.updateIssue('PROJ-1', undefined, undefined, undefined, undefined, undefined, { assignee: '   ' });
+
+    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: null }]);
+    assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 0);
+  });
+
+  it('stores the member id and refuses an unknown member without writing', async () => {
+    const { client, select } = updateHarness();
+
+    await client.updateIssue('PROJ-1', undefined, undefined, undefined, undefined, undefined, { assignee: 'ada lovelace' });
+    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: 'emp-1' }]);
+
+    await assert.rejects(
+      () => client.updateIssue('PROJ-1', undefined, undefined, undefined, undefined, undefined, { assignee: 'Nobody' }),
+      /Employee not found: Nobody/
+    );
+    assert.equal(select('updateDoc', tracker.class.Issue).length, 1);
+  });
 
   it('sends a single update carrying only the supplied fields', async () => {
     const { client, select } = updateHarness();
@@ -344,37 +464,6 @@ describe('updateIssue payload', () => {
   });
 });
 
-describe('assignIssue writes', () => {
-  function assignHarness() {
-    const harness = createHarness({ issues: [baseIssue({ assignee: 'emp-2' })] });
-    harness.client._parseAndFindIssue = async () => ({
-      project: harness.state.projects[0],
-      issue: harness.state.issues[0]
-    });
-    return harness;
-  }
-
-  it('clears the assignee without scanning members', async () => {
-    const { client, select } = assignHarness();
-
-    await client.assignIssue('PROJ-1', '   ');
-
-    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: null }]);
-    assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 0);
-  });
-
-  it('stores the member id and refuses an unknown member without writing', async () => {
-    const { client, select } = assignHarness();
-
-    const result = await client.assignIssue('PROJ-1', 'ada lovelace');
-    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: 'emp-1' }]);
-    assert.equal(result.assignee, 'Ada Lovelace');
-
-    await assert.rejects(() => client.assignIssue('PROJ-1', 'Nobody'), /Member "Nobody" not found/);
-    assert.equal(select('updateDoc', tracker.class.Issue).length, 1);
-  });
-});
-
 describe('moveIssue and deleteIssue', () => {
   function moveHarness(issueOverrides = {}) {
     const destination = baseProject({
@@ -409,14 +498,122 @@ describe('moveIssue and deleteIssue', () => {
         space: 'dest-id',
         number: 21,
         identifier: 'DEST-21',
+        rank: issueRank(undefined, 21),
         attachedTo: 'dest-id',
-        // status-review is not in the destination task type's workflow, so the
-        // issue lands on the destination default rather than keeping a status
-        // borrowed from some other project type.
-        status: 'status-triage'
+        // status-review is not in the Task workflow, and neither is the destination's default (Triage), so the
+        // issue lands on the first status of its own workflow rather than one borrowed from elsewhere.
+        status: 'status-todo'
       }
     }]);
     assert.equal(result.newId, 'DEST-21');
+  });
+
+  it('ranks the moved issue after the last issue in the destination project', async () => {
+    const harness = moveHarness();
+    const lastRank = makeRank(makeRank(undefined, undefined), undefined);
+    harness.state.issues.push(
+      baseIssue({ _id: 'dest-a', space: 'dest-id', rank: makeRank(undefined, undefined) }),
+      baseIssue({ _id: 'dest-b', space: 'dest-id', rank: lastRank }),
+      // A higher rank in another project must not influence the destination order.
+      baseIssue({ _id: 'other', space: 'other-id', rank: makeRank(lastRank, undefined) })
+    );
+
+    await harness.client.moveIssue('PROJ-1', 'dest');
+
+    const [update] = harness.select('updateDoc', tracker.class.Issue);
+    assert.equal(update.data.rank, issueRank(lastRank, 21));
+  });
+
+  it('spends no destination number when the move cannot be resolved', async () => {
+    const harness = moveHarness({ kind: undefined });
+    harness.state.projects[1].type = 'unconfigured-type';
+
+    await assert.rejects(() => harness.client.moveIssue('PROJ-1', 'dest'), /No task types configured/);
+    assert.equal(harness.select('updateDoc').length, 0);
+    assert.equal(harness.state.projects[1].sequence, 20);
+  });
+
+  it('moves the whole sub-issue tree with new numbers and updated breadcrumbs', async () => {
+    const harness = moveHarness();
+    harness.state.issues.push(
+      baseIssue({
+        _id: 'issue-2', number: 2, identifier: 'PROJ-2', attachedTo: 'issue-1', attachedToClass: tracker.class.Issue,
+        collection: 'subIssues', parents: [{ parentId: 'issue-1', identifier: 'PROJ-1', space: 'project-id' }]
+      }),
+      baseIssue({
+        _id: 'issue-3', number: 3, identifier: 'PROJ-3', attachedTo: 'issue-2', attachedToClass: tracker.class.Issue,
+        collection: 'subIssues', parents: [
+          { parentId: 'issue-1', identifier: 'PROJ-1', space: 'project-id' },
+          { parentId: 'issue-2', identifier: 'PROJ-2', space: 'project-id' }
+        ]
+      })
+    );
+
+    const result = await harness.client.moveIssue('PROJ-1', 'dest');
+
+    assert.deepEqual(harness.select('updateDoc', tracker.class.Project).map(call => call.data), [{ $inc: { sequence: 3 } }]);
+    const writes = new Map(harness.select('updateDoc', tracker.class.Issue).map(call => [call.id, call.data]));
+    assert.deepEqual([...writes.keys()].sort(), ['issue-1', 'issue-2', 'issue-3']);
+    assert.deepEqual(['issue-1', 'issue-2', 'issue-3'].map(id => writes.get(id).identifier), ['DEST-21', 'DEST-22', 'DEST-23']);
+    for (const data of writes.values()) assert.equal(data.space, 'dest-id');
+    assert.equal(writes.get('issue-1').attachedTo, 'dest-id', 'the moved root joins the destination project');
+    assert.equal(writes.get('issue-2').attachedTo, undefined, 'children stay under their moved parent');
+    assert.deepEqual(writes.get('issue-3').parents, [
+      { parentId: 'issue-1', identifier: 'DEST-21', space: 'dest-id' },
+      { parentId: 'issue-2', identifier: 'DEST-22', space: 'dest-id' }
+    ]);
+    assert.deepEqual(result.moved, [
+      { oldId: 'PROJ-1', newId: 'DEST-21' },
+      { oldId: 'PROJ-2', newId: 'DEST-22' },
+      { oldId: 'PROJ-3', newId: 'DEST-23' }
+    ]);
+  });
+
+  it('moves comments, time reports and labels into the destination space', async () => {
+    const harness = moveHarness();
+    harness.state.comments.push({ _id: 'c-1', space: 'project-id', attachedTo: 'issue-1' });
+    harness.state.timeReports.push({ _id: 'r-1', space: 'project-id', attachedTo: 'issue-1' });
+    harness.state.tagReferences.push({ _id: 'l-1', space: 'project-id', attachedTo: 'issue-1' });
+
+    await harness.client.moveIssue('PROJ-1', 'dest');
+
+    for (const [classRef, id] of [
+      [chunter.class.ChatMessage, 'c-1'], [tracker.class.TimeSpendReport, 'r-1'], [tags.class.TagReference, 'l-1']
+    ]) {
+      assert.deepEqual(harness.select('updateDoc', classRef).map(call => [call.space, call.id, call.data]),
+        [['project-id', id, { space: 'dest-id' }]], `${classRef} must follow the issue`);
+    }
+  });
+
+  it('maps component and milestone to same-named ones in the destination, else clears them', async () => {
+    const harness = moveHarness({ component: 'comp-src', milestone: 'ms-src' });
+    harness.state.components.push(
+      { _id: 'comp-src', space: 'project-id', label: 'API' },
+      { _id: 'comp-dest', space: 'dest-id', label: 'api' }
+    );
+    harness.state.milestones.push({ _id: 'ms-src', space: 'project-id', label: 'v1' });
+
+    const result = await harness.client.moveIssue('PROJ-1', 'dest');
+
+    const [update] = harness.select('updateDoc', tracker.class.Issue);
+    assert.equal(update.data.component, 'comp-dest');
+    assert.equal(update.data.milestone, null);
+    assert.deepEqual(result.changes, [
+      { id: 'DEST-21', field: 'component', from: 'API', to: 'api' },
+      { id: 'DEST-21', field: 'milestone', from: 'v1', to: null }
+    ]);
+  });
+
+  it('gives the issue a task type the destination offers, with a status from that workflow', async () => {
+    const harness = moveHarness();
+    harness.state.projectTypes.push({ _id: 'bugs-only', tasks: ['bug-type'] });
+    harness.state.projects[1].type = 'bugs-only';
+
+    await harness.client.moveIssue('PROJ-1', 'dest');
+
+    const [update] = harness.select('updateDoc', tracker.class.Issue);
+    assert.equal(update.data.kind, 'bug-type');
+    assert.equal(update.data.status, 'status-triage');
   });
 
   it('keeps a status the destination workflow actually contains', async () => {
@@ -506,6 +703,160 @@ describe('batchCreateIssues', () => {
     assert.deepEqual(result.errors.map(item => item.input.title), ['Bad status', 'Bad assignee']);
   });
 
+  it('numbers only the valid items, leaving no gaps for rejected ones', async () => {
+    const { client, select } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'First' },
+      { title: 'Bad status', status: 'Triage' },
+      { title: 'Bad type', type: 'Saga' },
+      { title: 'Bad priority', priority: 'critical' },
+      { title: 'Bad estimation', estimation: 'abc' },
+      { title: 'Bad due date', dueDate: 'someday' },
+      { title: 'Bad component', component: 'Nope' },
+      { title: 'Bad milestone', milestone: 'Nope' },
+      { title: 'Second' }
+    ]);
+
+    assert.deepEqual(select('updateDoc', tracker.class.Project).map(call => call.data),
+      [{ $inc: { sequence: 2 } }]);
+    assert.deepEqual(result.created.map(item => item.id), ['PROJ-11', 'PROJ-12']);
+    assert.equal(result.errors.length, 7);
+    assert.ok(result.errors.every(item => item.input.title.startsWith('Bad ')));
+    assert.deepEqual(
+      select('addCollection', tracker.class.Issue).map(call => call.data.rank),
+      [issueRank(undefined, 11), issueRank(undefined, 12)],
+      'batch items share one position and are ordered by their numbers'
+    );
+  });
+
+  it('ranks new issues after the last issue in their own project only', async () => {
+    const last = makeRank(makeRank(undefined, undefined), undefined);
+    const { client, select } = createHarness({
+      issues: [
+        baseIssue({ _id: 'a', rank: makeRank(undefined, undefined) }),
+        baseIssue({ _id: 'b', rank: last }),
+        baseIssue({ _id: 'other', space: 'other-project', rank: makeRank(last, undefined) })
+      ]
+    });
+
+    await client.createIssue('PROJ', 'Single');
+    await client.batchCreateIssues('PROJ', [{ title: 'Batch' }]);
+
+    const [single, batch] = select('addCollection', tracker.class.Issue).map(call => call.data.rank);
+    assert.equal(single, issueRank(last, 11));
+    assert.equal(batch, issueRank(single, 12));
+  });
+
+  it('gives creates that race on the same last rank distinct ranks in number order', async () => {
+    const { client, select } = createHarness({
+      issues: [baseIssue({ rank: makeRank(undefined, undefined) })]
+    });
+    // Hold every last-rank read until all three callers have made one, so each computes its
+    // rank from the same stale value, as concurrent sessions would.
+    const sdk = await client._getClient();
+    const findOne = sdk.findOne;
+    const waiting = [];
+    sdk.findOne = async (classRef, query, options) => {
+      const result = await findOne(classRef, query, options);
+      if (classRef === tracker.class.Issue && options?.sort?.rank) {
+        await new Promise(resolve => {
+          waiting.push(resolve);
+          if (waiting.length === 3) waiting.forEach(release => release());
+        });
+      }
+      return result;
+    };
+
+    await Promise.all([
+      client.createIssue('PROJ', 'Session A'),
+      client.createIssue('PROJ', 'Session B'),
+      client.batchCreateIssues('PROJ', [{ title: 'Session C1' }, { title: 'Session C2' }])
+    ]);
+
+    const writes = select('addCollection', tracker.class.Issue)
+      .map(call => ({ number: call.data.number, rank: call.data.rank }))
+      .sort((a, b) => a.number - b.number);
+    assert.deepEqual(writes.map(write => write.number), [11, 12, 13, 14]);
+    assert.equal(new Set(writes.map(write => write.rank)).size, 4, 'no two issues may share a rank');
+    const position = rank => rank.slice(0, rank.indexOf(':'));
+    assert.equal(new Set(writes.map(write => position(write.rank))).size, 1,
+      'every racing create computed the same position');
+    assert.deepEqual(writes.map(write => write.rank), writes.map(write => write.rank).sort(),
+      'rank order matches number order');
+  });
+
+  it('reserves nothing when every item is rejected', async () => {
+    const { client, select, state } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'Bad assignee', assignee: 'Nobody' },
+      { description: 'no title' }
+    ]);
+
+    assert.equal(result.total, 0);
+    assert.equal(result.errors.length, 2);
+    assert.equal(select('updateDoc').length, 0);
+    assert.equal(state.projects[0].sequence, 10);
+  });
+
+  it('checks each status against the workflow of the item\'s own task type', async () => {
+    const { client, select } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'Bug in triage', type: 'Bug', status: 'Triage' },
+      { title: 'Task in triage', status: 'Triage' }
+    ]);
+
+    assert.deepEqual(result.created.map(item => item.title), ['Bug in triage']);
+    assert.deepEqual(result.errors.map(item => item.input.title), ['Task in triage']);
+    const [write] = select('addCollection', tracker.class.Issue);
+    assert.equal(write.data.kind, 'bug-type');
+    assert.equal(write.data.status, 'status-triage');
+  });
+
+  it('defaults each batch item to a status in its own workflow and reports what it stored', async () => {
+    const { client, select } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'Task item' },
+      { title: 'Bug item', type: 'Bug', priority: 'urgent' }
+    ]);
+
+    assert.deepEqual(select('addCollection', tracker.class.Issue).map(call => call.data.status),
+      ['status-todo', 'status-triage']);
+    assert.deepEqual(result.created.map(item => [item.status, item.priority]),
+      [['Todo', 'No Priority'], ['Triage', 'Urgent']]);
+  });
+
+  it('keeps going when one item fails to write and reports every outcome', async () => {
+    const { client, select } = createHarness();
+    const sdk = await client._getClient();
+    const addCollection = sdk.addCollection;
+    sdk.addCollection = async (classRef, ...rest) => {
+      if (classRef === tracker.class.Issue && rest[4]?.title === 'Rejected by server') throw new Error('write refused');
+      return addCollection(classRef, ...rest);
+    };
+    client._addLabelToIssue = async (_client, _id, _space, label) => {
+      if (label === 'broken') throw new Error('label write failed');
+    };
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'First' },
+      { title: 'Rejected by server' },
+      { title: 'Labelled', labels: ['broken'] },
+      { title: 'Last' }
+    ]);
+
+    assert.deepEqual(select('addCollection', tracker.class.Issue).map(call => call.data.title),
+      ['First', 'Labelled', 'Last'], 'later items are still created');
+    assert.deepEqual(result.created.map(item => item.id), ['PROJ-11', 'PROJ-13', 'PROJ-14']);
+    assert.deepEqual(result.errors.map(item => [item.input.title, item.reservedId, item.error]),
+      [['Rejected by server', 'PROJ-12', 'write refused']]);
+    assert.match(result.created[1].warning, /label write failed/);
+    assert.equal(result.total, 3);
+  });
+
   it('rejects empty and oversized batches before reserving any numbers', async () => {
     const { client, select, state } = createHarness();
 
@@ -540,27 +891,34 @@ describe('searchIssues and getMyIssues query scoping', () => {
     await assert.rejects(() => client.searchIssues('login', undefined, 101), /integer from 1 to 100/);
   });
 
-  it('constrains my-issues to the resolved employee id', async () => {
+  it('constrains my-issues to the member linked to the signed-in account', async () => {
     const { client, select } = createHarness({
-      email: 'ada@example.test',
+      employees: [
+        { _id: 'emp-1', name: 'Ada Lovelace', active: true, personUuid: 'acc-ada' },
+        { _id: 'emp-2', name: 'Grace Hopper', active: true, personUuid: 'acc-grace' }
+      ],
       issues: [
-        baseIssue({ _id: 'mine', number: 4, assignee: 'emp-1' }),
-        baseIssue({ _id: 'theirs', number: 5, assignee: 'emp-2' })
+        baseIssue({ _id: 'mine', number: 4, assignee: 'emp-2' }),
+        baseIssue({ _id: 'theirs', number: 5, assignee: 'emp-1' })
       ]
     });
+    client._accountUuid = 'acc-grace';
 
     const page = await client.getMyIssues();
 
     const assigneeQueries = select('findAll', tracker.class.Issue)
       .filter(call => Object.hasOwn(call.query, 'assignee'));
-    assert.deepEqual(assigneeQueries[0].query, { assignee: 'emp-1' });
+    assert.deepEqual(assigneeQueries[0].query, { assignee: 'emp-2' });
     assert.deepEqual(page.items.map(item => item.id), ['PROJ-4']);
   });
 
-  it('fails instead of returning every issue when the user cannot be identified', async () => {
-    const { client, select } = createHarness({ email: 'stranger@example.test' });
+  it('never assumes the only workspace member is the caller', async () => {
+    const { client, select } = createHarness({
+      employees: [{ _id: 'emp-1', name: 'Someone Else', active: true, personUuid: 'acc-other' }]
+    });
+    client._accountUuid = 'acc-me';
 
-    await assert.rejects(() => client.getMyIssues(), /Could not find current user/);
+    await assert.rejects(() => client.getMyIssues(), /No workspace member is linked to the signed-in account/);
     assert.equal(select('findAll', tracker.class.Issue).length, 0);
   });
 });

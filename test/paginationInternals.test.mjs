@@ -526,42 +526,26 @@ describe('label lookup cache', () => {
     return { client: instance, sdk, state, counts };
   }
 
-  it('serves within the TTL and refetches once an entry expires', async () => {
-    const { client: instance, sdk, state, counts } = labelHarness([{ _id: 'tag-1', title: 'Bug', space: 's' }]);
+  it('reflects labels renamed or replaced elsewhere on the next lookup', async () => {
+    const { client: instance, sdk, state } = labelHarness([{ _id: 'tag-1', title: 'Bug', space: 's' }]);
 
     assert.equal((await instance._findLabelByName(sdk, 'bug'))._id, 'tag-1');
-    assert.equal(counts.lookups, 1);
-    await instance._findLabelByName(sdk, 'Bug');
-    assert.equal(counts.lookups, 1, 'a live entry must not trigger a second query');
-
-    // Server-side rename that no local mutation invalidated: once the entry
-    // expires the cache must yield to the server, never serve the stale value.
+    // Another session replaces the label; a cached answer would keep returning the old one.
     state.elements = [{ _id: 'tag-2', title: 'Bug', space: 's' }];
-    const stale = instance._labelLookupCache.get('bug');
-    instance._labelLookupCache.set('bug', { value: stale.value, expiresAt: Date.now() - 1 });
-
     assert.equal((await instance._findLabelByName(sdk, 'bug'))._id, 'tag-2');
-    assert.equal(counts.lookups, 2);
   });
 
-  it('invalidates the cache on every label mutation', async () => {
-    const { client: instance, sdk, counts } = labelHarness([{ _id: 'tag-1', title: 'Bug', space: 'space-real' }]);
-
-    await instance._findLabelByName(sdk, 'bug');
-    assert.equal(counts.lookups, 1);
+  it('sees its own label changes immediately', async () => {
+    const { client: instance, sdk } = labelHarness([{ _id: 'tag-1', title: 'Bug', space: 'space-real' }]);
 
     await instance.createLabel('Urgent');
-    assert.equal(instance._labelLookupCache.size, 0, 'createLabel must drop the cache');
     assert.ok(await instance._findLabelByName(sdk, 'urgent'), 'a new label must be visible immediately');
-    assert.equal(counts.lookups, 2);
 
     await instance.updateLabel('Bug', { newName: 'Defect' });
-    assert.equal(instance._labelLookupCache.size, 0, 'updateLabel must drop the cache');
     assert.equal(await instance._findLabelByName(sdk, 'bug'), null, 'the old name must stop resolving');
     assert.equal((await instance._findLabelByName(sdk, 'defect'))._id, 'tag-1');
 
     await instance.deleteLabel('Defect');
-    assert.equal(instance._labelLookupCache.size, 0, 'deleteLabel must drop the cache');
     assert.equal(await instance._findLabelByName(sdk, 'defect'), null);
   });
 });
@@ -602,7 +586,7 @@ describe('connection resilience', () => {
         const error = new Error('reset by peer');
         error.code = 'ECONNRESET';
         throw error;
-      })),
+      }, { repeatable: true })),
       /reset by peer/
     );
     assert.equal(attempts, 3, 'one attempt plus two retries, then the error must escape');
@@ -619,11 +603,74 @@ describe('connection resilience', () => {
       observed.push(instance._client);
       if (attempts === 1) throw new Error('ConnectionClosed');
       return 'reconnected';
-    }));
+    }, { repeatable: true }));
 
     assert.equal(result, 'reconnected');
     assert.equal(attempts, 2, 'a recovered operation must run exactly once more');
     assert.deepEqual(observed, [{ marker: 'stale-socket' }, null]);
+  });
+
+  it('never re-runs an operation that is not marked safe to repeat', async () => {
+    const instance = newClient();
+    instance._client = { marker: 'stale-socket' };
+    let applied = 0;
+
+    await assert.rejects(
+      () => quietly(() => instance.withReconnect(async () => {
+        applied += 1;
+        throw new Error('ConnectionClosed');
+      })),
+      error => {
+        assert.match(error.message, /may or may not have been applied/);
+        assert.match(error.message, /ConnectionClosed/);
+        return true;
+      }
+    );
+    // A write that lost its reply may already be stored; running it again could duplicate it.
+    assert.equal(applied, 1);
+    assert.equal(instance._client, null, 'the dead connection is dropped so the next call reconnects');
+  });
+
+  it('discards a connection that finishes opening after disconnect was called', async () => {
+    const instance = newClient();
+    let release;
+    const closed = [];
+    instance._openConnection = () => new Promise(resolve => {
+      release = () => resolve({
+        client: { marker: 'late' },
+        platformClient: { close: async () => { closed.push('late'); } },
+        accountUuid: 'acc', workspaceId: 'ws', wsToken: 't', serverConfig: {}, collabClient: null
+      });
+    });
+
+    const connecting = instance.connect();
+    instance.disconnect();
+    release();
+
+    await assert.rejects(connecting, /closed while it was being opened/);
+    assert.equal(instance._client, null, 'a cancelled attempt must not install its connection');
+    assert.deepEqual(closed, ['late'], 'and must close what it opened');
+  });
+
+  it('keeps a newer connection attempt when an older one settles', async () => {
+    const instance = newClient();
+    const releases = [];
+    instance._openConnection = () => new Promise(resolve => {
+      releases.push(marker => resolve({
+        client: { marker }, platformClient: { close: async () => {} },
+        accountUuid: 'acc', workspaceId: 'ws', wsToken: 't', serverConfig: {}, collabClient: null
+      }));
+    });
+
+    const first = instance.connect();
+    instance.disconnect();
+    const second = instance.connect();
+    releases[0]('first');
+    await assert.rejects(first, /closed while it was being opened/);
+    releases[1]('second');
+    await second;
+
+    assert.equal(instance._client.marker, 'second');
   });
 
   it('disconnect clears every cached connection field and swallows a failing close', async () => {

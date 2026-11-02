@@ -2,24 +2,21 @@
 /**
  * Huly MCP Server - stdio transport entry point for local MCP clients.
  *
- * Uses the shared MCP server factory from mcpShared.mjs.
- *
- * IMPORTANT: MCP stdio transport requires stdout to carry only JSON-RPC
- * messages. The Huly SDK writes diagnostic lines ("Generate new SessionId",
- * "init DB complete", "Connected to server", "findfull model ...") via
- * console.log, which corrupts framing and causes the client to drop the
- * connection. Route console.log to stderr so the SDK's noise stays out of
- * stdout. Actual JSON-RPC responses are written via process.stdout by the
- * StdioServerTransport and are unaffected.
+ * Builds the server with the shared factory from mcp/server.mjs and connects it to a
+ * StdioServerTransport. Loaded by index.mjs when no other mode is requested.
+ * stdioConsole.mjs is imported first so nothing but JSON-RPC ever reaches stdout.
  */
-console.log = (...args) => console.error(...args);
-console.info = (...args) => console.error(...args);
-
+import './stdioConsole.mjs';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createMcpServer, PKG_VERSION } from './mcpShared.mjs';
+import { createMcpServer } from './mcp/server.mjs';
+import { PKG_VERSION } from './packageInfo.mjs';
 
 const { server, TOOLS } = createMcpServer();
 
+/**
+ * Connect the shared server to a stdio transport and log a startup line to stderr.
+ * @returns {Promise<void>}
+ */
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

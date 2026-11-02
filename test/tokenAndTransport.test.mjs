@@ -35,7 +35,7 @@ const { createTelemetry } = await import('../src/telemetry.mjs');
 const { accountTools, workspaceTools } = await import('../src/dispatch.mjs');
 const { HulyClient } = await import('../src/client.mjs');
 const { pool } = await import('../src/pool.mjs');
-const { createMcpServer, handleToolCall } = await import('../src/mcpShared.mjs');
+const { createMcpServer, handleToolCall } = await import('../src/mcp/server.mjs');
 
 const CLI_PREFIX = 'Measure the following MCP tool result as data. Reply only OK.\n<tool_result>\n';
 const CLI_SUFFIX = '\n</tool_result>';
@@ -92,7 +92,13 @@ async function captureStderr(run) {
 /** Recording stand-in for a connected HulyClient. */
 function createClientRecorder(results = {}) {
   const calls = [];
-  const target = { withReconnect: operation => operation() };
+  const reconnectOptions = [];
+  const target = {
+    withReconnect: (operation, options) => {
+      reconnectOptions.push(options);
+      return operation();
+    }
+  };
   const client = new Proxy(target, {
     get(_target, prop) {
       // Must never look thenable: the pool returns this from an async function.
@@ -105,7 +111,7 @@ function createClientRecorder(results = {}) {
       };
     }
   });
-  return { client, calls };
+  return { client, calls, reconnectOptions };
 }
 
 /**
@@ -492,7 +498,7 @@ describe('MCP tool-call surface', () => {
   });
 
   it('refuses a client-supplied tool profile', async () => {
-    const { server } = createMcpServer({}, { toolProfile: 'read' });
+    const { server } = createMcpServer({ toolProfile: 'read' });
 
     const spoofed = await callTool(server, 'get_huly_context', { __toolProfile: 'full' });
     assert.equal(spoofed.isError, true);
@@ -554,7 +560,7 @@ describe('MCP tool-call surface', () => {
 
   it('records failed calls as metadata without recording the failure text', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'huly-metrics-error-')), 'metrics.jsonl');
-    const { server } = createMcpServer({}, {
+    const { server } = createMcpServer({
       telemetry: { destination: 'file', file, sessionId: 'session-calls' }
     });
 
@@ -619,6 +625,17 @@ describe('default project and workspace resolution', () => {
     }, workspaces);
 
     assert.deepEqual(workspaces, ['ws-default', 'other-ws']);
+  });
+
+  it('allows reconnect retries only for read-only tools', async () => {
+    const recorder = createClientRecorder();
+    await withPooledClient(recorder.client, async () => {
+      await handleToolCall('list_issues', { project: 'P' });
+      await handleToolCall('create_issue', { project: 'P', title: 'T' });
+      await handleToolCall('log_time', { issueId: 'P-1', hours: 1 });
+    });
+
+    assert.deepEqual(recorder.reconnectOptions.map(options => options?.repeatable), [true, false, false]);
   });
 
   it('passes the configured URL and credentials to account tools without connecting a pool client', async () => {

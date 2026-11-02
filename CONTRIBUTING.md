@@ -39,10 +39,21 @@ npm install
 ## Code Standards
 
 - No new npm dependencies unless absolutely necessary
-- JSDOM polyfills must stay at top of client.mjs before SDK imports
+- Any module that loads Huly SDK packages must import `src/domPolyfill.mjs` first
 - Use `nameMatch()` for case-insensitive string comparisons
 - Every write operation must have a round-trip read-back test
 - No silent error swallowing — throw or log, never return defaults
+
+## Dependencies
+
+- The `@hcengineering/*` packages are pinned exactly, all to the same version:
+  the newest published Huly SDK. Huly servers can run newer builds than any
+  published SDK, so the pin tracks the newest published SDK rather than the
+  server version.
+- When a new SDK is published, update every `@hcengineering` pin together and
+  run the live suites against a running Huly server before releasing.
+- Other dependencies use caret ranges. Read the release notes before a bump and
+  regenerate the lockfile; `npm outdated` should be clean at release time.
 
 ## Reporting Bugs
 

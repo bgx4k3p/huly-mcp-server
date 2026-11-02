@@ -2,7 +2,8 @@ import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { HulyClient, PRIORITY_MAP } from '../src/client.mjs';
+import { HulyClient } from '../src/client.mjs';
+import { PRIORITY_MAP } from '../src/helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const tracker = require('@hcengineering/tracker').default;
@@ -117,37 +118,5 @@ describe('release validation properties', () => {
         JSON.stringify({ iteration, status, priority, label, milestone })
       );
     }
-  });
-
-  it('invalidates the label lookup cache after every label mutation', async () => {
-    const tag = { _id: 'tag-id', space: 'tag-space', title: 'Existing' };
-    const sdk = {
-      findOne: async (classRef, query) => {
-        if (classRef === tracker.class.Project) return { _id: 'project-id' };
-        if (query.title === 'New') return null;
-        return tag;
-      },
-      // createLabel enumerates projects so it can skip built-in model spaces.
-      findAll: async (classRef) => (classRef === tracker.class.Project ? [{ _id: 'project-id' }] : []),
-      createDoc: async () => {},
-      updateDoc: async () => {},
-      removeDoc: async () => {}
-    };
-    const client = new HulyClient({
-      url: 'https://huly.example.test', token: 'test-token', workspace: 'release-validation'
-    });
-    client._getClient = async () => sdk;
-
-    client._labelLookupCache.set('stale', { value: tag, expiresAt: Date.now() + 60_000 });
-    await client.createLabel('New');
-    assert.equal(client._labelLookupCache.size, 0);
-
-    client._labelLookupCache.set('stale', { value: tag, expiresAt: Date.now() + 60_000 });
-    await client.updateLabel('Existing', { newName: 'Renamed' });
-    assert.equal(client._labelLookupCache.size, 0);
-
-    client._labelLookupCache.set('stale', { value: tag, expiresAt: Date.now() + 60_000 });
-    await client.deleteLabel('Existing');
-    assert.equal(client._labelLookupCache.size, 0);
   });
 });

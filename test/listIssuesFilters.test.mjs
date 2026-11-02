@@ -191,8 +191,9 @@ describe('other issue-list filter safety', () => {
 
   it('rejects an unknown project in getMyIssues', async () => {
     const { client } = createHarness({ projectRecord: null });
+    client._accountUuid = 'account-1';
     client._buildEmployeeMap = async () => ({
-      employees: [{ _id: 'employee-1', channels: [] }],
+      employees: [{ _id: 'employee-1', personUuid: 'account-1' }],
       employeeMap: new Map([['employee-1', 'Fixture User']])
     });
     await assert.rejects(
@@ -203,8 +204,9 @@ describe('other issue-list filter safety', () => {
 
   it('rejects an unknown status in getMyIssues', async () => {
     const { client } = createHarness();
+    client._accountUuid = 'account-1';
     client._buildEmployeeMap = async () => ({
-      employees: [{ _id: 'employee-1', channels: [] }],
+      employees: [{ _id: 'employee-1', personUuid: 'account-1' }],
       employeeMap: new Map([['employee-1', 'Fixture User']])
     });
     await assert.rejects(

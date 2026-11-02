@@ -9,7 +9,7 @@ const {
   READ_ONLY_TOOL_NAMES,
   DESTRUCTIVE_TOOL_NAMES
 } = await import('../src/dispatch.mjs');
-const { createMcpServer, SERVER_INSTRUCTIONS } = await import('../src/mcpShared.mjs');
+const { createMcpServer, SERVER_INSTRUCTIONS } = await import('../src/mcp/server.mjs');
 
 const { server, TOOLS } = createMcpServer();
 const handlerNames = new Set([
@@ -80,7 +80,7 @@ describe('MCP tool metadata', () => {
     // measured catalog. Treat any further increase as a bloat regression.
     const budgets = { full: 53_750, project: 43_600, read: 20_000 };
     for (const [profile, maximum] of Object.entries(budgets)) {
-      const tools = createMcpServer({}, { toolProfile: profile }).TOOLS;
+      const tools = createMcpServer({ toolProfile: profile }).TOOLS;
       const bytes = Buffer.byteLength(JSON.stringify(tools));
       assert.ok(bytes <= maximum, `${profile}: ${bytes} exceeds ${maximum}`);
     }

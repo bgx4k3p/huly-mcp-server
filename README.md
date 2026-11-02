@@ -309,21 +309,39 @@ Start the HTTP MCP server:
 
 ```bash
 npm run start:server
-# MCP endpoint: http://localhost:3001/mcp
-# Health check: http://localhost:3001/health
+# MCP endpoint: http://127.0.0.1:3001/mcp
+# Health check: http://127.0.0.1:3001/health
 ```
 
-Any MCP client that supports Streamable HTTP can connect to
-`http://localhost:3001/mcp`. This includes n8n (v1.88+),
-VS Code, and other MCP-compatible tools.
+By default it listens on `127.0.0.1` only. Any MCP client that supports
+Streamable HTTP can connect to `http://127.0.0.1:3001/mcp`. This includes n8n
+(v1.88+), VS Code, and other MCP-compatible tools.
 
-To secure the endpoint, set a bearer token:
+#### Central deployment
+
+One HTTP server can serve several clients of the same Huly account (for
+example a laptop, an agent host and n8n). Every client acts as that one Huly
+account; permissions stay in Huly.
 
 ```bash
-MCP_AUTH_TOKEN=your-secret npm run start:server
+HOST=0.0.0.0 \
+MCP_AUTH_TOKENS="mac:$(openssl rand -hex 32),hermes:$(openssl rand -hex 32)" \
+HULY_TRUST_PROXY=true \
+npm run start:server
 ```
 
-Clients must then include `Authorization: Bearer your-secret` in requests.
+- The server refuses to listen beyond loopback without an access token.
+- Each client sends `Authorization: Bearer <its token>`. A session belongs to
+  the token that opened it; another token presenting that session id gets 403.
+  The token name is logged with each request.
+- Browser clients must be listed in `ALLOWED_ORIGINS`; a browser `Origin` that
+  is not listed gets 403. Clients that send no `Origin` are unaffected.
+- Set `HULY_TRUST_PROXY=true` only behind a reverse proxy (such as Caddy) that
+  sets `X-Forwarded-For`, so rate limits apply per client.
+- Idle sessions close after `HULY_SESSION_IDLE_MS`; at most
+  `HULY_MAX_SESSIONS` are open at once. An unknown or expired session id gets
+  404, which tells MCP clients to start a new session.
+- If the port is taken the server exits instead of moving to another port.
 
 ### Docker
 
@@ -334,6 +352,9 @@ This runtime choice does not affect npm/npx installations, which use the
 host's supported Node.js version.
 Dependencies are installed at build time; npm is removed from the runtime image.
 
+The image listens on all interfaces (`HOST=0.0.0.0`), so it requires an
+access token and refuses to start without one.
+
 ```bash
 docker build --pull -t huly-mcp-server .
 
@@ -343,6 +364,7 @@ docker run -d \
   -e HULY_URL=https://your-huly-instance.com \
   -e HULY_TOKEN=your-token \
   -e HULY_WORKSPACE=my-workspace \
+  -e MCP_AUTH_TOKENS=client-name:your-mcp-token \
   huly-mcp-server
 
 # MCP stdio mode
@@ -386,6 +408,7 @@ MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{i
 | `HULY_PROJECT` | No | - | Optional default project identifier for project-scoped tools |
 | `HULY_TRANSPORT` | No | `ws` | SDK transport: `ws` (WebSocket) or `rest` (REST API) |
 | `HULY_POOL_TTL_MS` | No | `1800000` | Connection pool TTL in ms (30 min) |
+| `HULY_POOL_MAX_AGE_MS` | No | `86400000` | Longest a pooled connection is reused, however busy (24 h) |
 | `HULY_RESPONSE_MODE` | No | `compact` | Result serializer: `compact` or diagnostic `raw` |
 | `HULY_TOOL_PROFILE` | No | `full` | Tool catalog: `full`, `project`, or read-only `read` |
 | `HULY_CURSOR_SECRET` | No | Derived from Huly credentials | Optional stable HMAC secret for signed cursors |
@@ -394,10 +417,15 @@ MCP Resources are also available at `huly://projects/{id}` and `huly://issues/{i
 | `HULY_OUTBOUND_HEADERS_JSON` | No | - | JSON object of extra headers for protected Huly origins |
 | `HULY_OUTBOUND_HEADER_*` | No | - | One extra outbound header per env var, with `_` converted to `-` |
 | **HTTP Server** | | | |
-| `PORT` | No | `3001` | HTTP server port (auto-assigns if taken) |
-| `MCP_AUTH_TOKEN` | No | - | Bearer token for HTTP auth (disabled if unset) |
-| `HULY_RATE_LIMIT` | No | `200` | Max requests per minute per IP |
-| `ALLOWED_ORIGINS` | No | `*` | CORS allowed origins (comma-separated) |
+| `HOST` | No | `127.0.0.1` | Interface to listen on; beyond loopback an access token is required |
+| `PORT` | No | `3001` | HTTP server port; exits if taken (`0` picks any free port) |
+| `MCP_AUTH_TOKENS` | No | - | Named access tokens, `name:token` pairs separated by commas |
+| `MCP_AUTH_TOKEN` | No | - | A single access token, named `default` |
+| `HULY_RATE_LIMIT` | No | `200` | Max requests per minute per client address |
+| `HULY_TRUST_PROXY` | No | `false` | Take the client address from `X-Forwarded-For` (behind a reverse proxy only) |
+| `ALLOWED_ORIGINS` | No | none | Browser origins allowed to call the server (comma-separated, or `*`) |
+| `HULY_SESSION_IDLE_MS` | No | `1800000` | Close a session after this long without requests (30 min) |
+| `HULY_MAX_SESSIONS` | No | `100` | Most sessions open at once |
 
 *`HULY_WORKSPACE` is required for MCP stdio mode. For HTTP mode it can
 be omitted if every request specifies a workspace via the tool arguments.
@@ -417,18 +445,23 @@ profile fail instead of being silently routed.
 
 ### HTTP Server Authentication
 
-The HTTP server optionally requires a bearer token. This protects **your server**
-from unauthorized access — it's separate from Huly's own authentication.
+Access tokens protect **your server** from unauthorized access; they are
+separate from Huly's own authentication, and every token acts as the same Huly
+account.
 
 ```bash
 # Generate a token
 openssl rand -hex 32
 
-# Start with auth enabled
+# One token
 MCP_AUTH_TOKEN=your-token-here npm run start:server
+
+# One named token per client
+MCP_AUTH_TOKENS="mac:token-one,n8n:token-two" npm run start:server
 ```
 
-If `MCP_AUTH_TOKEN` is not set, auth is disabled (fine for local-only usage).
+Without a token the server accepts only loopback connections; it refuses to
+listen on any other interface.
 
 MCP stdio mode does not use this token — stdio is inherently local.
 
@@ -590,7 +623,7 @@ For local development:
 ```bash
 npm install
 npm run lint
-node --test test/initCodex.test.mjs test/mcpShared.test.mjs
+node --test test/initCodex.test.mjs test/mcpServer.test.mjs
 ```
 
 The custom pack script bundles only the Huly SDK packages needed at runtime
@@ -607,20 +640,30 @@ npm publish bgx4k3p-huly-mcp-server-<version>.tgz --access public
 
 ```text
 src/
-  client.mjs    # HulyClient — all business logic and SDK calls
-  helpers.mjs   # Shared constants, markup conversion, JSDOM polyfills
+  client.mjs    # HulyClient — one class composed from the domain modules below
+  client/       # HulyClient domain modules (issues, projects, labels, milestones, ...)
+    sdk.mjs     #   Huly SDK entry points shared by the modules
+  domPolyfill.mjs # Browser globals the Huly SDK needs; loaded before any SDK package
+  helpers.mjs   # Shared constants and markup conversion
+  issueRank.mjs # Ranks for new and moved issues
+  projection.mjs # Field selection and bounded expansions for issue reads
   dispatch.mjs  # Tool-to-method dispatch table
   pool.mjs      # Connection pool — caches clients by workspace with TTL
-  mcpShared.mjs # Shared MCP server factory — tool definitions + resources
+  mcp/          # MCP layer shared by both transports
+    server.mjs  #   Server factory and tool-call routing
+    tools/      #   Tool definitions by domain
+    policy.mjs  #   Tool annotations, project defaults, tool profiles
+    resources.mjs #   huly:// resources
   mcp.mjs       # MCP stdio entry point (Codex, Claude Code)
   server.mjs    # MCP Streamable HTTP entry point (n8n, VS Code, remote)
+  http/         # HTTP transport pieces: auth/CORS/body guards, rate limit, sessions
   initCodex.mjs # Project config helpers for Codex and Claude Code
   index.mjs     # CLI entry point — --get-token, --init-* modes + MCP re-export
 ```
 
 ```text
-Claude / Codex -> stdio           -> mcp.mjs    -> mcpShared.mjs -> pool -> client -> Huly SDK
-n8n / remote   -> Streamable HTTP -> server.mjs -> mcpShared.mjs -> pool -> client -> Huly SDK
+Claude / Codex -> stdio           -> mcp.mjs    -> mcp/server.mjs -> pool -> client -> Huly SDK
+n8n / remote   -> Streamable HTTP -> server.mjs -> mcp/server.mjs -> pool -> client -> Huly SDK
 ```
 
 ---
@@ -800,7 +843,7 @@ also a member. Removing a member also removes their project-role assignments.
 | Tool | Description |
 | --- | --- |
 | `list_members` | List all active workspace members |
-| `get_member` | Find a member by name (fuzzy match) |
+| `get_member` | Find a member by name (case-insensitive) |
 
 ### Comments
 
@@ -820,7 +863,7 @@ also a member. Removing a member also removes their project-role assignments.
 | `list_time_reports` | List time reports for an issue | -- |
 | `get_time_report` | Get a specific time report by ID | -- |
 | `update_time_report` | Update hours, description, date, or employee attribution | -- |
-| `delete_time_report` | Delete a time report | -- |
+| `delete_time_report` | Delete a time report from its issue | -- |
 
 ### Metadata
 

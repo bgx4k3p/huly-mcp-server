@@ -18,6 +18,7 @@ export default [
         Blob: 'readonly',
         fetch: 'readonly',
         Event: 'readonly',
+        structuredClone: 'readonly',
       }
     },
     rules: {
