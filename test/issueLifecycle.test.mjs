@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { HulyClient } from '../src/client.mjs';
+import { issueRank } from '../src/issueRank.mjs';
 
 const require = createRequire(import.meta.url);
 const tracker = require('@hcengineering/tracker').default;
@@ -10,6 +11,7 @@ const tags = require('@hcengineering/tags').default;
 const task = require('@hcengineering/task').default;
 const contactPlugin = require('@hcengineering/contact').default;
 const chunter = require('@hcengineering/chunter').default;
+const { makeRank } = require('@hcengineering/rank');
 
 const MODEL_SPACE = 'core:space:Space';
 
@@ -119,18 +121,21 @@ function createHarness(data = {}) {
 
   const calls = [];
   const sdk = {
-    findOne: async (classRef, query) => {
-      calls.push({ method: 'findOne', classRef, query });
-      return collectionFor(classRef).find(record => matches(record, query)) ?? null;
+    findOne: async (classRef, query, options) => {
+      calls.push({ method: 'findOne', classRef, query, options });
+      const found = collectionFor(classRef).filter(record => matches(record, query));
+      const [[field, order] = []] = Object.entries(options?.sort ?? {});
+      if (field) found.sort((a, b) => order * (a[field] < b[field] ? -1 : a[field] > b[field] ? 1 : 0));
+      return found[0] ?? null;
     },
     findAll: async (classRef, query = {}, options) => {
       calls.push({ method: 'findAll', classRef, query, options });
       return collectionFor(classRef).filter(record => matches(record, query));
     },
-    updateDoc: async (classRef, space, id, data) => {
+    updateDoc: async (classRef, space, id, data, retrieve) => {
       calls.push({ method: 'updateDoc', classRef, space, id, data });
       const target = collectionFor(classRef).find(record => record._id === id);
-      if (!target) return;
+      if (!target) return {};
       for (const [key, value] of Object.entries(data)) {
         if (key !== '$inc') {
           target[key] = value;
@@ -140,6 +145,8 @@ function createHarness(data = {}) {
           target[field] = (target[field] ?? 0) + delta;
         }
       }
+      // Like the server, return the updated document only when asked to retrieve it.
+      return retrieve ? { object: { ...target } } : {};
     },
     addCollection: async (classRef, space, attachedTo, attachedToClass, collection, data, id) => {
       calls.push({
@@ -209,9 +216,7 @@ describe('createIssue payload', () => {
     assert.equal(write.attachedToClass, tracker.class.Project);
     assert.equal(write.collection, 'issues');
 
-    const { rank, ...data } = write.data;
-    assert.equal(typeof rank, 'string');
-    assert.deepEqual(data, {
+    assert.deepEqual(write.data, {
       title: 'Ship it',
       identifier: 'PROJ-11',
       description: '',
@@ -227,7 +232,8 @@ describe('createIssue payload', () => {
       reportedTime: 0,
       childInfo: [],
       parents: [],
-      kind: 'task-type'
+      kind: 'task-type',
+      rank: issueRank(undefined, 11)
     });
     assert.equal(result.id, 'PROJ-11');
   });
@@ -240,6 +246,56 @@ describe('createIssue payload', () => {
       () => client.createIssue('PROJ', 'Scoped', undefined, undefined, 'Triage'),
       /Status "Triage" not found/
     );
+    assert.equal(select('addCollection').length, 0);
+  });
+
+  for (const [label, args, pattern] of [
+    ['unknown assignee', [undefined, undefined, { assignee: 'Nobody' }], /Employee not found/],
+    ['unknown component', [undefined, undefined, { component: 'Nope' }], /Component not found/],
+    ['unknown milestone', [undefined, undefined, { milestone: 'Nope' }], /Milestone not found/],
+    ['unknown task type', [undefined, 'Saga', {}], /Task type "Saga" not found/],
+    ['invalid estimation', [undefined, undefined, { estimation: 'abc' }], /estimation must be a number/],
+    ['invalid due date', [undefined, undefined, { dueDate: 'someday' }], /Invalid date/],
+    ['unknown priority', ['critical', undefined, {}], /Priority not found/],
+    ['unknown status', [undefined, undefined, {}, 'Triage'], /Status "Triage" not found/]
+  ]) {
+    it(`spends no issue number when the input has an ${label}`, async () => {
+      const { client, select, state } = createHarness();
+      const [priority, type, extra, status] = args;
+
+      await assert.rejects(
+        () => client.createIssue('PROJ', 'Rejected', undefined, priority, status, undefined, type, extra),
+        pattern
+      );
+      assert.equal(select('updateDoc', tracker.class.Project).length, 0);
+      assert.equal(state.projects[0].sequence, 10);
+      assert.equal(select('addCollection').length, 0);
+    });
+  }
+
+  it('takes the issue number from the reservation result, not a separate read', async () => {
+    const { client, select, state } = createHarness();
+    // Another client creates an issue between this reservation and any follow-up read.
+    const sdk = await client._getClient();
+    const updateDoc = sdk.updateDoc;
+    sdk.updateDoc = async (...args) => {
+      const result = await updateDoc(...args);
+      if (args[0] === tracker.class.Project) state.projects[0].sequence += 1;
+      return result;
+    };
+
+    const result = await client.createIssue('PROJ', 'Raced');
+
+    assert.equal(result.id, 'PROJ-11');
+    assert.equal(select('addCollection', tracker.class.Issue)[0].data.number, 11);
+  });
+
+  it('fails instead of guessing a number when Huly does not return the updated project', async () => {
+    const { client, select } = createHarness();
+    const sdk = await client._getClient();
+    sdk.updateDoc = async () => ({});
+
+    await assert.rejects(() => client.createIssue('PROJ', 'Unnumbered'), /did not return the updated sequence/);
     assert.equal(select('addCollection').length, 0);
   });
 
@@ -409,6 +465,7 @@ describe('moveIssue and deleteIssue', () => {
         space: 'dest-id',
         number: 21,
         identifier: 'DEST-21',
+        rank: issueRank(undefined, 21),
         attachedTo: 'dest-id',
         // status-review is not in the destination task type's workflow, so the
         // issue lands on the destination default rather than keeping a status
@@ -417,6 +474,31 @@ describe('moveIssue and deleteIssue', () => {
       }
     }]);
     assert.equal(result.newId, 'DEST-21');
+  });
+
+  it('ranks the moved issue after the last issue in the destination project', async () => {
+    const harness = moveHarness();
+    const lastRank = makeRank(makeRank(undefined, undefined), undefined);
+    harness.state.issues.push(
+      baseIssue({ _id: 'dest-a', space: 'dest-id', rank: makeRank(undefined, undefined) }),
+      baseIssue({ _id: 'dest-b', space: 'dest-id', rank: lastRank }),
+      // A higher rank in another project must not influence the destination order.
+      baseIssue({ _id: 'other', space: 'other-id', rank: makeRank(lastRank, undefined) })
+    );
+
+    await harness.client.moveIssue('PROJ-1', 'dest');
+
+    const [update] = harness.select('updateDoc', tracker.class.Issue);
+    assert.equal(update.data.rank, issueRank(lastRank, 21));
+  });
+
+  it('spends no destination number when the move cannot be resolved', async () => {
+    const harness = moveHarness({ kind: undefined });
+    harness.state.projects[1].type = 'unconfigured-type';
+
+    await assert.rejects(() => harness.client.moveIssue('PROJ-1', 'dest'), /No task types configured/);
+    assert.equal(harness.select('updateDoc').length, 0);
+    assert.equal(harness.state.projects[1].sequence, 20);
   });
 
   it('keeps a status the destination workflow actually contains', async () => {
@@ -504,6 +586,118 @@ describe('batchCreateIssues', () => {
     assert.equal(result.total, result.created.length);
     assert.equal(result.created.length, 1);
     assert.deepEqual(result.errors.map(item => item.input.title), ['Bad status', 'Bad assignee']);
+  });
+
+  it('numbers only the valid items, leaving no gaps for rejected ones', async () => {
+    const { client, select } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'First' },
+      { title: 'Bad status', status: 'Triage' },
+      { title: 'Bad type', type: 'Saga' },
+      { title: 'Bad priority', priority: 'critical' },
+      { title: 'Bad estimation', estimation: 'abc' },
+      { title: 'Bad due date', dueDate: 'someday' },
+      { title: 'Bad component', component: 'Nope' },
+      { title: 'Bad milestone', milestone: 'Nope' },
+      { title: 'Second' }
+    ]);
+
+    assert.deepEqual(select('updateDoc', tracker.class.Project).map(call => call.data),
+      [{ $inc: { sequence: 2 } }]);
+    assert.deepEqual(result.created.map(item => item.id), ['PROJ-11', 'PROJ-12']);
+    assert.equal(result.errors.length, 7);
+    assert.ok(result.errors.every(item => item.input.title.startsWith('Bad ')));
+    assert.deepEqual(
+      select('addCollection', tracker.class.Issue).map(call => call.data.rank),
+      [issueRank(undefined, 11), issueRank(undefined, 12)],
+      'batch items share one position and are ordered by their numbers'
+    );
+  });
+
+  it('ranks new issues after the last issue in their own project only', async () => {
+    const last = makeRank(makeRank(undefined, undefined), undefined);
+    const { client, select } = createHarness({
+      issues: [
+        baseIssue({ _id: 'a', rank: makeRank(undefined, undefined) }),
+        baseIssue({ _id: 'b', rank: last }),
+        baseIssue({ _id: 'other', space: 'other-project', rank: makeRank(last, undefined) })
+      ]
+    });
+
+    await client.createIssue('PROJ', 'Single');
+    await client.batchCreateIssues('PROJ', [{ title: 'Batch' }]);
+
+    const [single, batch] = select('addCollection', tracker.class.Issue).map(call => call.data.rank);
+    assert.equal(single, issueRank(last, 11));
+    assert.equal(batch, issueRank(single, 12));
+  });
+
+  it('gives creates that race on the same last rank distinct ranks in number order', async () => {
+    const { client, select } = createHarness({
+      issues: [baseIssue({ rank: makeRank(undefined, undefined) })]
+    });
+    // Hold every last-rank read until all three callers have made one, so each computes its
+    // rank from the same stale value, as concurrent sessions would.
+    const sdk = await client._getClient();
+    const findOne = sdk.findOne;
+    const waiting = [];
+    sdk.findOne = async (classRef, query, options) => {
+      const result = await findOne(classRef, query, options);
+      if (classRef === tracker.class.Issue && options?.sort?.rank) {
+        await new Promise(resolve => {
+          waiting.push(resolve);
+          if (waiting.length === 3) waiting.forEach(release => release());
+        });
+      }
+      return result;
+    };
+
+    await Promise.all([
+      client.createIssue('PROJ', 'Session A'),
+      client.createIssue('PROJ', 'Session B'),
+      client.batchCreateIssues('PROJ', [{ title: 'Session C1' }, { title: 'Session C2' }])
+    ]);
+
+    const writes = select('addCollection', tracker.class.Issue)
+      .map(call => ({ number: call.data.number, rank: call.data.rank }))
+      .sort((a, b) => a.number - b.number);
+    assert.deepEqual(writes.map(write => write.number), [11, 12, 13, 14]);
+    assert.equal(new Set(writes.map(write => write.rank)).size, 4, 'no two issues may share a rank');
+    const position = rank => rank.slice(0, rank.indexOf(':'));
+    assert.equal(new Set(writes.map(write => position(write.rank))).size, 1,
+      'every racing create computed the same position');
+    assert.deepEqual(writes.map(write => write.rank), writes.map(write => write.rank).sort(),
+      'rank order matches number order');
+  });
+
+  it('reserves nothing when every item is rejected', async () => {
+    const { client, select, state } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'Bad assignee', assignee: 'Nobody' },
+      { description: 'no title' }
+    ]);
+
+    assert.equal(result.total, 0);
+    assert.equal(result.errors.length, 2);
+    assert.equal(select('updateDoc').length, 0);
+    assert.equal(state.projects[0].sequence, 10);
+  });
+
+  it('checks each status against the workflow of the item\'s own task type', async () => {
+    const { client, select } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'Bug in triage', type: 'Bug', status: 'Triage' },
+      { title: 'Task in triage', status: 'Triage' }
+    ]);
+
+    assert.deepEqual(result.created.map(item => item.title), ['Bug in triage']);
+    assert.deepEqual(result.errors.map(item => item.input.title), ['Task in triage']);
+    const [write] = select('addCollection', tracker.class.Issue);
+    assert.equal(write.data.kind, 'bug-type');
+    assert.equal(write.data.status, 'status-triage');
   });
 
   it('rejects empty and oversized batches before reserving any numbers', async () => {
