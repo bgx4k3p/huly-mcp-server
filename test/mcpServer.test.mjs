@@ -67,6 +67,34 @@ describe('MCP shared runtime context', () => {
     assert.match(result.content[0].text, /Unsupported argument/);
   });
 
+  it('rejects arguments that do not match the tool schema before any code runs', async () => {
+    const { server } = createMcpServer();
+    const call = callHandler(server);
+    const callTool = (name, args) => call({ method: 'tools/call', params: { name, arguments: args } }, {});
+
+    for (const [name, args, pattern] of [
+      ['update_issue', { issueId: 'PROJ-1', assignee: null }, /assignee must be string/],
+      ['update_issue', { issueId: 'PROJ-1', estimation: '4.5' }, /estimation must be number/],
+      ['update_issue', { assignee: 'Ada' }, /must have required property 'issueId'/],
+      ['search_issues', { query: 42 }, /query must be string/],
+      ['create_issue', { project: 'PROJ', title: 'T', labels: 'bug' }, /labels must be array/],
+      ['list_issues', { project: 'PROJ', include: ['bogus'] }, /include\/0 must be equal to one of the allowed values/]
+    ]) {
+      const result = await callTool(name, args);
+      assert.equal(result.isError, true, `${name} ${JSON.stringify(args)} must be rejected`);
+      assert.match(JSON.parse(result.content[0].text).error, pattern);
+      assert.match(JSON.parse(result.content[0].text).error, new RegExp(`Invalid arguments for ${name}`));
+    }
+  });
+
+  it('compiles a validator for every advertised tool schema', async () => {
+    const { validateToolArguments } = await import('../src/mcp/validation.mjs');
+    const { TOOLS } = createMcpServer();
+    for (const tool of TOOLS) {
+      assert.doesNotThrow(() => validateToolArguments(tool, {}).valid ?? true, tool.name);
+    }
+  });
+
   it('advertises get_huly_context in the MCP tool list', async () => {
     const { TOOLS } = createMcpServer();
     assert.ok(TOOLS.some(tool => tool.name === 'get_huly_context'));

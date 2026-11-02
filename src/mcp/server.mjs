@@ -20,6 +20,7 @@ import {
   PROJECT_DEFAULT_TOOLS
 } from './policy.mjs';
 import { registerResources } from './resources.mjs';
+import { validateToolArguments } from './validation.mjs';
 
 export const SERVER_INSTRUCTIONS = [
   'Start with get_huly_context when workspace or project defaults are unclear.',
@@ -110,6 +111,8 @@ export function createMcpServer(options = {}) {
       if (unsupported.length > 0) {
         throw new Error(`Unsupported argument for ${name}: ${unsupported.join(', ')}`);
       }
+      const validation = validateToolArguments(definition, args || {});
+      if (!validation.valid) throw new Error(validation.message);
       const toolArgs = { ...(args || {}) };
       toolArgs.__responseMode = responseMode;
       toolArgs.__toolProfile = toolProfile;
