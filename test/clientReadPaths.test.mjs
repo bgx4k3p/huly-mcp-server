@@ -163,7 +163,7 @@ describe('getProject expansions', () => {
       { name: 'v1', status: 'In Progress', targetDate: '2026-04-01' }
     ]);
     assert.deepEqual(select('findAll', tracker.class.Milestone).map(call => call.query),
-      [{ space: 'proj-space' }]);
+      [{ space: { $in: ['proj-space'] } }]);
     assert.equal(select('findAll', tracker.class.Component).length, 0);
     assert.equal(select('findAll', tags.class.TagElement).length, 0);
     assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 0,
@@ -189,7 +189,7 @@ describe('getProject expansions', () => {
     ]);
     assert.deepEqual(project.members, ['Ada Lovelace', 'Grace Hopper']);
     assert.deepEqual(select('findAll', tracker.class.Component).map(call => call.query),
-      [{ space: 'proj-space' }]);
+      [{ space: { $in: ['proj-space'] } }]);
     assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 1,
       'both expansions must share a single employee lookup');
     assert.equal(select('findAll', tracker.class.Milestone).length, 0);

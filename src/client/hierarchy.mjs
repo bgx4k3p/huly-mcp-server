@@ -160,22 +160,34 @@ export class HierarchyMethods {
   }
 
   /**
-   * Detach a sub-issue from its parent, returning it to the project's own
-   * issue collection. Mirrors the attach path in setParent.
+   * Remove a sub-issue from its current parent's child list, if the parent still exists.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} issue - Sub-issue document
+   */
+  async _removeFromParent(client, issue) {
+    const oldParent = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
+    if (!oldParent) return;
+    const remaining = (oldParent.childInfo || []).filter(c => c.childId !== issue._id);
+    await client.updateDoc(tracker.class.Issue, oldParent.space, oldParent._id, {
+      childInfo: remaining,
+      subIssues: remaining.length
+    });
+  }
+
+  /**
+   * Detach a sub-issue from its parent, returning it to the project's own issue collection.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project the issue belongs to
+   * @param {Object} issue - Issue document
+   * @param {string} issueId - Issue identifier, for the result message
+   * @returns {Promise<Object>}
    */
   async _detachParent(client, project, issue, issueId) {
     if (issue.attachedToClass !== tracker.class.Issue || !issue.attachedTo) {
       return { message: `${issueId} has no parent`, issueId, parentId: null };
     }
 
-    const oldParent = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
-    if (oldParent) {
-      const remaining = (oldParent.childInfo || []).filter(c => c.childId !== issue._id);
-      await client.updateDoc(tracker.class.Issue, oldParent.space, oldParent._id, {
-        childInfo: remaining,
-        subIssues: remaining.length
-      });
-    }
+    await this._removeFromParent(client, issue);
 
     await client.updateCollection(
       tracker.class.Issue,
@@ -217,17 +229,7 @@ export class HierarchyMethods {
 
     // Clean up old parent if the child already has one
     if (issue.attachedTo && issue.attachedToClass === tracker.class.Issue && issue.attachedTo !== parentIssue._id) {
-      const oldParent = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
-      if (oldParent) {
-        const oldChildInfo = (oldParent.childInfo || []).filter(c => c.childId !== issue._id);
-        const oldParentProject = await client.findOne(tracker.class.Project, { _id: oldParent.space });
-        if (oldParentProject) {
-          await client.updateDoc(tracker.class.Issue, oldParentProject._id, oldParent._id, {
-            childInfo: oldChildInfo,
-            subIssues: oldChildInfo.length
-          });
-        }
-      }
+      await this._removeFromParent(client, issue);
     }
 
     // Build full ancestor chain for breadcrumbs

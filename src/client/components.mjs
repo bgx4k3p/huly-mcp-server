@@ -6,6 +6,20 @@
 import { fromMarkup, nameMatch, toMarkup, withExtra } from '../helpers.mjs';
 import { generateId, tracker } from './sdk.mjs';
 
+/**
+ * Output row for a component.
+ * @param {Object} component - Component document
+ * @returns {Object}
+ */
+function componentRow(component) {
+  return withExtra(component, {
+    id: component._id,
+    name: component.label,
+    description: fromMarkup(component.description),
+    lead: component.lead || null
+  });
+}
+
 export class ComponentsMethods {
   async listComponents(projectIdent, options = {}) {
     const client = await this._getClient();
@@ -13,13 +27,7 @@ export class ComponentsMethods {
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
 
-    const enriched = components.map(c => withExtra(c, {
-      id: c._id,
-      name: c.label,
-      description: fromMarkup(c.description),
-      lead: c.lead || null
-    }));
-    return this._cursoredFindAll(enriched, {
+    return this._cursoredFindAll(components.map(componentRow), {
       ...options,
       cursorScope: { workspace: this.workspace, tool: 'list_components', project: projectIdent.toUpperCase() }
     });
@@ -133,11 +141,6 @@ export class ComponentsMethods {
       throw new Error(`Component not found: "${name}". Available: ${names}`);
     }
 
-    return withExtra(component, {
-      id: component._id,
-      name: component.label,
-      description: fromMarkup(component.description),
-      lead: component.lead || null
-    });
+    return componentRow(component);
   }
 }

@@ -16,24 +16,101 @@ import { contactPlugin, core, generateId, tags, task, tracker } from './sdk.mjs'
 
 const PROJECT_INCLUDE_FIELDS = Object.freeze(['milestones', 'components', 'labels', 'members', 'owners', 'defaults']);
 
+/** Group documents by the project space they belong to. */
+function groupBySpace(values) {
+  const grouped = new Map();
+  for (const value of values) {
+    if (!grouped.has(value.space)) grouped.set(value.space, []);
+    grouped.get(value.space).push(value);
+  }
+  return grouped;
+}
+
 export class ProjectsMethods {
-  async _projectDefaults(client, project) {
-    const [assignee, status] = await Promise.all([
-      project.defaultAssignee
-        ? client.findOne(contactPlugin.mixin.Employee, { _id: project.defaultAssignee }) : null,
-      project.defaultIssueStatus
-        ? client.findOne(tracker.class.IssueStatus, { _id: project.defaultIssueStatus }) : null
+  /**
+   * Build output rows for projects, loading only what the requested includes need, in one batch.
+   * @param {Object} client - Huly SDK client
+   * @param {Object[]} projects - Project documents
+   * @param {Set<string>} include - Requested includes (PROJECT_INCLUDE_FIELDS)
+   * @param {Object} [options]
+   * @param {boolean} [options.ownerCount=false] - Report the owner count when owners are not included
+   * @returns {Promise<Object[]>}
+   */
+  async _projectRows(client, projects, include, { ownerCount = false } = {}) {
+    const projectIds = projects.map(project => project._id);
+    const any = projectIds.length > 0;
+    const needsEmployees = include.has('members') || include.has('owners') || include.has('components');
+    const defaultAssignees = include.has('defaults') ? projects.map(p => p.defaultAssignee).filter(Boolean) : [];
+    const defaultStatuses = include.has('defaults') ? projects.map(p => p.defaultIssueStatus).filter(Boolean) : [];
+    const [milestones, components, labels, employees, assignees, statuses] = await Promise.all([
+      include.has('milestones') && any ? client.findAll(tracker.class.Milestone, { space: { $in: projectIds } }) : [],
+      include.has('components') && any ? client.findAll(tracker.class.Component, { space: { $in: projectIds } }) : [],
+      include.has('labels') && any ? client.findAll(tags.class.TagElement, { targetClass: tracker.class.Issue }) : [],
+      needsEmployees && any ? client.findAll(contactPlugin.mixin.Employee, { active: true }) : [],
+      defaultAssignees.length > 0
+        ? client.findAll(contactPlugin.mixin.Employee, { _id: { $in: defaultAssignees } }) : [],
+      defaultStatuses.length > 0
+        ? client.findAll(tracker.class.IssueStatus, { _id: { $in: defaultStatuses } }) : []
     ]);
-    return {
-      defaultAssignee: assignee?.name ?? null,
-      defaultIssueStatus: status?.name ?? null,
-      defaultTimeReportDay: project.defaultTimeReportDay ?? null
-    };
+    const employeeMap = new Map(employees.map(employee => [employee._id, employee.name]));
+    const accountMap = new Map(employees.filter(e => e.personUuid).map(e => [e.personUuid, e.name]));
+    const accountName = account => accountMap.get(account) ?? account;
+    const assigneeNames = new Map(assignees.map(employee => [employee._id, employee.name]));
+    const statusNames = new Map(statuses.map(status => [status._id, status.name]));
+    const milestonesByProject = groupBySpace(milestones);
+    const componentsByProject = groupBySpace(components);
+
+    return projects.map(project => {
+      const row = {
+        id: project._id,
+        identifier: project.identifier,
+        name: project.name || project.identifier,
+        description: fromMarkup(project.description),
+        archived: project.archived || false,
+        private: project.private || false,
+        members: project.members?.length || 0,
+        ...(ownerCount ? { owners: project.owners?.length || 0 } : {}),
+        issueCount: project.sequence || 0,
+        createdOn: project.createdOn,
+        modifiedOn: project.modifiedOn
+      };
+      if (include.has('milestones')) {
+        row.milestones = (milestonesByProject.get(project._id) || []).map(milestone => ({
+          name: milestone.label,
+          status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
+          targetDate: milestone.targetDate
+            ? new Date(milestone.targetDate).toISOString().split('T')[0]
+            : null
+        }));
+      }
+      if (include.has('components')) {
+        row.components = (componentsByProject.get(project._id) || []).map(component => ({
+          name: component.label,
+          description: fromMarkup(component.description),
+          lead: component.lead ? employeeMap.get(component.lead) ?? null : null
+        }));
+      }
+      if (include.has('labels')) {
+        row.labels = labels.map(label => ({ name: label.title, color: label.color ?? null }));
+      }
+      if (include.has('members')) row.members = (project.members || []).map(accountName);
+      if (include.has('owners')) row.owners = (project.owners || []).map(accountName);
+      if (include.has('defaults')) {
+        row.defaultAssignee = project.defaultAssignee ? assigneeNames.get(project.defaultAssignee) ?? null : null;
+        row.defaultIssueStatus = project.defaultIssueStatus ? statusNames.get(project.defaultIssueStatus) ?? null : null;
+        row.defaultTimeReportDay = project.defaultTimeReportDay ?? null;
+      }
+      return withExtra(project, row);
+    });
   }
 
   /**
-   * List all projects with issue counts.
-   * @returns {Promise<Object[]>}
+   * List projects, one cursor page at a time.
+   * @param {Object} [options]
+   * @param {string[]} [options.include] - Related data to add: milestones, components, labels, members, owners, defaults
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit] - Page size
+   * @returns {Promise<{items: Object[], nextCursor?: string}>} List envelope
    */
   async listProjects(options = {}) {
     const client = await this._getClient();
@@ -46,146 +123,22 @@ export class ProjectsMethods {
       include: [...include].sort()
     };
     const page = this._cursoredFindAll(projects, { ...options, cursorScope });
-    const selectedProjects = page.items;
-    const projectIds = selectedProjects.map(project => project._id);
-    const needsEmployees = include.has('members') || include.has('owners') || include.has('components');
-    const [allMilestones, allComponents, allLabels, employees] = await Promise.all([
-      include.has('milestones') && projectIds.length > 0
-        ? client.findAll(tracker.class.Milestone, { space: { $in: projectIds } })
-        : [],
-      include.has('components') && projectIds.length > 0
-        ? client.findAll(tracker.class.Component, { space: { $in: projectIds } })
-        : [],
-      include.has('labels')
-        ? client.findAll(tags.class.TagElement, { targetClass: tracker.class.Issue })
-        : [],
-      needsEmployees
-        ? client.findAll(contactPlugin.mixin.Employee, { active: true })
-        : []
-    ]);
-    const employeeMap = new Map(employees.map(employee => [employee._id, employee.name]));
-    const accountMap = new Map(employees.filter(e => e.personUuid).map(e => [e.personUuid, e.name]));
-    const defaults = include.has('defaults')
-      ? await Promise.all(selectedProjects.map(project => this._projectDefaults(client, project))) : [];
-    const milestonesByProject = new Map();
-    for (const milestone of allMilestones) {
-      if (!milestonesByProject.has(milestone.space)) milestonesByProject.set(milestone.space, []);
-      milestonesByProject.get(milestone.space).push(milestone);
-    }
-    const componentsByProject = new Map();
-    for (const component of allComponents) {
-      if (!componentsByProject.has(component.space)) componentsByProject.set(component.space, []);
-      componentsByProject.get(component.space).push(component);
-    }
-
-    const items = selectedProjects.map((project, index) => {
-      const base = {
-        id: project._id,
-        identifier: project.identifier,
-        name: project.name || project.identifier,
-        description: fromMarkup(project.description),
-        archived: project.archived || false,
-        private: project.private || false,
-        members: project.members?.length || 0,
-        issueCount: project.sequence || 0,
-        createdOn: project.createdOn,
-        modifiedOn: project.modifiedOn
-      };
-      if (include.has('milestones')) {
-        base.milestones = (milestonesByProject.get(project._id) || []).map(milestone => ({
-          name: milestone.label,
-          status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
-          targetDate: milestone.targetDate
-            ? new Date(milestone.targetDate).toISOString().split('T')[0]
-            : null
-        }));
-      }
-      if (include.has('components')) {
-        base.components = (componentsByProject.get(project._id) || []).map(component => ({
-          name: component.label,
-          description: fromMarkup(component.description),
-          lead: component.lead ? employeeMap.get(component.lead) ?? null : null
-        }));
-      }
-      if (include.has('labels')) {
-        base.labels = allLabels.map(label => ({
-          name: label.title,
-          color: label.color ?? null
-        }));
-      }
-      if (include.has('members')) {
-        base.members = (project.members || [])
-          .map(account => accountMap.get(account) ?? account);
-      }
-      if (include.has('owners')) base.owners = (project.owners || []).map(account => accountMap.get(account) ?? account);
-      if (include.has('defaults')) Object.assign(base, defaults[index]);
-      return withExtra(project, base);
-    });
-    return listEnvelope(items, page.nextCursor);
+    return listEnvelope(await this._projectRows(client, page.items, include), page.nextCursor);
   }
 
   /**
    * Get a project by its identifier.
    * @param {string} identifier - Project identifier (e.g., "PROJ")
+   * @param {Object} [options]
+   * @param {string[]} [options.include] - Related data to add: milestones, components, labels, members, owners, defaults
    * @returns {Promise<Object>}
    */
   async getProject(identifier, options = {}) {
     const client = await this._getClient();
     const project = await this._findProject(client, identifier);
-
-    const base = {
-      id: project._id,
-      identifier: project.identifier,
-      name: project.name || project.identifier,
-      description: fromMarkup(project.description),
-      archived: project.archived || false,
-      private: project.private || false,
-      members: project.members?.length || 0,
-      owners: project.owners?.length || 0,
-      issueCount: project.sequence || 0,
-      createdOn: project.createdOn,
-      modifiedOn: project.modifiedOn
-    };
-
     const include = normalizeIncludeSet(options.include, PROJECT_INCLUDE_FIELDS);
-    if (include.size === 0) {
-      return withExtra(project, base);
-    }
-
-    const needsEmployees = include.has('members') || include.has('owners') || include.has('components');
-    const [milestones, components, allLabels, employees] = await Promise.all([
-      include.has('milestones') ? client.findAll(tracker.class.Milestone, { space: project._id }) : [],
-      include.has('components') ? client.findAll(tracker.class.Component, { space: project._id }) : [],
-      include.has('labels')
-        ? client.findAll(tags.class.TagElement, { targetClass: tracker.class.Issue })
-        : [],
-      needsEmployees ? client.findAll(contactPlugin.mixin.Employee, { active: true }) : []
-    ]);
-
-    const employeeMap = new Map(employees.map(e => [e._id, e.name]));
-    const accountMap = new Map(employees.filter(e => e.personUuid).map(e => [e.personUuid, e.name]));
-
-    if (include.has('milestones')) base.milestones = milestones.map(m => ({
-      name: m.label,
-      status: strictGet(MILESTONE_STATUS_NAMES, m.status, 'Milestone status'),
-      targetDate: m.targetDate ? new Date(m.targetDate).toISOString().split('T')[0] : null
-    }));
-    if (include.has('components')) base.components = components.map(c => ({
-      name: c.label,
-      description: fromMarkup(c.description),
-      lead: c.lead ? employeeMap.get(c.lead) ?? null : null
-    }));
-    if (include.has('labels')) base.labels = allLabels.map(t => ({
-      name: t.title,
-      color: t.color ?? null
-    }));
-    if (include.has('members')) {
-      base.members = (project.members || []).map(account => accountMap.get(account) ?? account);
-    }
-    if (include.has('owners')) base.owners = (project.owners || []).map(account => accountMap.get(account) ?? account);
-    if (include.has('defaults')) Object.assign(base, await this._projectDefaults(client, project));
-
-    return withExtra(project, base);
+    const [row] = await this._projectRows(client, [project], include, { ownerCount: true });
+    return row;
   }
 
   /**

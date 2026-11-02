@@ -21,6 +21,41 @@ import { core, generateId, tracker } from './sdk.mjs';
 
 const MILESTONE_INCLUDE_FIELDS = Object.freeze(['issues']);
 
+/**
+ * Output row for a milestone, optionally with a bounded list of its issues.
+ * @param {Object} milestone - Milestone document
+ * @param {Object} details
+ * @param {string[]} details.collaborators - Collaborator names
+ * @param {number} [details.issueCount] - Total issue count, reported by single reads
+ * @param {Object} [details.issues] - Issue expansion: `{ issues, project, statusMap, taskTypeMap, limit }`
+ * @returns {Object}
+ */
+function milestoneRow(milestone, { collaborators, issueCount, issues }) {
+  const row = {
+    id: milestone._id,
+    name: milestone.label,
+    description: fromMarkup(milestone.description),
+    status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
+    targetDate: milestone.targetDate ? new Date(milestone.targetDate).toISOString().split('T')[0] : null,
+    comments: milestone.comments || 0,
+    ...(issueCount === undefined ? {} : { issueCount }),
+    collaborators
+  };
+  if (issues) {
+    const projected = issues.issues.map(issue => ({
+      id: `${issues.project.identifier}-${issue.number}`,
+      title: issue.title,
+      status: strictGet(issues.statusMap, issue.status, 'Status'),
+      type: strictGet(issues.taskTypeMap, issue.kind, 'Task type')
+    }));
+    const bounded = boundedCollection(projected, issues.limit);
+    row.issues = bounded.items;
+    row.issuesCount = bounded.count;
+    row.issuesTruncated = bounded.truncated;
+  }
+  return withExtra(milestone, row);
+}
+
 export class MilestonesMethods {
   /**
    * List all milestones in a project with optional status filtering.
@@ -83,32 +118,16 @@ export class MilestonesMethods {
       client,
       selectedMilestones.map(milestone => milestone._id)
     );
-    const items = selectedMilestones.map(milestone => {
-      const base = {
-        id: milestone._id,
-        name: milestone.label,
-        description: fromMarkup(milestone.description),
-        status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
-        targetDate: milestone.targetDate
-          ? new Date(milestone.targetDate).toISOString().split('T')[0]
-          : null,
-        comments: milestone.comments || 0,
-        collaborators: collaboratorsByMilestone.get(milestone._id) ?? []
-      };
-      if (include.has('issues')) {
-        const projected = (issuesByMilestone.get(milestone._id) || []).map(issue => ({
-          id: `${project.identifier}-${issue.number}`,
-          title: issue.title,
-          status: strictGet(statusMap, issue.status, 'Status'),
-          type: strictGet(taskTypeMap, issue.kind, 'Task type')
-        }));
-        const bounded = boundedCollection(projected, issuesLimit);
-        base.issues = bounded.items;
-        base.issuesCount = bounded.count;
-        base.issuesTruncated = bounded.truncated;
-      }
-      return withExtra(milestone, base);
-    });
+    const items = selectedMilestones.map(milestone => milestoneRow(milestone, {
+      collaborators: collaboratorsByMilestone.get(milestone._id) ?? [],
+      issues: include.has('issues') ? {
+        issues: issuesByMilestone.get(milestone._id) || [],
+        project,
+        statusMap,
+        taskTypeMap,
+        limit: issuesLimit
+      } : undefined
+    }));
     return listEnvelope(items, page.nextCursor);
   }
 
@@ -140,35 +159,22 @@ export class MilestonesMethods {
       milestone: milestone._id
     });
 
-    const collaboratorsByMilestone = await this._collaboratorsByObject(client, [milestone._id]);
-    const base = {
-      id: milestone._id,
-      name: milestone.label,
-      description: fromMarkup(milestone.description),
-      status: strictGet(MILESTONE_STATUS_NAMES, milestone.status, 'Milestone status'),
-      targetDate: milestone.targetDate ? new Date(milestone.targetDate).toISOString().split('T')[0] : null,
-      comments: milestone.comments || 0,
+    const [collaboratorsByMilestone, statusData, taskTypeMap] = await Promise.all([
+      this._collaboratorsByObject(client, [milestone._id]),
+      include.has('issues') ? this._buildStatusMaps(client) : null,
+      include.has('issues') ? this._buildTaskTypeMap(client) : null
+    ]);
+    return milestoneRow(milestone, {
+      collaborators: collaboratorsByMilestone.get(milestone._id) ?? [],
       issueCount: issues.length,
-      collaborators: collaboratorsByMilestone.get(milestone._id) ?? []
-    };
-
-    if (include.has('issues')) {
-      const { statusMap } = await this._buildStatusMaps(client);
-      const taskTypeMap = await this._buildTaskTypeMap(client);
-
-      const projected = issues.map(i => ({
-        id: `${project.identifier}-${i.number}`,
-        title: i.title,
-        status: strictGet(statusMap, i.status, 'Status'),
-        type: strictGet(taskTypeMap, i.kind, 'Task type')
-      }));
-      const bounded = boundedCollection(projected, issuesLimit);
-      base.issues = bounded.items;
-      base.issuesCount = bounded.count;
-      base.issuesTruncated = bounded.truncated;
-    }
-
-    return withExtra(milestone, base);
+      issues: include.has('issues') ? {
+        issues,
+        project,
+        statusMap: statusData.statusMap,
+        taskTypeMap,
+        limit: issuesLimit
+      } : undefined
+    });
   }
 
   /**
