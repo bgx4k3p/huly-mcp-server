@@ -110,7 +110,7 @@ export class MilestonesMethods {
         client.findAll(tracker.class.Issue, {
           space: project._id,
           milestone: { $in: milestoneIds }
-        }),
+        }, { sort: { number: 1 } }),
         this._buildStatusMaps(client),
         this._buildTaskTypeMap(client)
       ]);
@@ -163,10 +163,11 @@ export class MilestonesMethods {
 
     const milestone = findByName(milestones, m => m.label, name, 'Milestone');
 
+    // Ordered by number so a bounded expansion is the same on every call; ids suffice when only counting.
     const issues = await client.findAll(tracker.class.Issue, {
       space: project._id,
       milestone: milestone._id
-    });
+    }, include.has('issues') ? { sort: { number: 1 } } : { projection: { _id: 1 } });
 
     const [collaboratorsByMilestone, statusData, taskTypeMap] = await Promise.all([
       this._collaboratorsByObject(client, [milestone._id]),

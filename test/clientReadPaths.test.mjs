@@ -477,6 +477,18 @@ describe('getMilestone issue expansion', () => {
     status: 's-todo', kind: 'tt-issue', milestone: 'ms-1', ...overrides
   });
 
+  it('bounds the issue expansion deterministically, lowest numbers first, whatever order storage returns', async () => {
+    const { client } = milestoneHarness([
+      milestoneIssue('i-9', 9), milestoneIssue('i-3', 3), milestoneIssue('i-7', 7), milestoneIssue('i-1', 1)
+    ]);
+
+    const single = await client.getMilestone('proj', 'v1', { include: ['issues'], issuesLimit: 2 });
+    const listed = await client.listMilestones('proj', undefined, { include: ['issues'], issuesLimit: 2 });
+
+    assert.deepEqual(single.issues.map(issue => issue.id), ['PROJ-1', 'PROJ-3']);
+    assert.deepEqual(listed.items.find(item => item.name === 'v1').issues.map(issue => issue.id), ['PROJ-1', 'PROJ-3']);
+  });
+
   it('scopes the issue query to the project and reports the full count next to a bounded page', async () => {
     const { client, select } = milestoneHarness([
       milestoneIssue('i-1', 1),
