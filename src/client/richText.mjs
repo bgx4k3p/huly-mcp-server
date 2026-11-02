@@ -27,6 +27,17 @@ export class RichTextMethods {
   }
 
   /**
+   * Fail unless the collaborator service, which stores rich-text bodies, is available. Checked before anything is
+   * written so a missing configuration cannot leave an issue created without its description.
+   * @throws {Error} When the server has no collaborator connection
+   */
+  _requireCollaborator() {
+    if (!this._collabClient) {
+      throw new Error('A description needs the Huly collaborator service, which this server is not connected to.');
+    }
+  }
+
+  /**
    * Write a rich-text field to the collaborator service.
    * Converts the text to ProseMirror markup and pushes it to the live collaborative document; it does not
    * change the reference stored on the object itself.

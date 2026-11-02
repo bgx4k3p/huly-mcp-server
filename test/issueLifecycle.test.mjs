@@ -187,6 +187,7 @@ function createHarness(data = {}) {
   client._getClient = async () => sdk;
 
   const collaboratorWrites = [];
+  client._collabClient = {};
   client._writeCollaboratorField = async (objectId, objectClass, text, format) => {
     collaboratorWrites.push({ objectId, objectClass, text, format });
   };
@@ -340,16 +341,26 @@ describe('createIssue payload', () => {
 
     const [write] = select('addCollection', tracker.class.Issue);
     assert.equal(write.data.description, '');
-    const [refUpdate] = select('updateDoc', tracker.class.Issue);
-    assert.equal(refUpdate.space, 'project-id');
-    assert.equal(refUpdate.id, write.id);
-    assert.ok(refUpdate.data.description.startsWith(`${write.id}-description-`));
+    // The collaborator service sets the issue's reference to the body itself.
+    assert.deepEqual(select('updateDoc', tracker.class.Issue), []);
     assert.deepEqual(collaboratorWrites, [{
       objectId: write.id,
       objectClass: tracker.class.Issue,
       text: '# Heading',
       format: 'html'
     }]);
+  });
+
+  it('refuses a description without the collaborator service before reserving a number', async () => {
+    const { client, select, state } = createHarness();
+    client._collabClient = null;
+
+    await assert.rejects(() => client.createIssue('PROJ', 'Documented', 'Body'), /collaborator service/);
+    await assert.rejects(() => client.batchCreateIssues('PROJ', [{ title: 'A' }, { title: 'B', description: 'Body' }]),
+      /collaborator service/);
+    assert.equal(select('updateDoc', tracker.class.Project).length, 0);
+    assert.equal(state.projects[0].sequence, 10);
+    assert.equal(select('addCollection').length, 0);
   });
 
   it('does not touch the description document when no description is given', async () => {
@@ -816,6 +827,34 @@ describe('batchCreateIssues', () => {
       ['status-todo', 'status-triage']);
     assert.deepEqual(result.created.map(item => [item.status, item.priority]),
       [['Todo', 'No Priority'], ['Triage', 'Urgent']]);
+  });
+
+  it('keeps going when one item fails to write and reports every outcome', async () => {
+    const { client, select } = createHarness();
+    const sdk = await client._getClient();
+    const addCollection = sdk.addCollection;
+    sdk.addCollection = async (classRef, ...rest) => {
+      if (classRef === tracker.class.Issue && rest[4]?.title === 'Rejected by server') throw new Error('write refused');
+      return addCollection(classRef, ...rest);
+    };
+    client._addLabelToIssue = async (_client, _id, _space, label) => {
+      if (label === 'broken') throw new Error('label write failed');
+    };
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'First' },
+      { title: 'Rejected by server' },
+      { title: 'Labelled', labels: ['broken'] },
+      { title: 'Last' }
+    ]);
+
+    assert.deepEqual(select('addCollection', tracker.class.Issue).map(call => call.data.title),
+      ['First', 'Labelled', 'Last'], 'later items are still created');
+    assert.deepEqual(result.created.map(item => item.id), ['PROJ-11', 'PROJ-13', 'PROJ-14']);
+    assert.deepEqual(result.errors.map(item => [item.input.title, item.reservedId, item.error]),
+      [['Rejected by server', 'PROJ-12', 'write refused']]);
+    assert.match(result.created[1].warning, /label write failed/);
+    assert.equal(result.total, 3);
   });
 
   it('rejects empty and oversized batches before reserving any numbers', async () => {

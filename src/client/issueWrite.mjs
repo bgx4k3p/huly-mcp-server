@@ -9,8 +9,7 @@ import {
   normalizeDueDate,
   parseHours,
   PRIORITY_NAMES,
-  resolvePriority,
-  toMarkup
+  resolvePriority
 } from '../helpers.mjs';
 import { issueRank } from '../issueRank.mjs';
 import { contactPlugin, core, generateId, task, tracker } from './sdk.mjs';
@@ -113,6 +112,7 @@ export class IssueWriteMethods {
       milestoneId = (await this._findMilestone(client, project._id, extra.milestone))._id;
     }
 
+    if (description) this._requireCollaborator();
     const priorityValue = resolvePriority(priority);
     const estimation = extra.estimation === undefined ? 0 : parseHours(extra.estimation, 'estimation');
     const dueDate = normalizeDueDate(extra.dueDate);
@@ -151,16 +151,8 @@ export class IssueWriteMethods {
     );
 
     if (description) {
-      // Write description via collaborator for proper UI rendering.
-      // Set a collaborator reference on the doc first, then write content
-      // via updateMarkup which updates the live document.
-      const refId = `${issueId}-description-${Date.now()}`;
-      await client.updateDoc(tracker.class.Issue, project._id, issueId, {
-        description: refId
-      });
-      await this._writeCollaboratorField(
-        issueId, tracker.class.Issue, description, extra.descriptionFormat
-      );
+      // The collaborator service stores the body and sets the issue's reference to it.
+      await this._writeCollaboratorField(issueId, tracker.class.Issue, description, extra.descriptionFormat);
     }
 
     if (labels && labels.length > 0) {
@@ -361,6 +353,7 @@ export class IssueWriteMethods {
     }
 
     const statusNames = new Map([...statusesByTaskType.values()].flat().map(status => [status._id, status.name]));
+    if (resolved.some(({ item }) => item.description)) this._requireCollaborator();
     const created = [];
     if (resolved.length === 0) {
       return { project: project.identifier, created, errors, total: 0 };
@@ -371,61 +364,62 @@ export class IssueWriteMethods {
     const lastRank = await this._lastIssueRank(client, project._id);
     let currentSequence = await this._reserveIssueNumbers(client, project, resolved.length) - 1;
 
+    // An item that fails to write is reported with the number it had reserved, and the rest still go ahead.
     for (const { item, attributes } of resolved) {
       currentSequence++;
+      const identifier = `${project.identifier}-${currentSequence}`;
       const issueId = generateId();
-      await client.addCollection(
-        tracker.class.Issue,
-        project._id,
-        project._id,
-        tracker.class.Project,
-        'issues',
-        {
-          title: item.title,
-          identifier: `${project.identifier}-${currentSequence}`,
-          description: '',
-          status: attributes.status,
-          priority: attributes.priority,
-          number: currentSequence,
-          assignee: attributes.assignee,
-          component: attributes.component,
-          milestone: attributes.milestone,
-          estimation: attributes.estimation,
-          dueDate: attributes.dueDate,
-          remainingTime: 0,
-          reportedTime: 0,
-          childInfo: [],
-          parents: [],
-          kind: attributes.kind,
-          rank: issueRank(lastRank, currentSequence)
-        },
-        issueId
-      );
-
-      if (item.description) {
-        try {
-          await this._writeCollaboratorField(issueId, tracker.class.Issue, item.description, item.descriptionFormat);
-        } catch {
-          // Fallback to markup if collaborator unavailable
-          await client.updateDoc(tracker.class.Issue, project._id, issueId, {
-            description: toMarkup(item.description, item.descriptionFormat)
-          });
-        }
+      try {
+        await client.addCollection(
+          tracker.class.Issue,
+          project._id,
+          project._id,
+          tracker.class.Project,
+          'issues',
+          {
+            title: item.title,
+            identifier,
+            description: '',
+            status: attributes.status,
+            priority: attributes.priority,
+            number: currentSequence,
+            assignee: attributes.assignee,
+            component: attributes.component,
+            milestone: attributes.milestone,
+            estimation: attributes.estimation,
+            dueDate: attributes.dueDate,
+            remainingTime: 0,
+            reportedTime: 0,
+            childInfo: [],
+            parents: [],
+            kind: attributes.kind,
+            rank: issueRank(lastRank, currentSequence)
+          },
+          issueId
+        );
+      } catch (error) {
+        errors.push({ error: error.message, input: item, reservedId: identifier });
+        continue;
       }
 
-      if (item.labels && item.labels.length > 0) {
-        for (const labelName of item.labels) {
-          await this._addLabelToIssue(client, issueId, project._id, labelName);
-        }
-      }
-
-      created.push({
-        id: `${project.identifier}-${currentSequence}`,
+      const entry = {
+        id: identifier,
         internalId: issueId,
         title: item.title,
         status: statusNames.get(attributes.status),
         priority: PRIORITY_NAMES[attributes.priority]
-      });
+      };
+      try {
+        if (item.description) {
+          await this._writeCollaboratorField(issueId, tracker.class.Issue, item.description, item.descriptionFormat);
+        }
+        for (const labelName of item.labels ?? []) {
+          await this._addLabelToIssue(client, issueId, project._id, labelName);
+        }
+      } catch (error) {
+        entry.warning = `Created, but not completely: ${error.message}`;
+      }
+      created.push(entry);
     }
 
     return { project: project.identifier, created, errors, total: created.length };
