@@ -365,6 +365,19 @@ describe('issue relations', () => {
     }
   });
 
+  it('completes a relation that only one side recorded', async () => {
+    const updates = [];
+    const fixtures = relationFixtures();
+    fixtures['PROJ-1'].issue.relations = [{ _id: 'issue-b', _class: ISSUE_CLASS }];
+    const client = stubClient({ updateDoc: async (...args) => { updates.push(args); } });
+    client._parseAndFindIssue = issueLookup(fixtures);
+
+    await client.addRelation('PROJ-1', 'OTHER-9');
+
+    assert.deepEqual(updates.map(([, space, id, data]) => [space, id, data.relations.map(r => r._id)]),
+      [['space-b', 'issue-b', ['issue-a']]], 'only the missing side is written');
+  });
+
   it('writes both sides of a relation into their own project spaces', async () => {
     const updates = [];
     const client = stubClient({ updateDoc: async (...args) => { updates.push(args); } });

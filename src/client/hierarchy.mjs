@@ -18,28 +18,20 @@ export class HierarchyMethods {
     const client = await this._getClient();
 
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
-    const { issue: relatedIssue } = await this._parseAndFindIssue(client, relatedToIssueId);
+    const { project: relatedProject, issue: relatedIssue } = await this._parseAndFindIssue(client, relatedToIssueId);
     if (relatedIssue._id === issue._id) throw new Error(`${issueId} cannot be related to itself`);
 
-    const currentRelations = issue.relations || [];
-
-    const alreadyRelated = currentRelations.some(r => r._id === relatedIssue._id);
-    if (alreadyRelated) {
-      return { message: `Issues are already related` };
+    // The relation is stored on both issues; write whichever side is missing, which also repairs a half-written one.
+    const sides = [
+      { project, issue, other: relatedIssue },
+      { project: relatedProject, issue: relatedIssue, other: issue }
+    ].filter(side => !(side.issue.relations || []).some(r => r._id === side.other._id));
+    if (sides.length === 0) {
+      return { message: 'Issues are already related', issueId, relatedToIssueId };
     }
-
-    const newRelations = [...currentRelations, { _id: relatedIssue._id, _class: relatedIssue._class }];
-
-    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
-      relations: newRelations
-    });
-
-    // Write reverse relation on the target issue
-    const { project: relProject } = await this._parseAndFindIssue(client, relatedToIssueId);
-    const targetRelations = relatedIssue.relations || [];
-    if (!targetRelations.some(r => r._id === issue._id)) {
-      await client.updateDoc(tracker.class.Issue, relProject._id, relatedIssue._id, {
-        relations: [...targetRelations, { _id: issue._id, _class: issue._class }]
+    for (const side of sides) {
+      await client.updateDoc(tracker.class.Issue, side.project._id, side.issue._id, {
+        relations: [...(side.issue.relations || []), { _id: side.other._id, _class: side.other._class }]
       });
     }
 
