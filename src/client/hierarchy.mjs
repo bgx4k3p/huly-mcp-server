@@ -188,19 +188,47 @@ export class HierarchyMethods {
   }
 
   /**
-   * Remove a sub-issue from its current parent's child list, if the parent still exists.
+   * Rewrite the breadcrumbs of every issue below one that changed parent. Huly updates the moved issue's own
+   * `parents` but not its descendants'. Each descendant's breadcrumbs are its parent followed by the parent's
+   * breadcrumbs (nearest first, as Huly stores them). Descendants keep their collection, so writing `parents`
+   * on them does not interfere with Huly's own bookkeeping.
    * @param {Object} client - Huly SDK client
-   * @param {Object} issue - Sub-issue document
-   * @returns {Promise<void>}
+   * @param {string} rootId - Id of the issue that changed parent
    */
-  async _removeFromParent(client, issue) {
-    const oldParent = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
-    if (!oldParent) return;
-    const remaining = (oldParent.childInfo || []).filter(c => c.childId !== issue._id);
-    await client.updateDoc(tracker.class.Issue, oldParent.space, oldParent._id, {
-      childInfo: remaining,
-      subIssues: remaining.length
-    });
+  async _refreshDescendantBreadcrumbs(client, rootId) {
+    let level = [await client.findOne(tracker.class.Issue, { _id: rootId })].filter(Boolean);
+    while (level.length > 0) {
+      const byId = new Map(level.map(issue => [issue._id, issue]));
+      const children = await client.findAll(tracker.class.Issue, {
+        attachedTo: { $in: [...byId.keys()] },
+        attachedToClass: tracker.class.Issue
+      });
+      for (const child of children) {
+        const parent = byId.get(child.attachedTo);
+        child.parents = [
+          { parentId: parent._id, identifier: parent.identifier, parentTitle: parent.title, space: parent.space },
+          ...(parent.parents || [])
+        ];
+        await client.updateDoc(tracker.class.Issue, child.space, child._id, { parents: child.parents });
+      }
+      level = children;
+    }
+  }
+
+  /**
+   * Set a parent's sub-issue count from the child list the server maintains. Huly keeps `childInfo` in step when
+   * an issue changes collection but not the `subIssues` count, so the count is derived from the fresh list after
+   * the move rather than computed from a copy read before it.
+   * @param {Object} client - Huly SDK client
+   * @param {string} parentId - Parent issue id
+   * @returns {Promise<number|null>} The parent's child count, or null when the parent no longer exists
+   */
+  async _syncSubIssueCount(client, parentId) {
+    const parent = await client.findOne(tracker.class.Issue, { _id: parentId });
+    if (!parent) return null;
+    const count = (parent.childInfo || []).length;
+    await client.updateDoc(tracker.class.Issue, parent.space, parent._id, { subIssues: count });
+    return count;
   }
 
   /**
@@ -215,8 +243,7 @@ export class HierarchyMethods {
     if (issue.attachedToClass !== tracker.class.Issue || !issue.attachedTo) {
       return { message: `${issueId} has no parent`, issueId, parentId: null };
     }
-
-    await this._removeFromParent(client, issue);
+    const previousParentId = issue.attachedTo;
 
     await client.updateCollection(
       tracker.class.Issue,
@@ -225,13 +252,10 @@ export class HierarchyMethods {
       project._id,
       tracker.class.Project,
       'issues',
-      {
-        parents: [],
-        attachedTo: project._id,
-        attachedToClass: tracker.class.Project,
-        collection: 'issues'
-      }
+      { attachedTo: project._id, attachedToClass: tracker.class.Project, collection: 'issues' }
     );
+    await this._syncSubIssueCount(client, previousParentId);
+    await this._refreshDescendantBreadcrumbs(client, issue._id);
 
     return { message: `Removed parent from ${issueId}`, issueId, parentId: null };
   }
@@ -254,26 +278,18 @@ export class HierarchyMethods {
       return await this._detachParent(client, project, issue, issueId);
     }
 
-    const { project: parentProject, issue: parentIssue } = await this._parseAndFindIssue(client, parentIssueId);
+    const { issue: parentIssue } = await this._parseAndFindIssue(client, parentIssueId);
     if (parentIssue._id === issue._id) throw new Error(`${issueId} cannot be its own parent`);
     if (await this._isDescendant(client, parentIssue, issue._id)) {
       throw new Error(`${parentIssueId} is a descendant of ${issueId}; making it the parent would create a cycle`);
     }
 
-    // Clean up old parent if the child already has one
-    if (issue.attachedTo && issue.attachedToClass === tracker.class.Issue && issue.attachedTo !== parentIssue._id) {
-      await this._removeFromParent(client, issue);
-    }
+    const previousParentId = issue.attachedToClass === tracker.class.Issue && issue.attachedTo !== parentIssue._id
+      ? issue.attachedTo
+      : null;
 
-    // Build full ancestor chain for breadcrumbs
-    const parentInfo = {
-      parentId: parentIssue._id,
-      identifier: `${parentProject.identifier}-${parentIssue.number}`,
-      parentTitle: parentIssue.title,
-      space: parentProject._id
-    };
-    const ancestors = [...(parentIssue.parents || []), parentInfo];
-
+    // Huly maintains the child's `parents` breadcrumbs and the parents' `childInfo` when the issue changes
+    // collection. Writing either here would break that: Huly finds the previous parent through `parents`.
     await client.updateCollection(
       tracker.class.Issue,
       project._id,
@@ -281,40 +297,18 @@ export class HierarchyMethods {
       parentIssue._id,
       tracker.class.Issue,
       'subIssues',
-      {
-        parents: ancestors,
-        attachedTo: parentIssue._id,
-        attachedToClass: tracker.class.Issue,
-        collection: 'subIssues'
-      }
+      { attachedTo: parentIssue._id, attachedToClass: tracker.class.Issue, collection: 'subIssues' }
     );
 
-    const childInfo = {
-      childId: issue._id,
-      ...this._issueTimeFields(issue)
-    };
-
-    const currentChildInfo = parentIssue.childInfo || [];
-
-    const existingIndex = currentChildInfo.findIndex(c => c.childId === issue._id);
-    let updatedChildInfo;
-    if (existingIndex >= 0) {
-      updatedChildInfo = [...currentChildInfo];
-      updatedChildInfo[existingIndex] = childInfo;
-    } else {
-      updatedChildInfo = [...currentChildInfo, childInfo];
-    }
-
-    await client.updateDoc(tracker.class.Issue, parentProject._id, parentIssue._id, {
-      childInfo: updatedChildInfo,
-      subIssues: updatedChildInfo.length
-    });
+    const parentChildCount = await this._syncSubIssueCount(client, parentIssue._id);
+    if (previousParentId) await this._syncSubIssueCount(client, previousParentId);
+    await this._refreshDescendantBreadcrumbs(client, issue._id);
 
     return {
       message: `Set parent: ${issueId} is now a child of ${parentIssueId}`,
       issueId,
       parentIssueId,
-      parentChildCount: updatedChildInfo.length
+      parentChildCount
     };
   }
 }

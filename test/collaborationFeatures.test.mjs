@@ -546,95 +546,121 @@ describe('link guards', () => {
 });
 
 describe('parent linking', () => {
+  // A fake that, like the Huly server, maintains each parent's childInfo when an issue changes collection.
   function parentHarness({ child = {}, parentChildInfo = [], oldParent = null } = {}) {
     const calls = { collections: [], updates: [] };
     const parentIssue = {
-      _id: 'parent-id', _class: ISSUE_CLASS, number: 7, title: 'Epic',
+      _id: 'parent-id', _class: ISSUE_CLASS, space: 'space-b', number: 7, title: 'Epic',
       parents: [{ parentId: 'gp-id', identifier: 'OTHER-3', parentTitle: 'Root', space: 'space-b' }],
       childInfo: parentChildInfo
     };
+    const childIssue = {
+      _id: 'child-id', _class: ISSUE_CLASS, space: 'space-a', number: 2, estimation: '3', reportedTime: 1.5, ...child
+    };
+    const issues = new Map([[parentIssue._id, parentIssue], [childIssue._id, childIssue]]);
+    if (oldParent) issues.set(oldParent._id, oldParent);
     const client = stubClient({
-      findOne: async (classRef, query) => {
-        if (classRef === PROJECT_CLASS) {
-          return query._id === 'space-c' ? { _id: 'space-c', identifier: 'OLD' } : null;
-        }
-        return query._id === 'old-parent-id' ? oldParent : null;
+      findOne: async (_classRef, query) => issues.get(query._id) ?? null,
+      findAll: async (_classRef, query) => [...issues.values()].filter(doc =>
+        (query.attachedTo?.$in ?? []).includes(doc.attachedTo) && doc.attachedToClass === query.attachedToClass),
+      updateCollection: async (...args) => {
+        calls.collections.push(args);
+        const [, , id, attachedTo, attachedToClass, , data] = args;
+        const moving = issues.get(id);
+        const previous = issues.get(moving.attachedTo);
+        if (previous) previous.childInfo = (previous.childInfo || []).filter(info => info.childId !== id);
+        const next = attachedToClass === ISSUE_CLASS ? issues.get(attachedTo) : null;
+        if (next) next.childInfo = [...(next.childInfo || []).filter(info => info.childId !== id), { childId: id }];
+        Object.assign(moving, data);
       },
-      updateCollection: async (...args) => { calls.collections.push(args); },
       updateDoc: async (...args) => { calls.updates.push(args); }
     });
     client._parseAndFindIssue = issueLookup({
-      'PROJ-2': {
-        project: { _id: 'space-a', identifier: 'PROJ' },
-        issue: {
-          _id: 'child-id', _class: ISSUE_CLASS, number: 2,
-          estimation: '3', reportedTime: 1.5, ...child
-        }
-      },
+      'PROJ-2': { project: { _id: 'space-a', identifier: 'PROJ' }, issue: childIssue },
       'OTHER-7': { project: { _id: 'space-b', identifier: 'OTHER' }, issue: parentIssue }
     });
     return { client, calls };
   }
 
-  it('attaches the child to subIssues and rebuilds the ancestor chain', async () => {
+  it('attaches the child to subIssues and leaves the breadcrumbs to Huly', async () => {
     const { client, calls } = parentHarness();
     const result = await client.setParent('PROJ-2', 'OTHER-7');
 
+    // Only the collection move: Huly derives the parents breadcrumbs, and finds the old parent through them.
     assert.deepEqual(calls.collections[0], [
       ISSUE_CLASS, 'space-a', 'child-id', 'parent-id', ISSUE_CLASS, 'subIssues',
-      {
-        parents: [
-          { parentId: 'gp-id', identifier: 'OTHER-3', parentTitle: 'Root', space: 'space-b' },
-          { parentId: 'parent-id', identifier: 'OTHER-7', parentTitle: 'Epic', space: 'space-b' }
-        ],
-        attachedTo: 'parent-id',
-        attachedToClass: ISSUE_CLASS,
-        collection: 'subIssues'
-      }
+      { attachedTo: 'parent-id', attachedToClass: ISSUE_CLASS, collection: 'subIssues' }
     ]);
-    // childInfo is written on the parent, in the parent's own space.
-    assert.deepEqual(calls.updates[0], [ISSUE_CLASS, 'space-b', 'parent-id', {
-      childInfo: [{ childId: 'child-id', estimation: 3, reportedTime: 1.5 }],
-      subIssues: 1
-    }]);
+    // Huly maintains childInfo itself; writing it here would race with that and lose concurrent changes.
+    assert.deepEqual(calls.updates, [[ISSUE_CLASS, 'space-b', 'parent-id', { subIssues: 1 }]]);
     assert.equal(result.parentChildCount, 1);
   });
 
-  it('replaces a stale child entry instead of duplicating it', async () => {
-    const { client, calls } = parentHarness({
-      parentChildInfo: [
-        { childId: 'sibling-id', estimation: 1, reportedTime: 0 },
-        { childId: 'child-id', estimation: 0, reportedTime: 0 }
-      ]
-    });
+  it('counts every child in the server\'s list, including existing siblings', async () => {
+    const { client, calls } = parentHarness({ parentChildInfo: [{ childId: 'sibling-id' }] });
 
-    await client.setParent('PROJ-2', 'OTHER-7');
-    assert.deepEqual(calls.updates[0][3], {
-      childInfo: [
-        { childId: 'sibling-id', estimation: 1, reportedTime: 0 },
-        { childId: 'child-id', estimation: 3, reportedTime: 1.5 }
-      ],
-      subIssues: 2
-    });
+    const result = await client.setParent('PROJ-2', 'OTHER-7');
+
+    assert.deepEqual(calls.updates[0][3], { subIssues: 2 });
+    assert.equal(result.parentChildCount, 2);
   });
 
-  it('detaches the child from its previous parent in that parent own space', async () => {
+  it('updates the previous parent\'s count from the server\'s list after the move', async () => {
     const { client, calls } = parentHarness({
       child: { attachedTo: 'old-parent-id', attachedToClass: ISSUE_CLASS },
       oldParent: {
-        _id: 'old-parent-id',
-        space: 'space-c',
+        _id: 'old-parent-id', _class: ISSUE_CLASS, space: 'space-c',
         childInfo: [{ childId: 'child-id' }, { childId: 'other-child' }]
       }
     });
 
     await client.setParent('PROJ-2', 'OTHER-7');
 
-    assert.deepEqual(calls.updates[0], [ISSUE_CLASS, 'space-c', 'old-parent-id', {
-      childInfo: [{ childId: 'other-child' }],
-      subIssues: 1
-    }]);
-    assert.equal(calls.updates[1][2], 'parent-id', 'the new parent is still linked');
+    const byParent = new Map(calls.updates.map(([, space, id, data]) => [id, [space, data]]));
+    assert.deepEqual(byParent.get('old-parent-id'), ['space-c', { subIssues: 1 }]);
+    assert.deepEqual(byParent.get('parent-id'), ['space-b', { subIssues: 1 }]);
+    assert.ok(calls.updates.every(([, , , data]) => !('childInfo' in data)), 'childInfo is never written');
+  });
+});
+
+describe('descendant breadcrumbs', () => {
+  it('refreshes the breadcrumbs of every issue below one that moves to a new parent', async () => {
+    // G <- P <- K <- L : P moves under G; Huly updates P's own breadcrumbs but not K's or L's.
+    const docs = new Map([
+      ['g', { _id: 'g', _class: ISSUE_CLASS, space: 's', identifier: 'P-1', title: 'G', attachedTo: 's', attachedToClass: PROJECT_CLASS, parents: [] }],
+      ['p', { _id: 'p', _class: ISSUE_CLASS, space: 's', identifier: 'P-2', title: 'P', attachedTo: 's', attachedToClass: PROJECT_CLASS, parents: [] }],
+      ['k', { _id: 'k', _class: ISSUE_CLASS, space: 's', identifier: 'P-3', title: 'K', attachedTo: 'p', attachedToClass: ISSUE_CLASS,
+        parents: [{ parentId: 'p', identifier: 'P-2', parentTitle: 'P', space: 's' }] }],
+      ['l', { _id: 'l', _class: ISSUE_CLASS, space: 's', identifier: 'P-4', title: 'L', attachedTo: 'k', attachedToClass: ISSUE_CLASS,
+        parents: [{ parentId: 'k', identifier: 'P-3', parentTitle: 'K', space: 's' },
+          { parentId: 'p', identifier: 'P-2', parentTitle: 'P', space: 's' }] }]
+    ]);
+    const crumb = doc => ({ parentId: doc._id, identifier: doc.identifier, parentTitle: doc.title, space: doc.space });
+    const breadcrumbWrites = new Map();
+    const client = stubClient({
+      findOne: async (_class, query) => docs.get(query._id) ?? null,
+      findAll: async (_class, query) => [...docs.values()].filter(doc =>
+        (query.attachedTo?.$in ?? [query.attachedTo]).includes(doc.attachedTo) && doc.attachedToClass === query.attachedToClass),
+      updateCollection: async (_class, _space, id, attachedTo) => {
+        // Like Huly: the moved issue's own breadcrumbs follow its new parent.
+        const parent = docs.get(attachedTo);
+        Object.assign(docs.get(id), { attachedTo, attachedToClass: ISSUE_CLASS, parents: [crumb(parent), ...parent.parents] });
+      },
+      updateDoc: async (_class, _space, id, data) => {
+        if (data.parents) breadcrumbWrites.set(id, data.parents.map(entry => entry.identifier));
+        Object.assign(docs.get(id), data);
+      }
+    });
+    client._parseAndFindIssue = issueLookup({
+      'P-2': { project: { _id: 's', identifier: 'P' }, issue: docs.get('p') },
+      'P-1': { project: { _id: 's', identifier: 'P' }, issue: docs.get('g') }
+    });
+
+    await client.setParent('P-2', 'P-1');
+
+    assert.deepEqual(breadcrumbWrites.get('k'), ['P-2', 'P-1']);
+    assert.deepEqual(breadcrumbWrites.get('l'), ['P-3', 'P-2', 'P-1']);
+    assert.equal(breadcrumbWrites.has('p'), false, 'the moved issue\'s own breadcrumbs are Huly\'s to write');
   });
 });
 

@@ -74,6 +74,20 @@ function harness(seed = {}) {
       calls.push({
         method: 'updateCollection', classRef, space, id, attachedTo, attachedToClass, collection, data
       });
+      if (classRef !== ISSUE_CLASS) return;
+      // Like the Huly server, keep each parent's childInfo in step with the move.
+      const issues = docsOf(ISSUE_CLASS);
+      const child = issues.find(doc => doc._id === id);
+      const previous = child && issues.find(doc => doc._id === child.attachedTo);
+      if (previous) previous.childInfo = (previous.childInfo || []).filter(info => info.childId !== id);
+      const next = attachedToClass === ISSUE_CLASS && issues.find(doc => doc._id === attachedTo);
+      if (next) {
+        next.childInfo = [
+          ...(next.childInfo || []).filter(info => info.childId !== id),
+          { childId: id, estimation: child?.estimation ?? 0, reportedTime: child?.reportedTime ?? 0 }
+        ];
+      }
+      if (child) Object.assign(child, data);
     },
     addCollection: async (classRef, space, attachedTo, attachedToClass, collection, data) => {
       calls.push({ method: 'addCollection', classRef, space, attachedTo, attachedToClass, collection, data });
@@ -770,10 +784,8 @@ describe('_detachParent', () => {
       classRef: ISSUE_CLASS,
       space: 'other-space',
       id: 'old-parent-id',
-      data: {
-        childInfo: [{ childId: 'sibling-id', estimation: 0, reportedTime: 0 }],
-        subIssues: 1
-      }
+      // The server already removed the child from childInfo; only the count it does not maintain is written.
+      data: { subIssues: 1 }
     }]);
     assert.deepEqual(select('updateCollection'), [{
       method: 'updateCollection',
@@ -783,12 +795,7 @@ describe('_detachParent', () => {
       attachedTo: 'proj-space',
       attachedToClass: PROJECT_CLASS,
       collection: 'issues',
-      data: {
-        parents: [],
-        attachedTo: 'proj-space',
-        attachedToClass: PROJECT_CLASS,
-        collection: 'issues'
-      }
+      data: { attachedTo: 'proj-space', attachedToClass: PROJECT_CLASS, collection: 'issues' }
     }]);
     assert.deepEqual(result, {
       message: 'Removed parent from PROJ-2', issueId: 'PROJ-2', parentId: null
