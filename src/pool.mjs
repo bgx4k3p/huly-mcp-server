@@ -2,15 +2,15 @@
  * ConnectionPool - Caches HulyClient instances by workspace slug.
  *
  * Supports multiple simultaneous workspace connections, all using the credentials from
- * config.mjs. The default workspace is the HULY_WORKSPACE value captured when config.mjs
- * loaded (not the live env). Connections idle longer than POOL_TTL_MS (HULY_POOL_TTL_MS)
- * are evicted on next use or by a periodic sweep.
+ * config.mjs. The default workspace is resolved the same way tool calls resolve it
+ * (resolveDefaultWorkspace). Connections idle longer than POOL_TTL_MS (HULY_POOL_TTL_MS), or
+ * older than POOL_MAX_AGE_MS (HULY_POOL_MAX_AGE_MS), are replaced on next use or by a periodic sweep.
  */
 
 import { HulyClient } from './client.mjs';
 import {
-  HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, HULY_WORKSPACE,
-  POOL_TTL_MS, POOL_CLEANUP_INTERVAL_MS
+  HULY_URL, HULY_TOKEN, HULY_EMAIL, HULY_PASSWORD, resolveDefaultWorkspace,
+  POOL_TTL_MS, POOL_MAX_AGE_MS, POOL_CLEANUP_INTERVAL_MS
 } from './config.mjs';
 
 export class ConnectionPool {
@@ -36,7 +36,7 @@ export class ConnectionPool {
    *   workspace is cleared while the connection is being established
    */
   async getClient(workspace) {
-    const ws = workspace || HULY_WORKSPACE;
+    const ws = workspace || resolveDefaultWorkspace();
 
     if (!ws) {
       throw new Error('No workspace specified and HULY_WORKSPACE env var is not set');
@@ -80,7 +80,7 @@ export class ConnectionPool {
           `Connection for workspace "${ws}" was closed while it was being established; retry the request.`
         );
       }
-      this._entries.set(ws, { client, lastUsed: Date.now(), connecting: null });
+      this._entries.set(ws, { client, lastUsed: Date.now(), connectedAt: Date.now(), connecting: null });
       return client;
     })();
 
@@ -101,7 +101,7 @@ export class ConnectionPool {
    * @param {string} [workspace] - Workspace slug (optional, uses default if omitted)
    */
   clearClient(workspace) {
-    const ws = workspace || HULY_WORKSPACE;
+    const ws = workspace || resolveDefaultWorkspace();
     if (!ws) return;
 
     const entry = this._entries.get(ws);
@@ -124,13 +124,15 @@ export class ConnectionPool {
   }
 
   /**
-   * Whether a connected entry has gone unused for longer than the TTL.
+   * Whether a connected entry should be replaced: unused for longer than the TTL, or older than the maximum
+   * age however busy it is, so a long-running server picks up a Huly upgrade.
    * @param {Object} entry - Pool entry
    * @param {number} now - Current time in ms
    * @returns {boolean}
    */
   _isStale(entry, now) {
-    return Boolean(entry.client) && now - entry.lastUsed > POOL_TTL_MS;
+    return Boolean(entry.client) &&
+      (now - entry.lastUsed > POOL_TTL_MS || now - entry.connectedAt > POOL_MAX_AGE_MS);
   }
 
   /**

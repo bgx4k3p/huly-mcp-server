@@ -16,7 +16,7 @@ export const SUPPORTED_RESPONSE_MODES = Object.freeze([...RESPONSE_MODES]);
  * @returns {string|undefined} 'compact' or 'raw', or undefined for null, undefined or ''
  * @throws {Error} When the value is another mode
  */
-function parseMode(value, source) {
+export function parseMode(value, source) {
   if (value === undefined || value === null || value === '') return undefined;
   const normalized = String(value).trim().toLowerCase();
   if (!RESPONSE_MODES.has(normalized)) {

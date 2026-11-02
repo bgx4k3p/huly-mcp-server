@@ -1,6 +1,6 @@
 /**
- * Shared configuration: connection, pool and HTTP-server settings read from the
- * environment once, at module load, with their defaults.
+ * Shared configuration: connection and pool settings read from the environment once, at module load, with
+ * their defaults. HTTP-server settings are validated separately by http/config.mjs.
  *
  * Not every setting lives here. Other modules read process.env directly at call
  * time, including HULY_TRANSPORT (client/connection.mjs), HULY_TOOL_PROFILE
@@ -22,7 +22,6 @@ export const HULY_PROJECT = process.env.HULY_PROJECT;
  * Resolve the default workspace from the live HULY_WORKSPACE env var, falling back to the
  * value captured at module load. Tool dispatch and get_huly_context both call this, so the
  * workspace reported is the one actually used even if a host changes the env after load.
- * ConnectionPool does not: it uses the load-time HULY_WORKSPACE constant.
  * @returns {string|null} Workspace slug, or null when none is configured
  */
 export function resolveDefaultWorkspace() {
@@ -38,12 +37,10 @@ const parsedPoolTtl = parseInt(process.env.HULY_POOL_TTL_MS || String(DEFAULT_PO
 export const POOL_TTL_MS = Number.isFinite(parsedPoolTtl) && parsedPoolTtl > 0
   ? parsedPoolTtl
   : DEFAULT_POOL_TTL_MS;
+const DEFAULT_POOL_MAX_AGE_MS = 86400000;
+const parsedPoolMaxAge = parseInt(process.env.HULY_POOL_MAX_AGE_MS || String(DEFAULT_POOL_MAX_AGE_MS), 10);
+/** Longest a pooled connection is reused, however busy, so a server picks up a Huly upgrade. */
+export const POOL_MAX_AGE_MS = Number.isFinite(parsedPoolMaxAge) && parsedPoolMaxAge > 0
+  ? parsedPoolMaxAge
+  : DEFAULT_POOL_MAX_AGE_MS;
 export const POOL_CLEANUP_INTERVAL_MS = 300000; // 5 min
-
-// ── HTTP Server ──────────────────────────────────────────────
-export const PORT = parseInt(process.env.PORT || '3001', 10);
-export const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || null;
-export const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || '*';
-export const RATE_LIMIT = parseInt(process.env.HULY_RATE_LIMIT || '200', 10);
-export const RATE_WINDOW_MS = 60000;
-export const MAX_BODY_SIZE = 1048576; // 1MB

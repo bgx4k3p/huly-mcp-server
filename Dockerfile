@@ -11,6 +11,9 @@ RUN apk upgrade --no-cache zlib \
 
 COPY src/ src/
 
+# A container is reached from outside its own loopback, so it listens on all interfaces; the server then
+# refuses to start without MCP_AUTH_TOKENS or MCP_AUTH_TOKEN.
+ENV HOST=0.0.0.0
 ENV PORT=3001
 EXPOSE ${PORT}
 

@@ -1,48 +1,89 @@
 /**
- * Streamable HTTP sessions: one MCP server and transport per connected client.
+ * Streamable HTTP sessions: one MCP server and transport per connected client, owned by the access token that
+ * opened it, expired after a period of inactivity and capped in number.
  */
 import crypto from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from '../mcp/server.mjs';
 
-/** @type {Map<string, { server: Object, transport: StreamableHTTPServerTransport }>} */
-export const sessions = new Map();
-
 /**
- * Return the live session for a session ID, or a new MCP server and transport for a client that has none.
- * A new session is not stored here: its ID exists only after the transport handles the first request,
- * so the caller registers it then.
- * @param {string|undefined} sessionId - Mcp-Session-Id header value
- * @param {string|undefined} responseMode - Huly-Response-Mode header value for a new session
- * @returns {{server: Object, transport: StreamableHTTPServerTransport}}
+ * Create a session store.
+ * @param {Object} options
+ * @param {number} options.idleMs - Inactivity after which a session is closed
+ * @param {number} options.maxSessions - Largest number of open sessions
+ * @returns {Object} Store with open, get, close, closeAll, size and stop
  */
-export function getOrCreateSession(sessionId, responseMode) {
-  if (sessionId && sessions.has(sessionId)) {
-    return sessions.get(sessionId);
-  }
+export function createSessionStore({ idleMs, maxSessions }) {
+  const sessions = new Map();
 
-  const { server } = createMcpServer({ responseMode });
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-  });
-
-  transport.onclose = () => {
-    const sid = transport.sessionId;
-    if (sid) sessions.delete(sid);
+  const close = async sessionId => {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+    sessions.delete(sessionId);
+    await session.transport.close().catch(() => {});
+    await session.server.close().catch(() => {});
+    return true;
   };
 
-  server.connect(transport);
+  const sweep = setInterval(() => {
+    const cutoff = Date.now() - idleMs;
+    for (const [sessionId, session] of sessions) {
+      if (session.lastSeen < cutoff) void close(sessionId);
+    }
+  }, Math.min(idleMs, 60000));
+  sweep.unref();
 
-  return { server, transport };
-}
+  return {
+    /**
+     * Open a new, uninitialized session for an access token. It is registered once the transport assigns its
+     * id during the initialize request.
+     * @param {string} tokenName - Access token that opens the session
+     * @param {string|undefined} responseMode - Huly-Response-Mode for the session
+     * @returns {Promise<{server: Object, transport: StreamableHTTPServerTransport, tokenName: string}>}
+     * @throws {Error} When the session limit is reached
+     */
+    async open(tokenName, responseMode) {
+      if (sessions.size >= maxSessions) throw new Error('Too many open sessions');
+      const { server } = createMcpServer({ responseMode });
+      const session = { server, tokenName, lastSeen: Date.now() };
+      session.transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        onsessioninitialized: sessionId => { sessions.set(sessionId, session); },
+        onsessionclosed: sessionId => { sessions.delete(sessionId); }
+      });
+      session.transport.onclose = () => {
+        if (session.transport.sessionId) sessions.delete(session.transport.sessionId);
+      };
+      await server.connect(session.transport);
+      return session;
+    },
 
-/**
- * Close every session's transport and server and forget them all.
- */
-export function closeAllSessions() {
-  for (const session of sessions.values()) {
-    session.transport.close().catch(() => {});
-    session.server.close().catch(() => {});
-  }
-  sessions.clear();
+    /**
+     * Look up a live session and mark it active.
+     * @param {string} sessionId - Mcp-Session-Id header value
+     * @returns {Object|undefined}
+     */
+    get(sessionId) {
+      const session = sessions.get(sessionId);
+      if (session) session.lastSeen = Date.now();
+      return session;
+    },
+
+    close,
+
+    /** Close every session. */
+    async closeAll() {
+      await Promise.all([...sessions.keys()].map(close));
+    },
+
+    /** @returns {number} Number of open sessions */
+    get size() {
+      return sessions.size;
+    },
+
+    /** Stop the idle sweep. */
+    stop() {
+      clearInterval(sweep);
+    }
+  };
 }
