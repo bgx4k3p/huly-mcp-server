@@ -120,7 +120,18 @@ function createHarness(data = {}) {
   };
 
   const calls = [];
+  const issueCollections = new Map([
+    ['subIssues', { name: 'subIssues', type: { _class: 'core:class:Collection', of: tracker.class.Issue } }],
+    ['comments', { name: 'comments', type: { _class: 'core:class:Collection', of: chunter.class.ChatMessage } }],
+    ['reports', { name: 'reports', type: { _class: 'core:class:Collection', of: tracker.class.TimeSpendReport } }],
+    ['labels', { name: 'labels', type: { _class: 'core:class:Collection', of: tags.class.TagReference } }]
+  ]);
+  const hierarchy = {
+    getAllAttributes: classRef => (classRef === tracker.class.Issue ? issueCollections : new Map()),
+    isDerived: (classRef, base) => classRef === base
+  };
   const sdk = {
+    getHierarchy: () => hierarchy,
     findOne: async (classRef, query, options) => {
       calls.push({ method: 'findOne', classRef, query, options });
       const found = collectionFor(classRef).filter(record => matches(record, query));
@@ -509,6 +520,89 @@ describe('moveIssue and deleteIssue', () => {
     await assert.rejects(() => harness.client.moveIssue('PROJ-1', 'dest'), /No task types configured/);
     assert.equal(harness.select('updateDoc').length, 0);
     assert.equal(harness.state.projects[1].sequence, 20);
+  });
+
+  it('moves the whole sub-issue tree with new numbers and updated breadcrumbs', async () => {
+    const harness = moveHarness();
+    harness.state.issues.push(
+      baseIssue({
+        _id: 'issue-2', number: 2, identifier: 'PROJ-2', attachedTo: 'issue-1', attachedToClass: tracker.class.Issue,
+        collection: 'subIssues', parents: [{ parentId: 'issue-1', identifier: 'PROJ-1', space: 'project-id' }]
+      }),
+      baseIssue({
+        _id: 'issue-3', number: 3, identifier: 'PROJ-3', attachedTo: 'issue-2', attachedToClass: tracker.class.Issue,
+        collection: 'subIssues', parents: [
+          { parentId: 'issue-1', identifier: 'PROJ-1', space: 'project-id' },
+          { parentId: 'issue-2', identifier: 'PROJ-2', space: 'project-id' }
+        ]
+      })
+    );
+
+    const result = await harness.client.moveIssue('PROJ-1', 'dest');
+
+    assert.deepEqual(harness.select('updateDoc', tracker.class.Project).map(call => call.data), [{ $inc: { sequence: 3 } }]);
+    const writes = new Map(harness.select('updateDoc', tracker.class.Issue).map(call => [call.id, call.data]));
+    assert.deepEqual([...writes.keys()].sort(), ['issue-1', 'issue-2', 'issue-3']);
+    assert.deepEqual(['issue-1', 'issue-2', 'issue-3'].map(id => writes.get(id).identifier), ['DEST-21', 'DEST-22', 'DEST-23']);
+    for (const data of writes.values()) assert.equal(data.space, 'dest-id');
+    assert.equal(writes.get('issue-1').attachedTo, 'dest-id', 'the moved root joins the destination project');
+    assert.equal(writes.get('issue-2').attachedTo, undefined, 'children stay under their moved parent');
+    assert.deepEqual(writes.get('issue-3').parents, [
+      { parentId: 'issue-1', identifier: 'DEST-21', space: 'dest-id' },
+      { parentId: 'issue-2', identifier: 'DEST-22', space: 'dest-id' }
+    ]);
+    assert.deepEqual(result.moved, [
+      { oldId: 'PROJ-1', newId: 'DEST-21' },
+      { oldId: 'PROJ-2', newId: 'DEST-22' },
+      { oldId: 'PROJ-3', newId: 'DEST-23' }
+    ]);
+  });
+
+  it('moves comments, time reports and labels into the destination space', async () => {
+    const harness = moveHarness();
+    harness.state.comments.push({ _id: 'c-1', space: 'project-id', attachedTo: 'issue-1' });
+    harness.state.timeReports.push({ _id: 'r-1', space: 'project-id', attachedTo: 'issue-1' });
+    harness.state.tagReferences.push({ _id: 'l-1', space: 'project-id', attachedTo: 'issue-1' });
+
+    await harness.client.moveIssue('PROJ-1', 'dest');
+
+    for (const [classRef, id] of [
+      [chunter.class.ChatMessage, 'c-1'], [tracker.class.TimeSpendReport, 'r-1'], [tags.class.TagReference, 'l-1']
+    ]) {
+      assert.deepEqual(harness.select('updateDoc', classRef).map(call => [call.space, call.id, call.data]),
+        [['project-id', id, { space: 'dest-id' }]], `${classRef} must follow the issue`);
+    }
+  });
+
+  it('maps component and milestone to same-named ones in the destination, else clears them', async () => {
+    const harness = moveHarness({ component: 'comp-src', milestone: 'ms-src' });
+    harness.state.components.push(
+      { _id: 'comp-src', space: 'project-id', label: 'API' },
+      { _id: 'comp-dest', space: 'dest-id', label: 'api' }
+    );
+    harness.state.milestones.push({ _id: 'ms-src', space: 'project-id', label: 'v1' });
+
+    const result = await harness.client.moveIssue('PROJ-1', 'dest');
+
+    const [update] = harness.select('updateDoc', tracker.class.Issue);
+    assert.equal(update.data.component, 'comp-dest');
+    assert.equal(update.data.milestone, null);
+    assert.deepEqual(result.changes, [
+      { id: 'DEST-21', field: 'component', from: 'API', to: 'api' },
+      { id: 'DEST-21', field: 'milestone', from: 'v1', to: null }
+    ]);
+  });
+
+  it('gives the issue a task type the destination offers, with a status from that workflow', async () => {
+    const harness = moveHarness();
+    harness.state.projectTypes.push({ _id: 'bugs-only', tasks: ['bug-type'] });
+    harness.state.projects[1].type = 'bugs-only';
+
+    await harness.client.moveIssue('PROJ-1', 'dest');
+
+    const [update] = harness.select('updateDoc', tracker.class.Issue);
+    assert.equal(update.data.kind, 'bug-type');
+    assert.equal(update.data.status, 'status-triage');
   });
 
   it('keeps a status the destination workflow actually contains', async () => {

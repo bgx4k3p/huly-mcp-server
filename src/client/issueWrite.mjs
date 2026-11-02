@@ -13,7 +13,7 @@ import {
   toMarkup
 } from '../helpers.mjs';
 import { issueRank } from '../issueRank.mjs';
-import { contactPlugin, generateId, task, tracker } from './sdk.mjs';
+import { contactPlugin, core, generateId, task, tracker } from './sdk.mjs';
 
 export class IssueWriteMethods {
   /**
@@ -432,61 +432,172 @@ export class IssueWriteMethods {
   }
 
   /**
-   * Move an issue to a different project, giving it a new number there. The status is kept when the target
-   * workflow has one with the same name, otherwise the target project's default status is used.
+   * Move an issue, with its whole sub-issue tree, to another project, as the Huly UI does. Every moved issue gets
+   * a new number in the target project and a task type and status valid there; its component and milestone are
+   * mapped to the target's same-named ones (case-insensitive) or cleared. Comments, time reports, labels and other
+   * attached documents move with each issue. Nothing is written, and no number is used, until all of it resolves.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} targetProject - Target project identifier
-   * @returns {Promise<Object>}
+   * @returns {Promise<Object>} message, oldId, newId, sourceProject, targetProject, `moved` (old → new id for each
+   *   moved issue) and `changes` (component/milestone mapped or cleared); only a message when already there
+   * @throws {Error} When the issue or target project is not found, or the target has no usable task type
    */
   async moveIssue(issueId, targetProject) {
     const client = await this._getClient();
 
     const { project: sourceProject, issue } = await this._parseAndFindIssue(client, issueId);
-
     const destProject = await this._findProject(client, targetProject);
 
     if (sourceProject._id === destProject._id) {
       return { message: `Issue ${issueId} is already in project ${targetProject}` };
     }
 
-    // Remap the status when the destination workflow lacks the current one
-    const destTaskTypeId = issue.kind ?? await this._getDefaultTaskType(client, destProject);
-    const destStatuses = await this._getScopedStatuses(client, destTaskTypeId);
-    const currentStatusName = (await client.findOne(tracker.class.IssueStatus, { _id: issue.status }))?.name;
-    let destStatusId;
-    if (currentStatusName) {
-      const destStatus = destStatuses.find(s => nameMatch(s.name, currentStatusName));
-      // Fall back to target project's default status
-      destStatusId = (destStatus ?? this._defaultStatus(destProject, destStatuses))?._id;
-    }
+    const tree = await this._issueTree(client, issue);
+    const oldIdentifiers = tree.map(node => node.identifier);
+    const plans = await this._planMove(client, tree, destProject);
     const lastDestRank = await this._lastIssueRank(client, destProject._id);
 
-    // Everything is resolved; only now spend a number in the target project.
-    const nextNumber = await this._reserveIssueNumbers(client, destProject, 1);
-    const issueUpdates = {
-      space: destProject._id,
-      number: nextNumber,
-      identifier: `${destProject.identifier}-${nextNumber}`,
-      rank: issueRank(lastDestRank, nextNumber)
-    };
+    // Everything is resolved; only now spend numbers in the target project, one per moved issue.
+    const firstNumber = await this._reserveIssueNumbers(client, destProject, tree.length);
+    const newIdentifiers = new Map(tree.map((node, index) => [node._id, `${destProject.identifier}-${firstNumber + index}`]));
+    const changes = [];
 
-    // Fix attachedTo for top-level issues (attached to source project)
-    if (issue.attachedTo === sourceProject._id || issue.attachedToClass === tracker.class.Project) {
-      issueUpdates.attachedTo = destProject._id;
+    for (const [index, node] of tree.entries()) {
+      const number = firstNumber + index;
+      const identifier = newIdentifiers.get(node._id);
+      const updates = {
+        space: destProject._id,
+        number,
+        identifier,
+        rank: issueRank(lastDestRank, number),
+        ...plans[index].updates
+      };
+      if (node === issue) {
+        // The moved root joins the destination project; a root that is itself a sub-issue keeps its parent.
+        if (node.attachedTo === sourceProject._id || node.attachedToClass === tracker.class.Project) {
+          updates.attachedTo = destProject._id;
+        }
+      } else {
+        updates.parents = (node.parents || []).map(parent => (newIdentifiers.has(parent.parentId)
+          ? { ...parent, identifier: newIdentifiers.get(parent.parentId), space: destProject._id }
+          : parent));
+      }
+      await client.updateDoc(tracker.class.Issue, node.space, node._id, updates);
+      await this._moveAttachedDocs(client, node, destProject._id);
+      changes.push(...plans[index].changes.map(change => ({ id: identifier, ...change })));
     }
-    if (destStatusId !== undefined) issueUpdates.status = destStatusId;
 
-    await client.updateDoc(tracker.class.Issue, sourceProject._id, issue._id, issueUpdates);
-
-    const newId = `${destProject.identifier}-${nextNumber}`;
-
+    const newId = newIdentifiers.get(issue._id);
     return {
       message: `Moved ${issueId} to ${newId}`,
       oldId: issueId,
       newId,
       sourceProject: sourceProject.identifier,
-      targetProject: destProject.identifier
+      targetProject: destProject.identifier,
+      moved: tree.map((node, index) => ({ oldId: oldIdentifiers[index], newId: newIdentifiers.get(node._id) })),
+      changes
     };
+  }
+
+  /**
+   * An issue followed by all of its descendants, parents before children.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} issue - Root issue document
+   * @returns {Promise<Object[]>} Issue documents
+   */
+  async _issueTree(client, issue) {
+    const tree = [issue];
+    let level = [issue._id];
+    while (level.length > 0) {
+      const children = await client.findAll(tracker.class.Issue, {
+        attachedTo: { $in: level },
+        attachedToClass: tracker.class.Issue
+      });
+      tree.push(...children);
+      level = children.map(child => child._id);
+    }
+    return tree;
+  }
+
+  /**
+   * Resolve each moved issue's attributes in the target project: a task type it offers (same type, else the
+   * same-named one, else its default), a status from that workflow (same name, else the default), and the
+   * component and milestone mapped by name or cleared.
+   * @param {Object} client - Huly SDK client
+   * @param {Object[]} tree - Issues being moved
+   * @param {Object} destProject - Target project
+   * @returns {Promise<Array<{updates: Object, changes: Object[]}>>} One plan per issue, in tree order
+   */
+  async _planMove(client, tree, destProject) {
+    const componentIds = [...new Set(tree.map(node => node.component).filter(Boolean))];
+    const milestoneIds = [...new Set(tree.map(node => node.milestone).filter(Boolean))];
+    const [destType, allTaskTypes, { statusMap }, sourceComponents, sourceMilestones, destComponents, destMilestones] =
+      await Promise.all([
+        this._projectType(client, destProject),
+        client.findAll(task.class.TaskType, {}),
+        this._buildStatusMaps(client),
+        componentIds.length ? client.findAll(tracker.class.Component, { _id: { $in: componentIds } }) : [],
+        milestoneIds.length ? client.findAll(tracker.class.Milestone, { _id: { $in: milestoneIds } }) : [],
+        componentIds.length ? client.findAll(tracker.class.Component, { space: destProject._id }) : [],
+        milestoneIds.length ? client.findAll(tracker.class.Milestone, { space: destProject._id }) : []
+      ]);
+    const destTaskTypes = allTaskTypes.filter(tt => destType?.tasks?.includes(tt._id));
+    const taskTypeById = new Map(allTaskTypes.map(tt => [tt._id, tt]));
+    const labelOf = new Map([...sourceComponents, ...sourceMilestones].map(doc => [doc._id, doc.label]));
+    const statusesByType = new Map();
+    let destDefaultType;
+
+    const plans = [];
+    for (const node of tree) {
+      const updates = {};
+      const changes = [];
+
+      let kind = node.kind;
+      if (!destTaskTypes.some(tt => tt._id === kind)) {
+        const sameName = node.kind && destTaskTypes.find(tt => nameMatch(tt.name, taskTypeById.get(node.kind)?.name));
+        destDefaultType ??= sameName ? undefined : await this._getDefaultTaskType(client, destProject);
+        kind = sameName?._id ?? destDefaultType;
+        updates.kind = kind;
+      }
+
+      if (!statusesByType.has(kind)) statusesByType.set(kind, await this._getScopedStatuses(client, kind));
+      const statuses = statusesByType.get(kind);
+      const currentStatusName = statusMap.get(node.status);
+      if (currentStatusName) {
+        const sameStatus = statuses.find(s => nameMatch(s.name, currentStatusName));
+        updates.status = (sameStatus ?? this._defaultStatus(destProject, statuses))._id;
+      }
+
+      for (const [field, targets] of [['component', destComponents], ['milestone', destMilestones]]) {
+        if (!node[field]) continue;
+        const from = labelOf.get(node[field]) ?? null;
+        const match = from === null ? undefined : targets.find(target => nameMatch(target.label, from));
+        updates[field] = match?._id ?? null;
+        changes.push({ field, from, to: match?.label ?? null });
+      }
+      plans.push({ updates, changes });
+    }
+    return plans;
+  }
+
+  /**
+   * Move every document attached to a moved document (comments, time reports, labels, attachments, to-dos, and
+   * what is attached to those) into the target space. Sub-issues are moved as part of the issue tree.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} doc - Moved document
+   * @param {string} destSpace - Target project id
+   */
+  async _moveAttachedDocs(client, doc, destSpace) {
+    const hierarchy = client.getHierarchy();
+    for (const attribute of hierarchy.getAllAttributes(doc._class).values()) {
+      if (!hierarchy.isDerived(attribute.type._class, core.class.Collection)) continue;
+      if (attribute.type.of === tracker.class.Issue) continue;
+      for (const attached of await client.findAll(attribute.type.of, { attachedTo: doc._id })) {
+        const attachedDoc = { ...attached, _class: attached._class ?? attribute.type.of };
+        await client.updateDoc(attachedDoc._class, attached.space, attached._id, { space: destSpace });
+        await this._moveAttachedDocs(client, attachedDoc, destSpace);
+      }
+    }
   }
 
   /**
