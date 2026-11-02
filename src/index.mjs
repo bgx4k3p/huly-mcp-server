@@ -46,11 +46,16 @@ if (initFlag) {
   const { getAccountClient, loadConfig } = await import('./client/sdk.mjs');
   const { ensureOutboundHeaders, registerOriginsFromServerConfig } = await import('./outboundHeaders.mjs');
 
-  ensureOutboundHeaders(url);
-  const config = await loadConfig(url);
-  registerOriginsFromServerConfig(config, url);
-  const client = getAccountClient(config.ACCOUNTS_URL);
-  const loginInfo = await client.login(email, password);
+  let loginInfo;
+  try {
+    ensureOutboundHeaders(url);
+    const config = await loadConfig(url);
+    registerOriginsFromServerConfig(config, url);
+    loginInfo = await getAccountClient(config.ACCOUNTS_URL).login(email, password);
+  } catch (error) {
+    console.error(`Failed to get a token: ${error.message}`);
+    process.exit(1);
+  }
 
   if (!loginInfo?.token) {
     console.error('Login failed — check email and password');
