@@ -37,7 +37,7 @@ function usage(command = 'all') {
  * @param {string[]} names - Flag aliases, checked in order
  * @returns {string|undefined}
  */
-function flagValue(args, names) {
+export function flagValue(args, names) {
   for (const name of names) {
     const i = args.indexOf(name);
     if (i !== -1 && i + 1 < args.length) return args[i + 1];

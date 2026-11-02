@@ -14,14 +14,14 @@ export const sessions = new Map();
  * so the caller registers it then.
  * @param {string|undefined} sessionId - Mcp-Session-Id header value
  * @param {string|undefined} responseMode - Huly-Response-Mode header value for a new session
- * @returns {{server: Object, transport: StreamableHTTPServerTransport, TOOLS?: Object[]}}
+ * @returns {{server: Object, transport: StreamableHTTPServerTransport}}
  */
 export function getOrCreateSession(sessionId, responseMode) {
   if (sessionId && sessions.has(sessionId)) {
     return sessions.get(sessionId);
   }
 
-  const { server, TOOLS } = createMcpServer({ responseMode });
+  const { server } = createMcpServer({ responseMode });
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
   });
@@ -33,8 +33,7 @@ export function getOrCreateSession(sessionId, responseMode) {
 
   server.connect(transport);
 
-  // We'll store it after the first request sets the session ID
-  return { server, transport, TOOLS };
+  return { server, transport };
 }
 
 /**

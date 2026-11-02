@@ -44,8 +44,7 @@ export class ConnectionPool {
 
     const entry = this._entries.get(ws);
     if (entry) {
-      // Check if stale
-      if (entry.client && Date.now() - entry.lastUsed > POOL_TTL_MS) {
+      if (this._isStale(entry, Date.now())) {
         console.warn(`[pool] Evicting stale connection for workspace: ${ws}`);
         entry.client.disconnect();
         this._entries.delete(ws);
@@ -125,12 +124,22 @@ export class ConnectionPool {
   }
 
   /**
+   * Whether a connected entry has gone unused for longer than the TTL.
+   * @param {Object} entry - Pool entry
+   * @param {number} now - Current time in ms
+   * @returns {boolean}
+   */
+  _isStale(entry, now) {
+    return Boolean(entry.client) && now - entry.lastUsed > POOL_TTL_MS;
+  }
+
+  /**
    * Evict connections that haven't been used within the TTL window.
    */
   _evictStale() {
     const now = Date.now();
     for (const [ws, entry] of this._entries) {
-      if (entry.client && now - entry.lastUsed > POOL_TTL_MS) {
+      if (this._isStale(entry, now)) {
         console.warn(`[pool] Evicting stale connection for workspace: ${ws}`);
         entry.client.disconnect();
         this._entries.delete(ws);

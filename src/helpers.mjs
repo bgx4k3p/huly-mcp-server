@@ -347,6 +347,20 @@ export function toIsoDate(value) {
 }
 
 /**
+ * Parse a date value to a millisecond timestamp.
+ * @param {string|number} value - ISO date or timestamp
+ * @returns {number}
+ * @throws {Error} When the value is not a parseable date
+ */
+function parseDate(value) {
+  const parsed = new Date(value).getTime();
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid date: ${String(value)}. Use ISO format, for example 2026-04-01.`);
+  }
+  return parsed;
+}
+
+/**
  * Parse an optional due date for storage. Blank or missing means no due date.
  * @param {string|number|null|undefined} value - ISO date or timestamp
  * @returns {number|null} Millisecond timestamp, or null to clear
@@ -354,11 +368,7 @@ export function toIsoDate(value) {
  */
 export function normalizeDueDate(value) {
   if (value === undefined || value === null || String(value).trim() === '') return null;
-  const parsed = new Date(value).getTime();
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Invalid date: ${value}. Use ISO format, for example 2026-04-01.`);
-  }
-  return parsed;
+  return parseDate(value);
 }
 
 /**
@@ -384,11 +394,7 @@ export function resolvePriority(value, fallback = 0) {
  */
 export function normalizeReportDate(value) {
   if (value === undefined || value === null || value === '') return Date.now();
-  const parsed = new Date(value).getTime();
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Invalid date: ${String(value)}. Use ISO format, for example 2026-04-01.`);
-  }
-  return parsed;
+  return parseDate(value);
 }
 
 /**
