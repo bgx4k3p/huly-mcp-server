@@ -481,6 +481,56 @@ describe('issue relations', () => {
   });
 });
 
+describe('link guards', () => {
+  const self = () => ({
+    'PROJ-1': {
+      project: { _id: 'space-a', identifier: 'PROJ' },
+      issue: { _id: 'issue-a', _class: ISSUE_CLASS, number: 1, relations: [], blockedBy: [] }
+    }
+  });
+
+  for (const [label, run, pattern] of [
+    ['relate an issue to itself', client => client.addRelation('PROJ-1', 'PROJ-1'), /cannot be related to itself/],
+    ['let an issue block itself', client => client.addBlockedBy('PROJ-1', 'PROJ-1'), /cannot block itself/],
+    ['make an issue its own parent', client => client.setParent('PROJ-1', 'PROJ-1'), /cannot be its own parent/]
+  ]) {
+    it(`refuses to ${label}`, async () => {
+      const writes = [];
+      const client = stubClient({
+        updateDoc: async (...args) => { writes.push(args); },
+        updateCollection: async (...args) => { writes.push(args); }
+      });
+      client._parseAndFindIssue = issueLookup(self());
+
+      await assert.rejects(() => run(client), pattern);
+      assert.deepEqual(writes, []);
+    });
+  }
+
+  it('refuses to move an issue under one of its own descendants', async () => {
+    // P-1 is the top issue, P-2 its child and P-3 its grandchild; making P-3 the parent of P-1 would form a cycle.
+    const issues = {
+      'issue-1': { _id: 'issue-1', _class: ISSUE_CLASS, number: 1, attachedTo: 'space-a', attachedToClass: PROJECT_CLASS },
+      'issue-2': { _id: 'issue-2', _class: ISSUE_CLASS, number: 2, attachedTo: 'issue-1', attachedToClass: ISSUE_CLASS },
+      'issue-3': { _id: 'issue-3', _class: ISSUE_CLASS, number: 3, attachedTo: 'issue-2', attachedToClass: ISSUE_CLASS }
+    };
+    const writes = [];
+    const client = stubClient({
+      findOne: async (_class, query) => issues[query._id] ?? null,
+      updateDoc: async (...args) => { writes.push(args); },
+      updateCollection: async (...args) => { writes.push(args); }
+    });
+    const project = { _id: 'space-a', identifier: 'P' };
+    client._parseAndFindIssue = issueLookup({
+      'P-1': { project, issue: issues['issue-1'] },
+      'P-3': { project, issue: issues['issue-3'] }
+    });
+
+    await assert.rejects(() => client.setParent('P-1', 'P-3'), /descendant/);
+    assert.deepEqual(writes, []);
+  });
+});
+
 describe('parent linking', () => {
   function parentHarness({ child = {}, parentChildInfo = [], oldParent = null } = {}) {
     const calls = { collections: [], updates: [] };

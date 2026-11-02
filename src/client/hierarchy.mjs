@@ -12,13 +12,14 @@ export class HierarchyMethods {
    * @param {string} relatedToIssueId - Related issue identifier
    * @returns {Promise<Object>} `{ message, issueId, relatedToIssueId }`, or `{ message }` when the issue already
    *   lists the relation
-   * @throws {Error} When either issue is not found
+   * @throws {Error} When either issue is not found, or both are the same issue
    */
   async addRelation(issueId, relatedToIssueId) {
     const client = await this._getClient();
 
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
     const { issue: relatedIssue } = await this._parseAndFindIssue(client, relatedToIssueId);
+    if (relatedIssue._id === issue._id) throw new Error(`${issueId} cannot be related to itself`);
 
     const currentRelations = issue.relations || [];
 
@@ -103,13 +104,14 @@ export class HierarchyMethods {
    * @param {string} issueId - Identifier of the issue that is blocked
    * @param {string} blockedByIssueId - Identifier of the blocking issue
    * @returns {Promise<Object>} `{ message, issueId, blockedByIssueId }`, or `{ message }` when already blocked
-   * @throws {Error} When either issue is not found
+   * @throws {Error} When either issue is not found, or both are the same issue
    */
   async addBlockedBy(issueId, blockedByIssueId) {
     const client = await this._getClient();
 
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
     const { issue: blockingIssue } = await this._parseAndFindIssue(client, blockedByIssueId);
+    if (blockingIssue._id === issue._id) throw new Error(`${issueId} cannot block itself`);
 
     const currentBlockedBy = issue.blockedBy || [];
 
@@ -167,6 +169,25 @@ export class HierarchyMethods {
   }
 
   /**
+   * Whether an issue sits somewhere below another one, following the actual parent links upward rather than
+   * the stored ancestor list.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} issue - Issue to start from
+   * @param {string} ancestorId - Internal id of the possible ancestor
+   * @returns {Promise<boolean>}
+   */
+  async _isDescendant(client, issue, ancestorId) {
+    const seen = new Set();
+    let current = issue;
+    while (current?.attachedToClass === tracker.class.Issue && current.attachedTo && !seen.has(current._id)) {
+      if (current.attachedTo === ancestorId) return true;
+      seen.add(current._id);
+      current = await client.findOne(tracker.class.Issue, { _id: current.attachedTo });
+    }
+    return false;
+  }
+
+  /**
    * Remove a sub-issue from its current parent's child list, if the parent still exists.
    * @param {Object} client - Huly SDK client
    * @param {Object} issue - Sub-issue document
@@ -221,7 +242,7 @@ export class HierarchyMethods {
    * @param {string} [parentIssueId] - Parent issue identifier; empty or omitted removes the parent
    * @returns {Promise<Object>} `{ message, issueId, parentIssueId, parentChildCount }`, or
    *   `{ message, issueId, parentId: null }` when the parent was removed
-   * @throws {Error} When either issue is not found
+   * @throws {Error} When either issue is not found, or the parent is the issue itself or one of its descendants
    */
   async setParent(issueId, parentIssueId) {
     const client = await this._getClient();
@@ -234,6 +255,10 @@ export class HierarchyMethods {
     }
 
     const { project: parentProject, issue: parentIssue } = await this._parseAndFindIssue(client, parentIssueId);
+    if (parentIssue._id === issue._id) throw new Error(`${issueId} cannot be its own parent`);
+    if (await this._isDescendant(client, parentIssue, issue._id)) {
+      throw new Error(`${parentIssueId} is a descendant of ${issueId}; making it the parent would create a cycle`);
+    }
 
     // Clean up old parent if the child already has one
     if (issue.attachedTo && issue.attachedToClass === tracker.class.Issue && issue.attachedTo !== parentIssue._id) {
