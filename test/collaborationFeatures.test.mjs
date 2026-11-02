@@ -123,6 +123,46 @@ describe('comment writes', () => {
   });
 });
 
+describe('comment ownership', () => {
+  // A fake that honours every query field, so a lookup scoped to the issue cannot match another issue's comment.
+  function scopedSdk(comment, writes) {
+    const matches = query => Object.entries(query).every(([key, value]) => comment[key] === value);
+    return {
+      findOne: async (_class, query) => (matches(query) ? comment : null),
+      updateDoc: async (...args) => { writes.push(['update', ...args]); },
+      removeCollection: async (...args) => { writes.push(['remove', ...args]); }
+    };
+  }
+  const foreign = {
+    _id: 'comment-id', space: 'project-space', attachedTo: 'other-issue', attachedToClass: ISSUE_CLASS,
+    collection: 'comments', message: toCollaboratorMarkup('not yours')
+  };
+
+  for (const [label, run] of [
+    ['read', client => client.getComment('PROJ-1', 'comment-id')],
+    ['update', client => client.updateComment('PROJ-1', 'comment-id', 'overwrite')],
+    ['delete', client => client.deleteComment('PROJ-1', 'comment-id')]
+  ]) {
+    it(`refuses to ${label} a comment that belongs to another issue`, async () => {
+      const writes = [];
+      const client = singleIssue(stubClient(scopedSdk(foreign, writes)));
+
+      await assert.rejects(() => run(client), /Comment not found: comment-id/);
+      assert.deepEqual(writes, []);
+    });
+  }
+
+  it('updates a comment in its own space', async () => {
+    const writes = [];
+    const own = { ...foreign, attachedTo: 'issue-id', space: 'comment-space' };
+    const client = singleIssue(stubClient(scopedSdk(own, writes)));
+
+    await client.updateComment('PROJ-1', 'comment-id', 'edited');
+
+    assert.equal(writes[0][2], 'comment-space');
+  });
+});
+
 describe('comment reads', () => {
   it('queries by internal issue id and renders markup back to text', async () => {
     const queries = [];

@@ -8,6 +8,21 @@ import { chunter, generateId, tracker } from './sdk.mjs';
 
 export class CommentsMethods {
   /**
+   * Find a comment that belongs to the given issue. A comment on any other issue is reported as not found,
+   * so a comment can only be read or changed through its own issue.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} issue - Issue document
+   * @param {string} commentId - Comment ID
+   * @returns {Promise<Object>} ChatMessage document
+   * @throws {Error} When the issue has no comment with that ID
+   */
+  async _findCommentOnIssue(client, issue, commentId) {
+    const comment = await client.findOne(chunter.class.ChatMessage, { _id: commentId, attachedTo: issue._id });
+    if (!comment) throw new Error(`Comment not found: ${commentId}`);
+    return comment;
+  }
+
+  /**
    * Add a comment to an issue.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} text - Comment text
@@ -71,16 +86,14 @@ export class CommentsMethods {
    * @param {string} text - New comment text
    * @param {string} [format='markdown'] - Text format: markdown, html, or plain
    * @returns {Promise<{message: string, id: string}>}
-   * @throws {Error} When the issue or comment is not found
+   * @throws {Error} When the issue is not found or the comment is not on it
    */
   async updateComment(issueId, commentId, text, format) {
     const client = await this._getClient();
-    const { project } = await this._parseAndFindIssue(client, issueId);
+    const { issue } = await this._parseAndFindIssue(client, issueId);
+    const comment = await this._findCommentOnIssue(client, issue, commentId);
 
-    const comment = await client.findOne(chunter.class.ChatMessage, { _id: commentId });
-    if (!comment) throw new Error(`Comment not found: ${commentId}`);
-
-    await client.updateDoc(chunter.class.ChatMessage, project._id, commentId, {
+    await client.updateDoc(chunter.class.ChatMessage, comment.space, comment._id, {
       message: toCollaboratorMarkup(text, format)
     });
 
@@ -95,14 +108,12 @@ export class CommentsMethods {
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} commentId - Comment ID
    * @returns {Promise<{message: string, id: string}>}
-   * @throws {Error} When the issue or comment is not found
+   * @throws {Error} When the issue is not found or the comment is not on it
    */
   async deleteComment(issueId, commentId) {
     const client = await this._getClient();
-    await this._parseAndFindIssue(client, issueId);
-
-    const comment = await client.findOne(chunter.class.ChatMessage, { _id: commentId });
-    if (!comment) throw new Error(`Comment not found: ${commentId}`);
+    const { issue } = await this._parseAndFindIssue(client, issueId);
+    const comment = await this._findCommentOnIssue(client, issue, commentId);
 
     await client.removeCollection(chunter.class.ChatMessage, comment.space, comment._id, comment.attachedTo, comment.attachedToClass, comment.collection);
 
@@ -113,18 +124,16 @@ export class CommentsMethods {
   }
 
   /**
-   * Get a comment by ID. The issue must exist; the comment is looked up by ID alone.
+   * Get a comment on an issue by ID.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} commentId - Comment ID
    * @returns {Promise<Object>} `{ id, text, createdBy, createdOn, modifiedOn, editedOn }` plus extras
-   * @throws {Error} When the issue or comment is not found
+   * @throws {Error} When the issue is not found or the comment is not on it
    */
   async getComment(issueId, commentId) {
     const client = await this._getClient();
-    await this._parseAndFindIssue(client, issueId);
-
-    const comment = await client.findOne(chunter.class.ChatMessage, { _id: commentId });
-    if (!comment) throw new Error(`Comment not found: ${commentId}`);
+    const { issue } = await this._parseAndFindIssue(client, issueId);
+    const comment = await this._findCommentOnIssue(client, issue, commentId);
 
     return withExtra(comment, {
       id: comment._id,
