@@ -490,35 +490,11 @@ export class IssueReadMethods {
     const client = await this._getClient();
     limit = normalizePageLimit(limit, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
 
-    // Find the current user's employee record via email channels or account matching
+    // The signed-in account is known from the connection; each workspace member links to its account by personUuid.
     const { employees, employeeMap } = await this._buildEmployeeMap(client);
-
-    // Try matching by email in channels
-    let me = employees.find(e => {
-      const channels = e.channels || [];
-      return channels.some(ch => ch.value?.toLowerCase() === this.email?.toLowerCase());
-    });
-
-    // Fallback: if only one employee, assume it's the current user
-    if (!me && employees.length === 1) {
-      me = employees[0];
-    }
-
-    // Fallback: try matching by PersonAccount email
+    const me = employees.find(employee => employee.personUuid && employee.personUuid === this._accountUuid);
     if (!me) {
-      try {
-        const accounts = await client.findAll('contact:class:PersonAccount', {});
-        const myAccount = accounts.find(a => a.email?.toLowerCase() === this.email?.toLowerCase());
-        if (myAccount) {
-          me = employees.find(e => e._id === myAccount.person);
-        }
-      } catch (e) {
-        throw new Error(`Failed to look up PersonAccount: ${e.message}. The PersonAccount class may not exist in this workspace.`);
-      }
-    }
-
-    if (!me) {
-      throw new Error('Could not find current user. Ensure HULY_EMAIL matches your workspace member email, or use HULY_TOKEN.');
+      throw new Error('No workspace member is linked to the signed-in account, so "my issues" cannot be determined.');
     }
 
     const query = { assignee: me._id };

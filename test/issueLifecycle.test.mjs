@@ -852,27 +852,34 @@ describe('searchIssues and getMyIssues query scoping', () => {
     await assert.rejects(() => client.searchIssues('login', undefined, 101), /integer from 1 to 100/);
   });
 
-  it('constrains my-issues to the resolved employee id', async () => {
+  it('constrains my-issues to the member linked to the signed-in account', async () => {
     const { client, select } = createHarness({
-      email: 'ada@example.test',
+      employees: [
+        { _id: 'emp-1', name: 'Ada Lovelace', active: true, personUuid: 'acc-ada' },
+        { _id: 'emp-2', name: 'Grace Hopper', active: true, personUuid: 'acc-grace' }
+      ],
       issues: [
-        baseIssue({ _id: 'mine', number: 4, assignee: 'emp-1' }),
-        baseIssue({ _id: 'theirs', number: 5, assignee: 'emp-2' })
+        baseIssue({ _id: 'mine', number: 4, assignee: 'emp-2' }),
+        baseIssue({ _id: 'theirs', number: 5, assignee: 'emp-1' })
       ]
     });
+    client._accountUuid = 'acc-grace';
 
     const page = await client.getMyIssues();
 
     const assigneeQueries = select('findAll', tracker.class.Issue)
       .filter(call => Object.hasOwn(call.query, 'assignee'));
-    assert.deepEqual(assigneeQueries[0].query, { assignee: 'emp-1' });
+    assert.deepEqual(assigneeQueries[0].query, { assignee: 'emp-2' });
     assert.deepEqual(page.items.map(item => item.id), ['PROJ-4']);
   });
 
-  it('fails instead of returning every issue when the user cannot be identified', async () => {
-    const { client, select } = createHarness({ email: 'stranger@example.test' });
+  it('never assumes the only workspace member is the caller', async () => {
+    const { client, select } = createHarness({
+      employees: [{ _id: 'emp-1', name: 'Someone Else', active: true, personUuid: 'acc-other' }]
+    });
+    client._accountUuid = 'acc-me';
 
-    await assert.rejects(() => client.getMyIssues(), /Could not find current user/);
+    await assert.rejects(() => client.getMyIssues(), /No workspace member is linked to the signed-in account/);
     assert.equal(select('findAll', tracker.class.Issue).length, 0);
   });
 });
