@@ -4,8 +4,27 @@
  * Methods are composed onto HulyClient; `this` is the client instance.
  */
 import { fromMarkup, nameMatch, STATUS_CATEGORY_NAMES, withExtra } from '../helpers.mjs';
-import { typeDisplayName } from './lookups.mjs';
+import { findByName, typeDisplayName } from './lookups.mjs';
 import { task, tracker } from './sdk.mjs';
+
+/**
+ * Output row for a task type.
+ * @param {Object} taskType - TaskType document
+ * @returns {Object}
+ */
+function taskTypeRow(taskType) {
+  return withExtra(taskType, {
+    id: taskType._id,
+    name: typeDisplayName(taskType),
+    description: fromMarkup(taskType.description),
+    kind: taskType.kind || null,
+    ofClass: taskType.ofClass,
+    parent: taskType.parent,
+    allowedAsChildOf: taskType.allowedAsChildOf || [],
+    statusCategories: taskType.statusCategories || [],
+    statuses: taskType.statuses || []
+  });
+}
 
 export class WorkflowMethods {
   /**
@@ -45,18 +64,7 @@ export class WorkflowMethods {
 
     const typesToReturn = await this._issueTaskTypes(client, project);
 
-    const enriched = typesToReturn.map(tt => withExtra(tt, {
-      id: tt._id,
-      name: typeDisplayName(tt),
-      description: fromMarkup(tt.description),
-      kind: tt.kind || null,
-      ofClass: tt.ofClass,
-      parent: tt.parent,
-      allowedAsChildOf: tt.allowedAsChildOf || [],
-      statusCategories: tt.statusCategories || [],
-      statuses: tt.statuses || []
-    }));
-    return this._cursoredFindAll(enriched, {
+    return this._cursoredFindAll(typesToReturn.map(taskTypeRow), {
       ...options,
       cursorScope: { workspace: this.workspace, tool: 'list_task_types', project: projectIdent.toUpperCase() }
     });
@@ -201,20 +209,6 @@ export class WorkflowMethods {
 
     const typesToSearch = await this._issueTaskTypes(client, project);
 
-    const found = typesToSearch.find(tt => nameMatch(tt.name, name));
-    if (!found) {
-      const names = typesToSearch.map(typeDisplayName).join(', ');
-      throw new Error(`Task type not found: "${name}". Available: ${names}`);
-    }
-
-    return withExtra(found, {
-      id: found._id,
-      name: typeDisplayName(found),
-      kind: found.kind || null,
-      ofClass: found.ofClass || null,
-      allowedAsChildOf: found.allowedAsChildOf || [],
-      statusCategories: found.statusCategories || [],
-      statuses: found.statuses || []
-    });
+    return taskTypeRow(findByName(typesToSearch, typeDisplayName, name, 'Task type'));
   }
 }

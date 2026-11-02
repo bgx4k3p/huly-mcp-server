@@ -383,7 +383,7 @@ describe('taxonomy filters fail closed', () => {
     assert.deepEqual(page.items.map(item => item.name).sort(), ['Epic', 'Issue']);
 
     assert.equal((await client.getTaskType('BETA', 'bug')).id, 'tt-bug');
-    await assert.rejects(() => client.getTaskType('ALPHA', 'Bug'), /Task type not found: "Bug"/);
+    await assert.rejects(() => client.getTaskType('ALPHA', 'Bug'), /Task type not found: Bug/);
   });
 
   it('keeps component reads inside the addressed project', async () => {

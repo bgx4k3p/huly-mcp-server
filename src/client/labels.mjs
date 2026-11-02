@@ -14,6 +14,21 @@ import {
 import { assertNameAvailable, findByName } from './lookups.mjs';
 import { generateId, tags, tracker } from './sdk.mjs';
 
+/**
+ * Output row for an issue label.
+ * @param {Object} label - TagElement document
+ * @returns {Object}
+ */
+function labelRow(label) {
+  return withExtra(label, {
+    id: label._id,
+    name: label.title,
+    description: fromMarkup(label.description),
+    color: label.color ?? null,
+    category: label.category || null
+  });
+}
+
 export class LabelsMethods {
   /**
    * Add a label to an issue, creating the label if none has exactly that name.
@@ -118,14 +133,7 @@ export class LabelsMethods {
       targetClass: tracker.class.Issue
     });
 
-    const enriched = tagElements.map(t => withExtra(t, {
-      id: t._id,
-      name: t.title,
-      description: t.description || '',
-      color: t.color ?? null,
-      category: t.category || null
-    }));
-    return this._cursoredFindAll(enriched, {
+    return this._cursoredFindAll(tagElements.map(labelRow), {
       ...options,
       cursorScope: { workspace: this.workspace, tool: 'list_labels' }
     });
@@ -260,11 +268,6 @@ export class LabelsMethods {
 
     const label = findByName(await this._issueLabels(client), tag => tag.title, name, 'Label');
 
-    return withExtra(label, {
-      id: label._id,
-      name: label.title,
-      color: label.color ?? null,
-      description: fromMarkup(label.description)
-    });
+    return labelRow(label);
   }
 }

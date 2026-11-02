@@ -126,15 +126,16 @@ describe('getMember and getLabel', () => {
     const sdk = recorder({ employees: [{ _id: 'e1', name: 'Ada' }, { _id: 'e2', name: 'Bo' }] });
     await assert.rejects(
       () => stubClient(sdk).getMember('Zoe'),
-      /Member not found: "Zoe"\. Available: Ada, Bo/
+      /Member not found: Zoe\. Available: Ada, Bo/
     );
   });
 
-  it('matches a member on a case-insensitive substring', async () => {
+  it('matches a member by full name, ignoring case', async () => {
     const sdk = recorder({ employees: [{ _id: 'e1', name: 'Ada Lovelace', role: 'OWNER' }] });
-    const member = await stubClient(sdk).getMember('lovelace');
+    const member = await stubClient(sdk).getMember('ada LOVELACE');
     assert.equal(member.id, 'e1');
     assert.equal(member.role, 'OWNER');
+    await assert.rejects(() => stubClient(sdk).getMember('lovelace'), /Member not found: lovelace/);
   });
 
   it('reports a missing label and preserves palette index zero', async () => {

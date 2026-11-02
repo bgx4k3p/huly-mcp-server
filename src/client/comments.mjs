@@ -6,6 +6,22 @@
 import { fromMarkup, toCollaboratorMarkup, withExtra } from '../helpers.mjs';
 import { chunter, generateId, tracker } from './sdk.mjs';
 
+/**
+ * Output row for a comment.
+ * @param {Object} comment - ChatMessage document
+ * @returns {Object}
+ */
+function commentRow(comment) {
+  return withExtra(comment, {
+    id: comment._id,
+    text: fromMarkup(comment.message),
+    createdBy: comment.createdBy || null,
+    createdOn: comment.createdOn,
+    modifiedOn: comment.modifiedOn,
+    editedOn: comment.editedOn || null
+  });
+}
+
 export class CommentsMethods {
   /**
    * Find a comment that belongs to the given issue. A comment on any other issue is reported as not found,
@@ -66,14 +82,7 @@ export class CommentsMethods {
       attachedTo: issue._id
     }, { sort: { createdOn: 1 } });
 
-    const enriched = comments.map(c => withExtra(c, {
-      id: c._id,
-      text: fromMarkup(c.message),
-      createdBy: c.createdBy || null,
-      createdOn: c.createdOn,
-      modifiedOn: c.modifiedOn
-    }));
-    return this._cursoredFindAll(enriched, {
+    return this._cursoredFindAll(comments.map(commentRow), {
       ...options,
       cursorScope: { workspace: this.workspace, tool: 'list_comments', issueId: issueId.toUpperCase() }
     });
@@ -93,8 +102,10 @@ export class CommentsMethods {
     const { issue } = await this._parseAndFindIssue(client, issueId);
     const comment = await this._findCommentOnIssue(client, issue, commentId);
 
+    // editedOn is what marks a message as edited in Huly.
     await client.updateDoc(chunter.class.ChatMessage, comment.space, comment._id, {
-      message: toCollaboratorMarkup(text, format)
+      message: toCollaboratorMarkup(text, format),
+      editedOn: Date.now()
     });
 
     return {
@@ -135,13 +146,6 @@ export class CommentsMethods {
     const { issue } = await this._parseAndFindIssue(client, issueId);
     const comment = await this._findCommentOnIssue(client, issue, commentId);
 
-    return withExtra(comment, {
-      id: comment._id,
-      text: fromMarkup(comment.message),
-      createdBy: comment.createdBy || null,
-      createdOn: comment.createdOn,
-      modifiedOn: comment.modifiedOn,
-      editedOn: comment.editedOn || null
-    });
+    return commentRow(comment);
   }
 }

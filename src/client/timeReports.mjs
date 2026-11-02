@@ -6,6 +6,22 @@
 import { fromMarkup, normalizeReportDate, parseHours, toHours, toIsoDate, withExtra } from '../helpers.mjs';
 import { contactPlugin, generateId, tracker } from './sdk.mjs';
 
+/**
+ * Output row for a time report.
+ * @param {Object} report - TimeSpendReport document
+ * @param {string} [employeeName] - Name of the report's employee, when known
+ * @returns {Object}
+ */
+function timeReportRow(report, employeeName) {
+  return withExtra(report, {
+    id: report._id,
+    hours: toHours(report.value),
+    description: fromMarkup(report.description),
+    date: toIsoDate(report.date),
+    employee: employeeName ?? null
+  });
+}
+
 export class TimeReportsMethods {
   /**
    * Find a time report that belongs to the given issue. A report on any other issue is reported as not found,
@@ -88,16 +104,13 @@ export class TimeReportsMethods {
       attachedTo: issue._id
     }, { sort: { date: -1 } });
 
-    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    // Authors who have since left stay named: attribution is history, not current membership.
+    const employeeIds = [...new Set(reports.map(report => report.employee).filter(Boolean))];
+    const employees = employeeIds.length
+      ? await client.findAll(contactPlugin.mixin.Employee, { _id: { $in: employeeIds } })
+      : [];
     const employeeMap = new Map(employees.map(employee => [employee._id, employee.name]));
-    const enriched = reports.map(r => withExtra(r, {
-      id: r._id,
-      hours: toHours(r.value),
-      description: fromMarkup(r.description),
-      date: toIsoDate(r.date),
-      employee: r.employee ? employeeMap.get(r.employee) ?? null : null
-    }));
-    return this._cursoredFindAll(enriched, {
+    return this._cursoredFindAll(reports.map(report => timeReportRow(report, employeeMap.get(report.employee))), {
       ...options,
       cursorScope: { workspace: this.workspace, tool: 'list_time_reports', issueId: issueId.toUpperCase() }
     });
@@ -193,18 +206,9 @@ export class TimeReportsMethods {
 
     const report = await this._findReportOnIssue(client, issue, issueId, reportId);
 
-    let employee = null;
-    if (report.employee) {
-      const employeeDoc = await client.findOne(contactPlugin.mixin.Employee, { _id: report.employee });
-      employee = employeeDoc?.name ?? null;
-    }
-
-    return withExtra(report, {
-      id: report._id,
-      hours: toHours(report.value),
-      description: fromMarkup(report.description),
-      date: toIsoDate(report.date),
-      employee
-    });
+    const employee = report.employee
+      ? await client.findOne(contactPlugin.mixin.Employee, { _id: report.employee })
+      : null;
+    return timeReportRow(report, employee?.name);
   }
 }

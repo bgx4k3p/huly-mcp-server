@@ -4,7 +4,23 @@
  * Methods are composed onto HulyClient; `this` is the client instance.
  */
 import { withExtra } from '../helpers.mjs';
+import { findByName } from './lookups.mjs';
 import { contactPlugin, core } from './sdk.mjs';
+
+/**
+ * Output row for a workspace member.
+ * @param {Object} employee - Employee document
+ * @returns {Object}
+ */
+function memberRow(employee) {
+  return withExtra(employee, {
+    id: employee._id,
+    name: employee.name,
+    email: employee.channels?.[0]?.value || null,
+    role: employee.role || 'USER',
+    position: employee.position || null
+  });
+}
 
 export class MembersMethods {
   /**
@@ -145,41 +161,22 @@ export class MembersMethods {
   async listMembers(options = {}) {
     const client = await this._getClient();
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
-    const enriched = employees.map(e => withExtra(e, {
-      id: e._id,
-      name: e.name,
-      email: e.channels?.[0]?.value || null,
-      role: e.role || 'USER',
-      position: e.position || null
-    }));
-    return this._cursoredFindAll(enriched, {
+    return this._cursoredFindAll(employees.map(memberRow), {
       ...options,
       cursorScope: { workspace: this.workspace, tool: 'list_members' }
     });
   }
 
   /**
-   * Find the first active member whose name contains the given text (case-insensitive).
-   * @param {string} name - Member name or part of it
-   * @returns {Promise<Object>} id, name, role and extra fields
-   * @throws {Error} When no active member matches
+   * Get an active member by name (case-insensitive).
+   * @param {string} name - Member name
+   * @returns {Promise<Object>} Member row, as list_members returns it
+   * @throws {Error} When no active member has that name
    */
   async getMember(name) {
     const client = await this._getClient();
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
 
-    const member = employees.find(e =>
-      e.name?.toLowerCase().includes(name.toLowerCase())
-    );
-    if (!member) {
-      const names = employees.map(e => e.name).join(', ');
-      throw new Error(`Member not found: "${name}". Available: ${names}`);
-    }
-
-    return withExtra(member, {
-      id: member._id,
-      name: member.name,
-      role: member.role || 'USER'
-    });
+    return memberRow(findByName(employees, employee => employee.name, name, 'Member'));
   }
 }
