@@ -29,7 +29,7 @@ describe('Unit Tests', () => {
     let PRIORITY_MAP, PRIORITY_NAMES;
 
     before(async () => {
-      const mod = await import('../src/client.mjs');
+      const mod = await import('../src/helpers.mjs');
       PRIORITY_MAP = mod.PRIORITY_MAP;
       PRIORITY_NAMES = mod.PRIORITY_NAMES;
     });
@@ -73,7 +73,7 @@ describe('Unit Tests', () => {
     let MILESTONE_STATUS_MAP, MILESTONE_STATUS_NAMES;
 
     before(async () => {
-      const mod = await import('../src/client.mjs');
+      const mod = await import('../src/helpers.mjs');
       MILESTONE_STATUS_MAP = mod.MILESTONE_STATUS_MAP;
       MILESTONE_STATUS_NAMES = mod.MILESTONE_STATUS_NAMES;
     });

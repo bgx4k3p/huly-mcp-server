@@ -1,0 +1,568 @@
+/**
+ * Issue writes: create, update, batch create, move and delete, including issue numbering and ranks.
+ *
+ * Methods are composed onto HulyClient; `this` is the client instance.
+ */
+import {
+  MAX_BATCH_SIZE,
+  nameMatch,
+  normalizeDueDate,
+  parseHours,
+  resolvePriority,
+  toMarkup
+} from '../helpers.mjs';
+import { issueRank } from '../issueRank.mjs';
+import { contactPlugin, generateId, task, tracker } from './sdk.mjs';
+
+export class IssueWriteMethods {
+  /**
+   * Reserve `count` consecutive issue numbers in a project and return the first.
+   * Call only after every input is validated: a reserved number is never released,
+   * so a failure after this point leaves a permanent gap in the numbering.
+   */
+  async _reserveIssueNumbers(client, project, count) {
+    const result = await client.updateDoc(tracker.class.Project, project.space || project._id, project._id, {
+      $inc: { sequence: count }
+    }, true);
+    // The retrieved document carries the incremented value, so concurrent creates cannot read each other's number.
+    const sequence = result?.object?.sequence;
+    if (!Number.isInteger(sequence)) {
+      throw new Error(`Huly did not return the updated sequence for project ${project.identifier}`);
+    }
+    return sequence - count + 1;
+  }
+
+  /**
+   * Highest issue rank in a project, or undefined when it has none. New ranks are computed here
+   * rather than left to the server, because only Huly servers from March 2026 on assign them.
+   */
+  async _lastIssueRank(client, projectId) {
+    const last = await client.findOne(tracker.class.Issue, { space: projectId }, { sort: { rank: -1 } });
+    return last?.rank;
+  }
+
+  /**
+   * Create a new issue in a project.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} title - Issue title
+   * @param {string} [description] - Markdown description
+   * @param {string} [priority] - Priority level
+   * @param {string} [status] - Initial status name
+   * @param {string[]} [labels] - Label names to apply
+   * @param {string} [type] - Task type name
+   * @param {Object} [extra] - Additional fields: assignee, component, milestone, dueDate, estimation
+   * @returns {Promise<Object>}
+   */
+  async createIssue(projectIdent, title, description, priority, status, labels, type, extra = {}) {
+    const client = await this._getClient();
+
+    const project = await client.findOne(tracker.class.Project, {
+      identifier: projectIdent.toUpperCase()
+    });
+
+    if (!project) {
+      throw new Error(`Project not found: ${projectIdent}`);
+    }
+
+    // Resolve task type first — status lookup depends on it
+    let taskTypeId;
+    if (type) {
+      taskTypeId = await this._findTaskTypeByName(client, projectIdent, type);
+    } else {
+      taskTypeId = await this._getDefaultTaskType(client, project);
+    }
+
+    // Resolve status scoped to the task type
+    const statuses = await this._getScopedStatuses(client, project, taskTypeId);
+    let statusId;
+    if (status) {
+      const found = statuses.find(s => nameMatch(s.name, status));
+      if (!found) {
+        const available = statuses.map(s => s.name).join(', ');
+        throw new Error(`Status "${status}" not found. Available: ${available}`);
+      }
+      statusId = found._id;
+    } else {
+      statusId = project.defaultIssueStatus || statuses[0]._id;
+    }
+
+    // Resolve optional extra fields
+    let assigneeId = null;
+    if (extra.assignee) {
+      assigneeId = await this._findEmployeeByName(client, extra.assignee);
+    }
+
+    let componentId = null;
+    if (extra.component) {
+      componentId = await this._findComponentByName(client, project._id, extra.component);
+    }
+
+    let milestoneId = null;
+    if (extra.milestone) {
+      milestoneId = await this._findMilestoneByName(client, project._id, extra.milestone);
+    }
+
+    const priorityValue = resolvePriority(priority);
+    const estimation = extra.estimation === undefined ? 0 : parseHours(extra.estimation, 'estimation');
+    const dueDate = normalizeDueDate(extra.dueDate);
+    const lastRank = await this._lastIssueRank(client, project._id);
+
+    // Every input is valid; only now spend an issue number.
+    const nextNumber = await this._reserveIssueNumbers(client, project, 1);
+
+    const issueId = generateId();
+    await client.addCollection(
+      tracker.class.Issue,
+      project._id,
+      project._id,
+      tracker.class.Project,
+      'issues',
+      {
+        title,
+        identifier: `${project.identifier}-${nextNumber}`,
+        description: '',
+        status: statusId,
+        priority: priorityValue,
+        number: nextNumber,
+        assignee: assigneeId,
+        component: componentId,
+        milestone: milestoneId,
+        estimation,
+        dueDate,
+        remainingTime: 0,
+        reportedTime: 0,
+        childInfo: [],
+        parents: [],
+        kind: taskTypeId,
+        rank: issueRank(lastRank, nextNumber)
+      },
+      issueId
+    );
+
+    if (description) {
+      // Write description via collaborator for proper UI rendering.
+      // Set a collaborator reference on the doc first, then write content
+      // via updateMarkup which updates the live document.
+      const refId = `${issueId}-description-${Date.now()}`;
+      await client.updateDoc(tracker.class.Issue, project._id, issueId, {
+        description: refId
+      });
+      await this._writeCollaboratorField(
+        issueId, tracker.class.Issue, description, extra.descriptionFormat
+      );
+    }
+
+    if (labels && labels.length > 0) {
+      for (const labelName of labels) {
+        await this._addLabelToIssue(client, issueId, project._id, labelName);
+      }
+    }
+
+    return {
+      id: `${project.identifier}-${nextNumber}`,
+      internalId: issueId,
+      title,
+      status: status || 'Todo',
+      priority: priority || 'none'
+    };
+  }
+
+  /**
+   * Update fields on an existing issue.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {string} [title] - New title
+   * @param {string} [description] - New description
+   * @param {string} [priority] - New priority
+   * @param {string} [status] - New status name
+   * @param {string} [type] - New task type name
+   * @param {Object} [extra] - Additional fields: assignee, component, milestone, dueDate, estimation
+   * @returns {Promise<Object>}
+   */
+  async updateIssue(issueId, title, description, priority, status, type, extra = {}) {
+    const client = await this._getClient();
+    const { project, issue } = await this._parseAndFindIssue(client, issueId);
+
+    const updates = {};
+    const updatedFields = [];
+
+    if (title !== undefined) {
+      updates.title = title;
+      updatedFields.push('title');
+    }
+
+    if (priority !== undefined) {
+      updates.priority = resolvePriority(priority, issue.priority);
+      updatedFields.push('priority');
+    }
+
+    // Resolve type first so status can be scoped to the new type
+    let resolvedTaskTypeId = issue.kind;
+    if (type !== undefined) {
+      resolvedTaskTypeId = await this._findTaskTypeByName(client, project.identifier, type);
+      updates.kind = resolvedTaskTypeId;
+      updatedFields.push('type');
+    }
+
+    if (status !== undefined) {
+      const taskTypeId = resolvedTaskTypeId || await this._getDefaultTaskType(client, project);
+      const statuses = await this._getScopedStatuses(client, project, taskTypeId);
+      const found = statuses.find(s => nameMatch(s.name, status));
+      if (!found) {
+        const available = statuses.map(s => s.name).join(', ');
+        throw new Error(`Status "${status}" not found. Available: ${available}`);
+      }
+      updates.status = found._id;
+      updatedFields.push('status');
+    }
+
+    if (extra.assignee !== undefined) {
+      updates.assignee = extra.assignee.trim() === ''
+        ? null
+        : await this._findEmployeeByName(client, extra.assignee);
+      updatedFields.push('assignee');
+    }
+
+    if (extra.component !== undefined) {
+      updates.component = extra.component.trim() === ''
+        ? null
+        : await this._findComponentByName(client, project._id, extra.component);
+      updatedFields.push('component');
+    }
+
+    if (extra.milestone !== undefined) {
+      updates.milestone = extra.milestone.trim() === ''
+        ? null
+        : await this._findMilestoneByName(client, project._id, extra.milestone);
+      updatedFields.push('milestone');
+    }
+
+    if (extra.dueDate !== undefined) {
+      updates.dueDate = normalizeDueDate(extra.dueDate);
+      updatedFields.push('dueDate');
+    }
+
+    if (extra.estimation !== undefined) {
+      updates.estimation = parseHours(extra.estimation, 'estimation');
+      updatedFields.push('estimation');
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await client.updateDoc(tracker.class.Issue, project._id, issue._id, updates);
+    }
+
+    if (description !== undefined) {
+      // Write description via collaborator service for proper UI rendering.
+      // updateMarkup writes to the live document, which getMarkup reads back.
+      await this._writeCollaboratorField(
+        issue._id, issue._class, description, extra.descriptionFormat
+      );
+      updatedFields.push('description');
+    }
+
+    return {
+      id: issueId,
+      updated: updatedFields
+    };
+  }
+
+  /**
+   * Assign an issue to a workspace member or unassign it.
+   * @param {string} issueId - Issue identifier
+   * @param {string} assigneeName - Member name or email, empty to unassign
+   * @returns {Promise<Object>}
+   */
+  async assignIssue(issueId, assigneeName) {
+    const client = await this._getClient();
+    const { project, issue } = await this._parseAndFindIssue(client, issueId);
+
+    if (!assigneeName || assigneeName.trim() === '') {
+      await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
+        assignee: null
+      });
+      return { message: `Unassigned ${issueId}`, issueId };
+    }
+
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const found = employees.find(e => nameMatch(e.name, assigneeName));
+
+    if (!found) {
+      const names = employees.map(e => e.name).join(', ');
+      throw new Error(`Member "${assigneeName}" not found. Available: ${names}`);
+    }
+
+    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
+      assignee: found._id
+    });
+
+    return { message: `Assigned ${issueId} to ${found.name}`, issueId, assignee: found.name };
+  }
+
+  /**
+   * Set or clear the due date on an issue.
+   * @param {string} issueId - Issue identifier
+   * @param {string} [dueDate] - Due date ISO 8601, or empty to clear
+   * @returns {Promise<Object>}
+   */
+  async setDueDate(issueId, dueDate) {
+    const client = await this._getClient();
+    const { project, issue } = await this._parseAndFindIssue(client, issueId);
+
+    const timestamp = normalizeDueDate(dueDate);
+
+    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
+      dueDate: timestamp
+    });
+
+    return {
+      message: timestamp ? `Due date set to ${dueDate} on ${issueId}` : `Due date cleared on ${issueId}`,
+      issueId,
+      dueDate: dueDate || null
+    };
+  }
+
+  /**
+   * Set the time estimation on an issue.
+   * @param {string} issueId - Issue identifier
+   * @param {number} hours - Estimated hours
+   * @returns {Promise<Object>}
+   */
+  async setEstimation(issueId, hours) {
+    const client = await this._getClient();
+    const { project, issue } = await this._parseAndFindIssue(client, issueId);
+
+    const normalizedHours = parseHours(hours, 'estimation');
+
+    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
+      estimation: normalizedHours
+    });
+
+    return { message: `Estimation set to ${normalizedHours}h on ${issueId}`, issueId, estimation: normalizedHours };
+  }
+
+  /**
+   * Create multiple issues in a single batch.
+   * @param {string} projectIdent - Project identifier
+   * @param {Object[]} issues - Array of issue objects with { title, description, priority, status, labels, type }
+   * @returns {Promise<Object>}
+   */
+  async batchCreateIssues(projectIdent, issues) {
+    const client = await this._getClient();
+
+    const project = await client.findOne(tracker.class.Project, {
+      identifier: projectIdent.toUpperCase()
+    });
+
+    if (!project) {
+      throw new Error(`Project not found: ${projectIdent}`);
+    }
+
+    if (!Array.isArray(issues) || issues.length === 0) {
+      throw new Error('issues must be a non-empty array');
+    }
+    if (issues.length > MAX_BATCH_SIZE) throw new Error(`Batch size limited to ${MAX_BATCH_SIZE} issues`);
+
+    // Cache lookups to avoid N+1 queries in the loop
+    const cachedTaskTypes = await client.findAll(task.class.TaskType, {});
+    const defaultTaskTypeId = await this._getDefaultTaskType(client, project);
+    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
+    const components = await client.findAll(tracker.class.Component, { space: project._id });
+    const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
+    const taskTypeIdsByName = new Map();
+    const statusesByTaskType = new Map();
+
+    const findNamed = (records, nameOf, wanted, kind) => {
+      const found = records.find(r => nameMatch(nameOf(r), wanted));
+      if (!found) {
+        throw new Error(`${kind} "${wanted}" not found. Available: ${records.map(nameOf).join(', ')}`);
+      }
+      return found._id;
+    };
+
+    // Resolve every item before reserving numbers, so a rejected item never consumes one.
+    const resolved = [];
+    const errors = [];
+    for (const item of issues) {
+      if (!item.title) {
+        errors.push({ error: 'Missing title', input: item });
+        continue;
+      }
+      try {
+        let taskTypeId = defaultTaskTypeId;
+        if (item.type) {
+          const key = item.type.toLowerCase();
+          if (!taskTypeIdsByName.has(key)) {
+            taskTypeIdsByName.set(key, await this._findTaskTypeByName(client, projectIdent, item.type, cachedTaskTypes));
+          }
+          taskTypeId = taskTypeIdsByName.get(key);
+        }
+        if (!statusesByTaskType.has(taskTypeId)) {
+          statusesByTaskType.set(taskTypeId, await this._getScopedStatuses(client, project, taskTypeId));
+        }
+        const scopedStatuses = statusesByTaskType.get(taskTypeId);
+
+        resolved.push({
+          item,
+          attributes: {
+            status: item.status
+              ? findNamed(scopedStatuses, s => s.name, item.status, 'Status')
+              : project.defaultIssueStatus || scopedStatuses[0]._id,
+            priority: resolvePriority(item.priority),
+            assignee: item.assignee ? findNamed(employees, e => e.name, item.assignee, 'Assignee') : null,
+            component: item.component ? findNamed(components, c => c.label, item.component, 'Component') : null,
+            milestone: item.milestone ? findNamed(milestones, m => m.label, item.milestone, 'Milestone') : null,
+            estimation: item.estimation === undefined ? 0 : parseHours(item.estimation, 'estimation'),
+            dueDate: normalizeDueDate(item.dueDate),
+            kind: taskTypeId
+          }
+        });
+      } catch (error) {
+        errors.push({ error: error.message, input: item });
+      }
+    }
+
+    const created = [];
+    if (resolved.length === 0) {
+      return { project: project.identifier, created, errors, total: 0 };
+    }
+
+    // All items share one position after the last rank; their numbers order them, so issues
+    // created concurrently by other sessions interleave strictly by number.
+    const lastRank = await this._lastIssueRank(client, project._id);
+    let currentSequence = await this._reserveIssueNumbers(client, project, resolved.length) - 1;
+
+    for (const { item, attributes } of resolved) {
+      currentSequence++;
+      const issueId = generateId();
+      await client.addCollection(
+        tracker.class.Issue,
+        project._id,
+        project._id,
+        tracker.class.Project,
+        'issues',
+        {
+          title: item.title,
+          identifier: `${project.identifier}-${currentSequence}`,
+          description: '',
+          status: attributes.status,
+          priority: attributes.priority,
+          number: currentSequence,
+          assignee: attributes.assignee,
+          component: attributes.component,
+          milestone: attributes.milestone,
+          estimation: attributes.estimation,
+          dueDate: attributes.dueDate,
+          remainingTime: 0,
+          reportedTime: 0,
+          childInfo: [],
+          parents: [],
+          kind: attributes.kind,
+          rank: issueRank(lastRank, currentSequence)
+        },
+        issueId
+      );
+
+      if (item.description) {
+        try {
+          await this._writeCollaboratorField(issueId, tracker.class.Issue, item.description, item.descriptionFormat);
+        } catch {
+          // Fallback to markup if collaborator unavailable
+          await client.updateDoc(tracker.class.Issue, project._id, issueId, {
+            description: toMarkup(item.description, item.descriptionFormat)
+          });
+        }
+      }
+
+      if (item.labels && item.labels.length > 0) {
+        for (const labelName of item.labels) {
+          await this._addLabelToIssue(client, issueId, project._id, labelName);
+        }
+      }
+
+      created.push({
+        id: `${project.identifier}-${currentSequence}`,
+        internalId: issueId,
+        title: item.title,
+        status: item.status || 'Todo',
+        priority: item.priority || 'none'
+      });
+    }
+
+    return { project: project.identifier, created, errors, total: created.length };
+  }
+
+  /**
+   * Move an issue to a different project.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {string} targetProject - Target project identifier
+   * @returns {Promise<Object>}
+   */
+  async moveIssue(issueId, targetProject) {
+    const client = await this._getClient();
+
+    const { project: sourceProject, issue } = await this._parseAndFindIssue(client, issueId);
+
+    const destProject = await client.findOne(tracker.class.Project, {
+      identifier: targetProject.toUpperCase()
+    });
+
+    if (!destProject) {
+      throw new Error(`Target project not found: ${targetProject}`);
+    }
+
+    if (sourceProject._id === destProject._id) {
+      return { message: `Issue ${issueId} is already in project ${targetProject}` };
+    }
+
+    // Remap the status when the destination workflow lacks the current one
+    const destTaskTypeId = issue.kind ?? await this._getDefaultTaskType(client, destProject);
+    const destStatuses = await this._getScopedStatuses(client, destProject, destTaskTypeId);
+    const srcStatusMap = await this._buildStatusMaps(client, sourceProject);
+    const currentStatusName = srcStatusMap.statusMap.get(issue.status);
+    let destStatusId;
+    if (currentStatusName) {
+      const destStatus = destStatuses.find(s => nameMatch(s.name, currentStatusName));
+      // Fall back to target project's default status
+      destStatusId = destStatus ? destStatus._id : destProject.defaultIssueStatus || destStatuses[0]?._id;
+    }
+    const lastDestRank = await this._lastIssueRank(client, destProject._id);
+
+    // Everything is resolved; only now spend a number in the target project.
+    const nextNumber = await this._reserveIssueNumbers(client, destProject, 1);
+    const issueUpdates = {
+      space: destProject._id,
+      number: nextNumber,
+      identifier: `${destProject.identifier}-${nextNumber}`,
+      rank: issueRank(lastDestRank, nextNumber)
+    };
+
+    // Fix attachedTo for top-level issues (attached to source project)
+    if (issue.attachedTo === sourceProject._id || issue.attachedToClass === tracker.class.Project) {
+      issueUpdates.attachedTo = destProject._id;
+    }
+    if (destStatusId !== undefined) issueUpdates.status = destStatusId;
+
+    await client.updateDoc(tracker.class.Issue, sourceProject._id, issue._id, issueUpdates);
+
+    const newId = `${destProject.identifier}-${nextNumber}`;
+
+    return {
+      message: `Moved ${issueId} to ${newId}`,
+      oldId: issueId,
+      newId,
+      sourceProject: sourceProject.identifier,
+      targetProject: destProject.identifier
+    };
+  }
+
+  async deleteIssue(issueId) {
+    const client = await this._getClient();
+    const { project, issue } = await this._parseAndFindIssue(client, issueId);
+
+    await client.removeCollection(tracker.class.Issue, project._id, issue._id, issue.attachedTo, issue.attachedToClass, issue.collection);
+
+    return {
+      message: `Issue ${issueId} permanently deleted`,
+      issueId
+    };
+  }
+}

@@ -31,6 +31,17 @@ function stringSet(value, allowed, name) {
   return result;
 }
 
+/**
+ * Parse an optional include list into a Set of allowed values; an omitted list is an empty Set.
+ * @param {string[]|undefined} value
+ * @param {string[]} allowed
+ * @param {string} [name='include'] - Parameter name used in error messages
+ * @returns {Set<string>}
+ */
+export function normalizeIncludeSet(value, allowed, name = 'include') {
+  return stringSet(value, allowed, name) ?? new Set();
+}
+
 function nestedLimit(value, name, fallback = DEFAULT_NESTED_LIMIT) {
   const limit = value ?? fallback;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_NESTED_LIMIT) {

@@ -2,7 +2,8 @@ import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { HulyClient, PRIORITY_MAP } from '../src/client.mjs';
+import { HulyClient } from '../src/client.mjs';
+import { PRIORITY_MAP } from '../src/helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const tracker = require('@hcengineering/tracker').default;

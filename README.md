@@ -607,8 +607,13 @@ npm publish bgx4k3p-huly-mcp-server-<version>.tgz --access public
 
 ```text
 src/
-  client.mjs    # HulyClient — all business logic and SDK calls
-  helpers.mjs   # Shared constants, markup conversion, JSDOM polyfills
+  client.mjs    # HulyClient — one class composed from the domain modules below
+  client/       # HulyClient domain modules (issues, projects, labels, milestones, ...)
+    sdk.mjs     #   Huly SDK entry points shared by the modules
+  domPolyfill.mjs # Browser globals the Huly SDK needs; loaded before any SDK package
+  helpers.mjs   # Shared constants and markup conversion
+  issueRank.mjs # Ranks for new and moved issues
+  projection.mjs # Field selection and bounded expansions for issue reads
   dispatch.mjs  # Tool-to-method dispatch table
   pool.mjs      # Connection pool — caches clients by workspace with TTL
   mcpShared.mjs # Shared MCP server factory — tool definitions + resources
