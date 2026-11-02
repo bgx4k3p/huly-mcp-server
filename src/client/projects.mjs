@@ -4,11 +4,15 @@
  * Methods are composed onto HulyClient; `this` is the client instance.
  */
 import {
+  DONE_CATEGORY,
   fromMarkup,
   listEnvelope,
+  LOST_CATEGORY,
   MILESTONE_STATUS_NAMES,
   nameMatch,
+  PRIORITY_NAMES,
   strictGet,
+  toHours,
   withExtra
 } from '../helpers.mjs';
 import { normalizeIncludeSet } from '../projection.mjs';
@@ -148,6 +152,80 @@ export class ProjectsMethods {
     const include = normalizeIncludeSet(options.include, PROJECT_INCLUDE_FIELDS);
     const [row] = await this._projectRows(client, [project], include, { ownerCount: true });
     return row;
+  }
+
+  /**
+   * Get a project summary with issue counts by status, priority, and overdue info.
+   * @param {string} projectIdent - Project identifier
+   * @returns {Promise<Object>}
+   */
+  async summarizeProject(projectIdent) {
+    const client = await this._getClient();
+
+    const project = await this._findProject(client, projectIdent);
+
+    // Only the fields the summary counts; a project can hold thousands of issues.
+    const [issues, { statuses, statusMap }, milestones] = await Promise.all([
+      client.findAll(tracker.class.Issue, { space: project._id }, {
+        projection: {
+          number: 1, title: 1, status: 1, priority: 1, dueDate: 1, assignee: 1, estimation: 1, reportedTime: 1
+        }
+      }),
+      this._buildStatusMaps(client),
+      client.findAll(tracker.class.Milestone, { space: project._id })
+    ]);
+    const closedStatuses = new Set(statuses
+      .filter(s => s.category === DONE_CATEGORY || s.category === LOST_CATEGORY)
+      .map(s => s._id));
+
+    const now = Date.now();
+    const byStatus = {};
+    const byPriority = {};
+    const overdueList = [];
+    let unassigned = 0;
+    let totalEstimation = 0;
+    let totalReported = 0;
+    for (const issue of issues) {
+      const statusName = strictGet(statusMap, issue.status, 'Status');
+      byStatus[statusName] = (byStatus[statusName] || 0) + 1;
+      const priorityName = strictGet(PRIORITY_NAMES, issue.priority, 'Priority');
+      byPriority[priorityName] = (byPriority[priorityName] || 0) + 1;
+      if (issue.dueDate && issue.dueDate < now && !closedStatuses.has(issue.status)) {
+        overdueList.push({
+          id: `${project.identifier}-${issue.number}`,
+          title: issue.title,
+          dueDate: new Date(issue.dueDate).toISOString().split('T')[0],
+          priority: priorityName
+        });
+      }
+      if (!issue.assignee) unassigned++;
+      totalEstimation += toHours(issue.estimation);
+      totalReported += toHours(issue.reportedTime);
+    }
+
+    return {
+      project: {
+        identifier: project.identifier,
+        name: project.name || project.identifier
+      },
+      totalIssues: issues.length,
+      byStatus,
+      byPriority,
+      overdue: {
+        count: overdueList.length,
+        issues: overdueList
+      },
+      unassigned,
+      milestones: milestones.map(m => ({
+        name: m.label,
+        status: strictGet(MILESTONE_STATUS_NAMES, m.status, 'Milestone status'),
+        targetDate: m.targetDate ? new Date(m.targetDate).toISOString().split('T')[0] : null
+      })),
+      timeTracking: {
+        totalEstimatedHours: totalEstimation,
+        totalReportedHours: totalReported
+      }
+    };
   }
 
   /**
