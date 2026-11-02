@@ -299,6 +299,26 @@ describe('createIssue payload', () => {
     assert.equal(select('addCollection').length, 0);
   });
 
+  it('reports the status and priority it stored, named as reads name them', async () => {
+    const { client, select } = createHarness({ projects: [baseProject({ defaultIssueStatus: 'status-progress' })] });
+
+    const result = await client.createIssue('PROJ', 'Defaults', undefined, 'HIGH');
+
+    assert.equal(select('addCollection', tracker.class.Issue)[0].data.status, 'status-progress');
+    assert.equal(result.status, 'In Progress', 'must not claim Todo when the project default is another status');
+    assert.equal(result.priority, 'High');
+  });
+
+  it('defaults to a status in the chosen task type\'s workflow, not the project default outside it', async () => {
+    const { client, select } = createHarness();
+
+    // The project default is Todo, but the Bug workflow holds only Triage.
+    const result = await client.createIssue('PROJ', 'A bug', undefined, undefined, undefined, undefined, 'Bug');
+
+    assert.equal(select('addCollection', tracker.class.Issue)[0].data.status, 'status-triage');
+    assert.equal(result.status, 'Triage');
+  });
+
   it('routes the description through the collaborator using the requested format', async () => {
     const { client, select, collaboratorWrites } = createHarness();
 
@@ -458,10 +478,9 @@ describe('moveIssue and deleteIssue', () => {
         identifier: 'DEST-21',
         rank: issueRank(undefined, 21),
         attachedTo: 'dest-id',
-        // status-review is not in the destination task type's workflow, so the
-        // issue lands on the destination default rather than keeping a status
-        // borrowed from some other project type.
-        status: 'status-triage'
+        // status-review is not in the Task workflow, and neither is the destination's default (Triage), so the
+        // issue lands on the first status of its own workflow rather than one borrowed from elsewhere.
+        status: 'status-todo'
       }
     }]);
     assert.equal(result.newId, 'DEST-21');
@@ -689,6 +708,20 @@ describe('batchCreateIssues', () => {
     const [write] = select('addCollection', tracker.class.Issue);
     assert.equal(write.data.kind, 'bug-type');
     assert.equal(write.data.status, 'status-triage');
+  });
+
+  it('defaults each batch item to a status in its own workflow and reports what it stored', async () => {
+    const { client, select } = createHarness();
+
+    const result = await client.batchCreateIssues('PROJ', [
+      { title: 'Task item' },
+      { title: 'Bug item', type: 'Bug', priority: 'urgent' }
+    ]);
+
+    assert.deepEqual(select('addCollection', tracker.class.Issue).map(call => call.data.status),
+      ['status-todo', 'status-triage']);
+    assert.deepEqual(result.created.map(item => [item.status, item.priority]),
+      [['Todo', 'No Priority'], ['Triage', 'Urgent']]);
   });
 
   it('rejects empty and oversized batches before reserving any numbers', async () => {

@@ -127,6 +127,17 @@ export class LookupsMethods {
   }
 
   /**
+   * Status a new or moved issue gets when none is requested: the project's default when it belongs to the
+   * task type's workflow, otherwise the workflow's first status.
+   * @param {Object} project - Project document
+   * @param {Object[]} statuses - The task type's workflow statuses, from `_getScopedStatuses`
+   * @returns {Object} IssueStatus document
+   */
+  _defaultStatus(project, statuses) {
+    return statuses.find(status => status._id === project.defaultIssueStatus) ?? statuses[0];
+  }
+
+  /**
    * Statuses in a task type's workflow, in workflow order. Falls back to every workspace status when the
    * task type has no scoped list.
    * @param {Object} client - Huly SDK client

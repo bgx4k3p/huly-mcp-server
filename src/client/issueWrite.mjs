@@ -8,6 +8,7 @@ import {
   nameMatch,
   normalizeDueDate,
   parseHours,
+  PRIORITY_NAMES,
   resolvePriority,
   toMarkup
 } from '../helpers.mjs';
@@ -66,7 +67,7 @@ export class IssueWriteMethods {
    * @param {string|number} [extra.dueDate] - Due date (ISO date or timestamp)
    * @param {number|string} [extra.estimation] - Estimated hours
    * @param {string} [extra.descriptionFormat='markdown'] - Description format: markdown, html or plain
-   * @returns {Promise<Object>} id, internalId, title, status, priority
+   * @returns {Promise<Object>} id, internalId, title, and the stored status and priority names (as reads report them)
    * @throws {Error} When a status, type, priority, assignee, component, milestone or date is invalid
    */
   async createIssue(projectIdent, title, description, priority, status, labels, type, extra = {}) {
@@ -84,17 +85,17 @@ export class IssueWriteMethods {
 
     // Resolve status scoped to the task type
     const statuses = await this._getScopedStatuses(client, taskTypeId);
-    let statusId;
+    let statusDoc;
     if (status) {
-      const found = statuses.find(s => nameMatch(s.name, status));
-      if (!found) {
+      statusDoc = statuses.find(s => nameMatch(s.name, status));
+      if (!statusDoc) {
         const available = statuses.map(s => s.name).join(', ');
         throw new Error(`Status "${status}" not found. Available: ${available}`);
       }
-      statusId = found._id;
     } else {
-      statusId = project.defaultIssueStatus || statuses[0]._id;
+      statusDoc = this._defaultStatus(project, statuses);
     }
+    const statusId = statusDoc._id;
 
     // Resolve optional extra fields
     let assigneeId = null;
@@ -172,8 +173,8 @@ export class IssueWriteMethods {
       id: `${project.identifier}-${nextNumber}`,
       internalId: issueId,
       title,
-      status: status || 'Todo',
-      priority: priority || 'none'
+      status: statusDoc.name,
+      priority: PRIORITY_NAMES[priorityValue]
     };
   }
 
@@ -344,7 +345,7 @@ export class IssueWriteMethods {
           attributes: {
             status: item.status
               ? findNamed(scopedStatuses, s => s.name, item.status, 'Status')
-              : project.defaultIssueStatus || scopedStatuses[0]._id,
+              : this._defaultStatus(project, scopedStatuses)._id,
             priority: resolvePriority(item.priority),
             assignee: item.assignee ? findNamed(employees, e => e.name, item.assignee, 'Assignee') : null,
             component: item.component ? findNamed(components, c => c.label, item.component, 'Component') : null,
@@ -359,6 +360,7 @@ export class IssueWriteMethods {
       }
     }
 
+    const statusNames = new Map([...statusesByTaskType.values()].flat().map(status => [status._id, status.name]));
     const created = [];
     if (resolved.length === 0) {
       return { project: project.identifier, created, errors, total: 0 };
@@ -421,8 +423,8 @@ export class IssueWriteMethods {
         id: `${project.identifier}-${currentSequence}`,
         internalId: issueId,
         title: item.title,
-        status: item.status || 'Todo',
-        priority: item.priority || 'none'
+        status: statusNames.get(attributes.status),
+        priority: PRIORITY_NAMES[attributes.priority]
       });
     }
 
@@ -455,7 +457,7 @@ export class IssueWriteMethods {
     if (currentStatusName) {
       const destStatus = destStatuses.find(s => nameMatch(s.name, currentStatusName));
       // Fall back to target project's default status
-      destStatusId = destStatus ? destStatus._id : destProject.defaultIssueStatus || destStatuses[0]?._id;
+      destStatusId = (destStatus ?? this._defaultStatus(destProject, destStatuses))?._id;
     }
     const lastDestRank = await this._lastIssueRank(client, destProject._id);
 
