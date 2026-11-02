@@ -623,6 +623,7 @@ src/
     resources.mjs #   huly:// resources
   mcp.mjs       # MCP stdio entry point (Codex, Claude Code)
   server.mjs    # MCP Streamable HTTP entry point (n8n, VS Code, remote)
+  http/         # HTTP transport pieces: auth/CORS/body guards, rate limit, sessions
   initCodex.mjs # Project config helpers for Codex and Claude Code
   index.mjs     # CLI entry point — --get-token, --init-* modes + MCP re-export
 ```
