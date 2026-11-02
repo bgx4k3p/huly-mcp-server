@@ -19,7 +19,8 @@
 import { createServer } from 'http';
 import crypto from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createMcpServer, PKG_VERSION } from './mcpShared.mjs';
+import { createMcpServer } from './mcp/server.mjs';
+import { PKG_VERSION } from './packageInfo.mjs';
 import { pool } from './pool.mjs';
 import {
   PORT, MCP_AUTH_TOKEN as API_TOKEN, ALLOWED_ORIGINS,
@@ -67,7 +68,7 @@ function getOrCreateSession(sessionId, responseMode) {
     return sessions.get(sessionId);
   }
 
-  const { server, TOOLS } = createMcpServer({ }, { responseMode });
+  const { server, TOOLS } = createMcpServer({ responseMode });
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
   });

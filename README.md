@@ -590,7 +590,7 @@ For local development:
 ```bash
 npm install
 npm run lint
-node --test test/initCodex.test.mjs test/mcpShared.test.mjs
+node --test test/initCodex.test.mjs test/mcpServer.test.mjs
 ```
 
 The custom pack script bundles only the Huly SDK packages needed at runtime
@@ -616,7 +616,11 @@ src/
   projection.mjs # Field selection and bounded expansions for issue reads
   dispatch.mjs  # Tool-to-method dispatch table
   pool.mjs      # Connection pool — caches clients by workspace with TTL
-  mcpShared.mjs # Shared MCP server factory — tool definitions + resources
+  mcp/          # MCP layer shared by both transports
+    server.mjs  #   Server factory and tool-call routing
+    tools/      #   Tool definitions by domain
+    policy.mjs  #   Tool annotations, project defaults, tool profiles
+    resources.mjs #   huly:// resources
   mcp.mjs       # MCP stdio entry point (Codex, Claude Code)
   server.mjs    # MCP Streamable HTTP entry point (n8n, VS Code, remote)
   initCodex.mjs # Project config helpers for Codex and Claude Code
@@ -624,8 +628,8 @@ src/
 ```
 
 ```text
-Claude / Codex -> stdio           -> mcp.mjs    -> mcpShared.mjs -> pool -> client -> Huly SDK
-n8n / remote   -> Streamable HTTP -> server.mjs -> mcpShared.mjs -> pool -> client -> Huly SDK
+Claude / Codex -> stdio           -> mcp.mjs    -> mcp/server.mjs -> pool -> client -> Huly SDK
+n8n / remote   -> Streamable HTTP -> server.mjs -> mcp/server.mjs -> pool -> client -> Huly SDK
 ```
 
 ---

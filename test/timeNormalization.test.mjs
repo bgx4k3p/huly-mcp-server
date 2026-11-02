@@ -5,7 +5,7 @@ import { issueTimeFields, issueRollupFields, toHours } from '../src/helpers.mjs'
 import { HulyClient } from '../src/client.mjs';
 
 process.env.HULY_URL ??= 'https://huly.example.test';
-const { createMcpServer } = await import('../src/mcpShared.mjs');
+const { createMcpServer } = await import('../src/mcp/server.mjs');
 const { TOOLS } = createMcpServer();
 
 describe('time numeric normalization', () => {

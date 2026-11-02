@@ -4,7 +4,7 @@
  *
  * Not every setting lives here. Other modules read process.env directly at call
  * time, including HULY_TRANSPORT (client/connection.mjs), HULY_TOOL_PROFILE
- * (mcpShared.mjs), HULY_RESPONSE_MODE (responseMode.mjs), HULY_METRICS and
+ * (mcp/server.mjs), HULY_RESPONSE_MODE (responseMode.mjs), HULY_METRICS and
  * HULY_METRICS_FILE (telemetry.mjs), HULY_CURSOR_SECRET (helpers.mjs), the
  * outbound header variables (outboundHeaders.mjs), ANTHROPIC_API_KEY
  * (tokenCount.mjs), and the --get-token fallbacks in index.mjs.

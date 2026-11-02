@@ -14,7 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { accountTools, workspaceTools } from '../src/dispatch.mjs';
-import { createMcpServer } from '../src/mcpShared.mjs';
+import { createMcpServer } from '../src/mcp/server.mjs';
 
 // ════════════════════════════════════════════════════════════════
 // Test helpers

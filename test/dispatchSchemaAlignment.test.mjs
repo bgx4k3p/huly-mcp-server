@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 process.env.HULY_URL = 'https://huly.example.test';
 
 const { accountTools, workspaceTools } = await import('../src/dispatch.mjs');
-const { createMcpServer } = await import('../src/mcpShared.mjs');
+const { createMcpServer } = await import('../src/mcp/server.mjs');
 
 const { TOOLS } = createMcpServer();
 const handlers = { ...accountTools, ...workspaceTools };
