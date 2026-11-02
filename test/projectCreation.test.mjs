@@ -270,3 +270,26 @@ describe('project identifier rules', () => {
     assert.deepEqual(calls[0].options, { showArchived: true });
   });
 });
+
+describe('archived projects', () => {
+  for (const [label, run] of [
+    ['deleted', client => client.deleteProject('OLD')],
+    ['updated', client => client.updateProject('OLD', { name: 'Renamed' })]
+  ]) {
+    it(`can still be ${label}`, async () => {
+      const queries = [];
+      const client = new HulyClient({ url: 'https://huly.example.test', token: 't', workspace: 'w' });
+      client._getClient = async () => ({
+        findOne: async (_class, query, options) => {
+          queries.push(options);
+          return options?.showArchived ? { _id: 'old', space: 'core:space:Space', identifier: 'OLD', archived: true } : null;
+        },
+        findAll: async () => [],
+        removeDoc: async () => {},
+        updateDoc: async () => {}
+      });
+      await run(client);
+      assert.deepEqual(queries[0], { showArchived: true });
+    });
+  }
+});

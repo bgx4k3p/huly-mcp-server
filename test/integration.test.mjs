@@ -983,7 +983,9 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
   // ── Project management ──────────────────────────────────
 
   describe('create_project + delete_project', () => {
-    const tempProj = 'TPRJ';
+    // Unique per run and transport: an archived project keeps its identifier, so a fixed one would collide.
+    const runSuffix = `${TRANSPORT === 'rest' ? 'R' : 'W'}${String(Date.now()).slice(-5)}`;
+    const tempProj = `TP${runSuffix}`;
 
     it('creates a new project', async () => {
       const result = await client.createProject(tempProj, 'Temp Project', 'For testing', false, 'Classic project');
@@ -1000,15 +1002,10 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       assert.ok(result.archived);
     });
 
-    // Note: unarchive not tested because the Huly SDK excludes archived projects from queries.
-    // Once archived, the project cannot be found via findOne/findAll.
-
-    it('deletes the project (create fresh for delete)', async () => {
-      // Create a new one to delete since TPRJ is now archived and invisible
-      const tempProj2 = 'TPR2';
-      await client.createProject(tempProj2, 'Temp 2', 'For delete test', false, 'Classic project');
-      const result = await client.deleteProject(tempProj2);
+    it('deletes the archived project', async () => {
+      const result = await client.deleteProject(tempProj);
       assert.ok(result.message.includes('deleted'));
+      await assert.rejects(() => client.getProject(tempProj), /Project not found/);
     });
 
     it('creates a private project that the creator can list, read, and write', async () => {

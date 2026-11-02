@@ -437,7 +437,8 @@ export class ProjectsMethods {
    */
   async updateProject(projectIdent, updates = {}) {
     const client = await this._getClient();
-    const project = await this._findProject(client, projectIdent);
+    // An archived project can still be renamed, restored through its settings, or deleted.
+    const project = await this._findProject(client, projectIdent, { showArchived: true });
 
     const ops = await this._projectUpdateFields(client, project, updates);
     if (updates.name !== undefined) ops.name = updates.name;
@@ -554,7 +555,8 @@ export class ProjectsMethods {
    */
   async deleteProject(projectIdent) {
     const client = await this._getClient();
-    const project = await this._findProject(client, projectIdent);
+    // An archived project can still be renamed, restored through its settings, or deleted.
+    const project = await this._findProject(client, projectIdent, { showArchived: true });
 
     await client.removeDoc(tracker.class.Project, project.space || project._id, project._id);
 
