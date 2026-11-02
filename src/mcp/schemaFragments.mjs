@@ -48,7 +48,7 @@ export const projectSettingsProps = {
   defaultTimeReportDay: { type: 'string', enum: ['CurrentWorkDay', 'PreviousWorkDay'] }
 };
 
-export const templateDataProps = {
+const templateDataProps = {
   title: { type: 'string', minLength: 1 },
   description: { type: 'string' },
   ...descriptionFormatProp,

@@ -5,7 +5,7 @@ import { HULY_PROJECT } from '../config.mjs';
 import { DESTRUCTIVE_TOOL_NAMES, READ_ONLY_TOOL_NAMES, workspaceTools } from '../dispatch.mjs';
 
 /** Tool profiles a server can expose: every tool, workspace tools only, or read-only tools. */
-export const SUPPORTED_TOOL_PROFILES = Object.freeze(['full', 'project', 'read']);
+const SUPPORTED_TOOL_PROFILES = Object.freeze(['full', 'project', 'read']);
 
 /** Tools whose `project` argument may default to HULY_PROJECT. */
 export const PROJECT_DEFAULT_TOOLS = new Set([
