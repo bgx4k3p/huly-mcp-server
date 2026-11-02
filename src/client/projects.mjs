@@ -19,8 +19,8 @@ import {
 import { normalizeIncludeSet } from '../projection.mjs';
 import { contactPlugin, core, generateId, tags, task, tracker } from './sdk.mjs';
 
-/** Project identifiers: 2-5 letters, stored upper-case. */
-const PROJECT_IDENTIFIER = /^[A-Z]{2,5}$/;
+/** Project identifiers: letters and digits, stored upper-case; the only shape an issue id can carry. */
+const PROJECT_IDENTIFIER = /^[A-Z0-9]+$/;
 
 const PROJECT_INCLUDE_FIELDS = Object.freeze(['milestones', 'components', 'labels', 'members', 'owners', 'defaults']);
 
@@ -252,7 +252,7 @@ export class ProjectsMethods {
    * Create a tracker project with the caller as member and owner. The project type is resolved by name or ID;
    * when omitted it is inferred only if exactly one (tracker) type exists. A write that cannot be read back is
    * rolled back.
-   * @param {string} identifier - Project identifier, 2-5 letters; stored upper-cased
+   * @param {string} identifier - Project identifier, letters and digits; stored upper-cased
    * @param {string} [name] - Display name (defaults to the identifier)
    * @param {string} [description] - Plain-text description
    * @param {boolean} [isPrivate=false] - Create a private project
@@ -264,14 +264,14 @@ export class ProjectsMethods {
    * @param {string[]} [options.members] - Additional member names or account UUIDs
    * @param {string[]} [options.owners] - Additional owner names or account UUIDs
    * @returns {Promise<{id: string, identifier: string, name: string, description: string, private: boolean}>}
-   * @throws {Error} When the identifier is not 2-5 letters or exists (archived projects included), the project type is unknown or ambiguous, a member cannot be
+   * @throws {Error} When the identifier is not letters and digits, or exists (archived projects included), the project type is unknown or ambiguous, a member cannot be
    *   resolved, or the created project is not readable by the caller
    */
   async createProject(identifier, name, description, isPrivate = false, projectType, options = {}) {
     // Issue ids are "<identifier>-<number>", so an identifier outside this shape makes its issues unaddressable.
     identifier = String(identifier ?? '').toUpperCase();
     if (!PROJECT_IDENTIFIER.test(identifier)) {
-      throw new Error(`Project identifier must be 2-5 letters (e.g. "PROJ"), received "${identifier}"`);
+      throw new Error(`Project identifier must be letters and digits only (e.g. "PROJ"), received "${identifier}"`);
     }
     const client = await this._getClient();
 

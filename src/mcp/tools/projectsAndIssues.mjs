@@ -86,7 +86,7 @@ export const projectsAndIssuesTools = [
     {
       name: 'create_project',
       description: 'Create a project with members, owners, and defaults. The creator is always included as a member and owner.',
-      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (2-5 uppercase letters, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, projectType: { type: 'string', description: 'Project type name or id. Required when several types can hold issues.' }, ...projectSettingsProps, ...workspaceProp }, required: ['identifier', 'name'] }
+      inputSchema: { type: 'object', properties: { identifier: { type: 'string', description: 'Project identifier (letters and digits, e.g., "PROJ")' }, name: { type: 'string', description: 'Project display name' }, description: { type: 'string', description: 'Project description' }, private: { type: 'boolean', description: 'Whether the project is private (default: false)' }, projectType: { type: 'string', description: 'Project type name or id. Required when several types can hold issues.' }, ...projectSettingsProps, ...workspaceProp }, required: ['identifier', 'name'] }
     },
     {
       name: 'update_project',

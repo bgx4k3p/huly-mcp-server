@@ -255,10 +255,11 @@ describe('project identifier rules', () => {
     return { client, calls };
   }
 
-  for (const identifier of ['MY-PROJ', 'A', 'TOOLONG', 'AB1', '']) {
+  // Huly accepts longer identifiers with digits (e.g. MOVEF19N); only shapes an issue id cannot carry are refused.
+  for (const identifier of ['MY-PROJ', 'MY PROJ', 'ÄBC', '']) {
     it(`rejects the identifier ${JSON.stringify(identifier)} before touching the workspace`, async () => {
       const { client, calls } = recordingClient();
-      await assert.rejects(() => client.createProject(identifier, 'Name'), /2-5 letters/);
+      await assert.rejects(() => client.createProject(identifier, 'Name'), /letters and digits only/);
       assert.deepEqual(calls, []);
     });
   }
