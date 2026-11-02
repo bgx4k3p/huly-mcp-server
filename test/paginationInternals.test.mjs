@@ -602,7 +602,7 @@ describe('connection resilience', () => {
         const error = new Error('reset by peer');
         error.code = 'ECONNRESET';
         throw error;
-      })),
+      }, { repeatable: true })),
       /reset by peer/
     );
     assert.equal(attempts, 3, 'one attempt plus two retries, then the error must escape');
@@ -619,11 +619,32 @@ describe('connection resilience', () => {
       observed.push(instance._client);
       if (attempts === 1) throw new Error('ConnectionClosed');
       return 'reconnected';
-    }));
+    }, { repeatable: true }));
 
     assert.equal(result, 'reconnected');
     assert.equal(attempts, 2, 'a recovered operation must run exactly once more');
     assert.deepEqual(observed, [{ marker: 'stale-socket' }, null]);
+  });
+
+  it('never re-runs an operation that is not marked safe to repeat', async () => {
+    const instance = newClient();
+    instance._client = { marker: 'stale-socket' };
+    let applied = 0;
+
+    await assert.rejects(
+      () => quietly(() => instance.withReconnect(async () => {
+        applied += 1;
+        throw new Error('ConnectionClosed');
+      })),
+      error => {
+        assert.match(error.message, /may or may not have been applied/);
+        assert.match(error.message, /ConnectionClosed/);
+        return true;
+      }
+    );
+    // A write that lost its reply may already be stored; running it again could duplicate it.
+    assert.equal(applied, 1);
+    assert.equal(instance._client, null, 'the dead connection is dropped so the next call reconnects');
   });
 
   it('disconnect clears every cached connection field and swallows a failing close', async () => {

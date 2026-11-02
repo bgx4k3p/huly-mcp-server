@@ -130,14 +130,19 @@ export class ConnectionMethods {
   }
 
   /**
-   * Execute an operation, disconnecting and retrying up to twice when it fails with a connection error.
+   * Execute an operation and recover from a lost connection. The dead connection is always dropped so the
+   * next call reconnects. Only a repeatable operation (one that changes nothing, such as a read) is retried,
+   * up to twice: a write whose reply was lost may already be stored, so running it again could apply it twice.
    * @param {Function} operation - Async function to execute
+   * @param {Object} [options]
+   * @param {boolean} [options.repeatable=false] - Whether the operation is safe to run again
    * @returns {Promise<*>} The operation's result
-   * @throws {Error} The operation's error when it is not a connection error or retries are exhausted
+   * @throws {Error} The operation's error; for a non-repeatable operation that lost its connection, an error
+   *   saying the outcome is unknown
    */
-  async withReconnect(operation) {
-    const maxRetries = 2;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  async withReconnect(operation, { repeatable = false } = {}) {
+    const maxRetries = repeatable ? 2 : 0;
+    for (let attempt = 0; ; attempt++) {
       try {
         return await operation();
       } catch (error) {
@@ -146,12 +151,17 @@ export class ConnectionMethods {
             error.message?.includes('ECONNREFUSED') ||
             error.message?.includes('socket') ||
             error.code === 'ECONNRESET';
-        if (isConnectionError && attempt < maxRetries) {
-          console.error(`Connection lost, attempting reconnect (${attempt + 1}/${maxRetries})...`);
-          this.disconnect();
-          continue;
+        if (!isConnectionError) throw error;
+        this.disconnect();
+        if (!repeatable) {
+          throw new Error(
+            `Connection lost before Huly confirmed this change, so it may or may not have been applied. ` +
+            `Check the current state before retrying. (${error.message})`,
+            { cause: error }
+          );
         }
-        throw error;
+        if (attempt >= maxRetries) throw error;
+        console.error(`Connection lost, attempting reconnect (${attempt + 1}/${maxRetries})...`);
       }
     }
   }

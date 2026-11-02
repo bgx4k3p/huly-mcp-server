@@ -92,7 +92,13 @@ async function captureStderr(run) {
 /** Recording stand-in for a connected HulyClient. */
 function createClientRecorder(results = {}) {
   const calls = [];
-  const target = { withReconnect: operation => operation() };
+  const reconnectOptions = [];
+  const target = {
+    withReconnect: (operation, options) => {
+      reconnectOptions.push(options);
+      return operation();
+    }
+  };
   const client = new Proxy(target, {
     get(_target, prop) {
       // Must never look thenable: the pool returns this from an async function.
@@ -105,7 +111,7 @@ function createClientRecorder(results = {}) {
       };
     }
   });
-  return { client, calls };
+  return { client, calls, reconnectOptions };
 }
 
 /**
@@ -619,6 +625,17 @@ describe('default project and workspace resolution', () => {
     }, workspaces);
 
     assert.deepEqual(workspaces, ['ws-default', 'other-ws']);
+  });
+
+  it('allows reconnect retries only for read-only tools', async () => {
+    const recorder = createClientRecorder();
+    await withPooledClient(recorder.client, async () => {
+      await handleToolCall('list_issues', { project: 'P' });
+      await handleToolCall('create_issue', { project: 'P', title: 'T' });
+      await handleToolCall('log_time', { issueId: 'P-1', hours: 1 });
+    });
+
+    assert.deepEqual(recorder.reconnectOptions.map(options => options?.repeatable), [true, false, false]);
   });
 
   it('passes the configured URL and credentials to account tools without connecting a pool client', async () => {

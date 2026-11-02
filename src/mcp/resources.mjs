@@ -35,7 +35,7 @@ export function registerResources(server) {
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     try {
       const client = await pool.getClient();
-      const result = await client.withReconnect(() => client.listProjects());
+      const result = await client.withReconnect(() => client.listProjects(), { repeatable: true });
       return {
         resources: result.items.map(p => ({
           uri: `huly://projects/${p.identifier}`,
@@ -57,9 +57,7 @@ export function registerResources(server) {
     const projectMatch = uri.match(/^huly:\/\/projects\/([A-Z0-9]+)$/i);
     if (projectMatch) {
       const client = await pool.getClient();
-      const result = await client.withReconnect(() =>
-        client.getProject(projectMatch[1])
-      );
+      const result = await client.withReconnect(() => client.getProject(projectMatch[1]), { repeatable: true });
       return {
         contents: [{
           uri,
@@ -73,9 +71,7 @@ export function registerResources(server) {
     const issueMatch = uri.match(/^huly:\/\/issues\/([A-Z0-9]+-\d+)$/i);
     if (issueMatch) {
       const client = await pool.getClient();
-      const result = await client.withReconnect(() =>
-        client.getIssue(issueMatch[1])
-      );
+      const result = await client.withReconnect(() => client.getIssue(issueMatch[1]), { repeatable: true });
       return {
         contents: [{
           uri,

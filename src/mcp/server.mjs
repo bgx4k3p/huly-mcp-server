@@ -5,7 +5,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { performance } from 'node:perf_hooks';
 import { HULY_CREDS, HULY_PROJECT, HULY_URL, resolveDefaultWorkspace } from '../config.mjs';
-import { accountTools, workspaceTools } from '../dispatch.mjs';
+import { accountTools, READ_ONLY_TOOL_NAMES, workspaceTools } from '../dispatch.mjs';
 import { PKG_NAME, PKG_VERSION } from '../packageInfo.mjs';
 import { pool } from '../pool.mjs';
 import { createResponseSerializer, normalizeToolError, RESPONSE_MODE_USAGE } from '../responseMode.mjs';
@@ -55,7 +55,9 @@ export async function handleToolCall(name, args = {}) {
       : args;
     const workspace = toolArgs.workspace || resolveDefaultWorkspace();
     const client = await pool.getClient(workspace);
-    return await client.withReconnect(() => workspaceTools[name](toolArgs, client));
+    return await client.withReconnect(() => workspaceTools[name](toolArgs, client), {
+      repeatable: READ_ONLY_TOOL_NAMES.has(name)
+    });
   }
 
   throw new Error(`Unknown tool: ${name}`);
