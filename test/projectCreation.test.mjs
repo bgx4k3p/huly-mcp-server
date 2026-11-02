@@ -242,3 +242,30 @@ describe('project type resolution', () => {
     assert.equal(calls.createDoc.length, 0);
   });
 });
+
+describe('project identifier rules', () => {
+  function recordingClient(existing = null) {
+    const calls = [];
+    const client = new HulyClient({ url: 'https://huly.example.test', token: 't', workspace: 'w' });
+    client._getClient = async () => ({
+      findOne: async (classRef, query, options) => { calls.push({ op: 'findOne', query, options }); return existing; },
+      findAll: async () => { calls.push({ op: 'findAll' }); return []; },
+      createDoc: async () => { calls.push({ op: 'createDoc' }); }
+    });
+    return { client, calls };
+  }
+
+  for (const identifier of ['MY-PROJ', 'A', 'TOOLONG', 'AB1', '']) {
+    it(`rejects the identifier ${JSON.stringify(identifier)} before touching the workspace`, async () => {
+      const { client, calls } = recordingClient();
+      await assert.rejects(() => client.createProject(identifier, 'Name'), /2-5 letters/);
+      assert.deepEqual(calls, []);
+    });
+  }
+
+  it('treats an archived project with the same identifier as taken', async () => {
+    const { client, calls } = recordingClient({ _id: 'old', identifier: 'OLD', archived: true });
+    await assert.rejects(() => client.createProject('old', 'Name'), /already exists/);
+    assert.deepEqual(calls[0].options, { showArchived: true });
+  });
+});
