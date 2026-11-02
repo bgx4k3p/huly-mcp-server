@@ -105,12 +105,12 @@ export class IssueWriteMethods {
 
     let componentId = null;
     if (extra.component) {
-      componentId = await this._findComponentByName(client, project._id, extra.component);
+      componentId = (await this._findComponent(client, project._id, extra.component))._id;
     }
 
     let milestoneId = null;
     if (extra.milestone) {
-      milestoneId = await this._findMilestoneByName(client, project._id, extra.milestone);
+      milestoneId = (await this._findMilestone(client, project._id, extra.milestone))._id;
     }
 
     const priorityValue = resolvePriority(priority);
@@ -243,14 +243,14 @@ export class IssueWriteMethods {
     if (extra.component !== undefined) {
       updates.component = extra.component.trim() === ''
         ? null
-        : await this._findComponentByName(client, project._id, extra.component);
+        : (await this._findComponent(client, project._id, extra.component))._id;
       updatedFields.push('component');
     }
 
     if (extra.milestone !== undefined) {
       updates.milestone = extra.milestone.trim() === ''
         ? null
-        : await this._findMilestoneByName(client, project._id, extra.milestone);
+        : (await this._findMilestone(client, project._id, extra.milestone))._id;
       updatedFields.push('milestone');
     }
 

@@ -4,6 +4,7 @@
  * Methods are composed onto HulyClient; `this` is the client instance.
  */
 import { fromMarkup, nameMatch, toMarkup, withExtra } from '../helpers.mjs';
+import { assertNameAvailable, findByName } from './lookups.mjs';
 import { generateId, tracker } from './sdk.mjs';
 
 /**
@@ -58,12 +59,10 @@ export class ComponentsMethods {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
 
-    const existing = await client.findOne(tracker.class.Component, {
-      space: project._id,
-      label: name
-    });
+    const components = await client.findAll(tracker.class.Component, { space: project._id });
+    const existing = components.find(component => nameMatch(component.label, name));
     if (existing) {
-      return { message: `Component "${name}" already exists`, id: existing._id };
+      return { message: `Component "${existing.label}" already exists`, id: existing._id };
     }
 
     // Resolve lead name to employee ID
@@ -107,8 +106,10 @@ export class ComponentsMethods {
     const project = await this._findProject(client, projectIdent);
 
     const components = await client.findAll(tracker.class.Component, { space: project._id });
-    const component = components.find(c => nameMatch(c.label, name));
-    if (!component) throw new Error(`Component not found: ${name}`);
+    const component = findByName(components, c => c.label, name, 'Component');
+    if (updates.name !== undefined) {
+      assertNameAvailable(components, c => c.label, updates.name, 'Component', component._id);
+    }
 
     const docUpdates = {};
     const updatedFields = [];
@@ -152,9 +153,7 @@ export class ComponentsMethods {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
 
-    const components = await client.findAll(tracker.class.Component, { space: project._id });
-    const component = components.find(c => nameMatch(c.label, name));
-    if (!component) throw new Error(`Component not found: ${name}`);
+    const component = await this._findComponent(client, project._id, name);
 
     await client.removeDoc(tracker.class.Component, project._id, component._id);
 
@@ -175,13 +174,6 @@ export class ComponentsMethods {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
 
-    const components = await client.findAll(tracker.class.Component, { space: project._id });
-    const component = components.find(c => nameMatch(c.label, name));
-    if (!component) {
-      const names = components.map(c => c.label).join(', ');
-      throw new Error(`Component not found: "${name}". Available: ${names}`);
-    }
-
-    return componentRow(component);
+    return componentRow(await this._findComponent(client, project._id, name));
   }
 }

@@ -67,7 +67,6 @@ export const DEFAULT_DETAIL_PAGE_SIZE = 20;
 export const FILTER_ID_BATCH_SIZE = 100;
 export const FILTER_QUERY_CONCURRENCY = 4;
 export const MAX_LABEL_FILTER_ISSUES = 5000;
-export const LOOKUP_CACHE_TTL_MS = 60000;
 export const MAX_PAGE_SIZE = 100;
 export const MAX_DETAIL_PAGE_SIZE = 50;
 export const CURSOR_TTL_MS = 24 * 60 * 60 * 1000;

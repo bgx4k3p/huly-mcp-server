@@ -17,6 +17,7 @@ import {
   withExtra
 } from '../helpers.mjs';
 import { boundedCollection, normalizeIncludeSet } from '../projection.mjs';
+import { assertNameAvailable, findByName } from './lookups.mjs';
 import { core, generateId, tracker } from './sdk.mjs';
 
 const MILESTONE_INCLUDE_FIELDS = Object.freeze(['issues']);
@@ -159,11 +160,7 @@ export class MilestonesMethods {
       space: project._id
     });
 
-    const milestone = milestones.find(m => nameMatch(m.label, name));
-
-    if (!milestone) {
-      throw new Error(`Milestone not found: ${name}`);
-    }
+    const milestone = findByName(milestones, m => m.label, name, 'Milestone');
 
     const issues = await client.findAll(tracker.class.Issue, {
       space: project._id,
@@ -294,12 +291,7 @@ export class MilestonesMethods {
       space: project._id
     });
 
-    const milestone = milestones.find(m => nameMatch(m.label, milestoneName));
-
-    if (!milestone) {
-      const available = milestones.map(m => m.label).join(', ');
-      throw new Error(`Milestone "${milestoneName}" not found. Available milestones: ${available || 'none'}`);
-    }
+    const milestone = findByName(milestones, m => m.label, milestoneName, 'Milestone');
 
     await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
       milestone: milestone._id
@@ -334,8 +326,10 @@ export class MilestonesMethods {
     const project = await this._findProject(client, projectIdent);
 
     const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
-    const milestone = milestones.find(m => nameMatch(m.label, name));
-    if (!milestone) throw new Error(`Milestone not found: ${name}`);
+    const milestone = findByName(milestones, m => m.label, name, 'Milestone');
+    if (updates.name !== undefined) {
+      assertNameAvailable(milestones, m => m.label, updates.name, 'Milestone', milestone._id);
+    }
 
     const docUpdates = {};
     const updatedFields = [];
@@ -398,13 +392,11 @@ export class MilestonesMethods {
     const project = await this._findProject(client, projectIdent);
 
     const milestones = await client.findAll(tracker.class.Milestone, { space: project._id });
-    const milestone = milestones.find(m => nameMatch(m.label, name));
-    if (!milestone) throw new Error(`Milestone not found: ${name}`);
+    const milestone = findByName(milestones, m => m.label, name, 'Milestone');
 
     let targetMilestone = null;
     if (moveIssuesTo && moveIssuesTo.trim() !== '') {
-      targetMilestone = milestones.find(m => m._id !== milestone._id && nameMatch(m.label, moveIssuesTo));
-      if (!targetMilestone) throw new Error(`Milestone not found: ${moveIssuesTo}`);
+      targetMilestone = findByName(milestones.filter(m => m._id !== milestone._id), m => m.label, moveIssuesTo, 'Milestone');
     }
 
     const issues = await client.findAll(tracker.class.Issue, { milestone: milestone._id });

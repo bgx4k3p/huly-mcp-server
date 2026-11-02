@@ -254,7 +254,7 @@ describe('taxonomy writes land in the owning space', () => {
       milestones: [{ _id: 'ms-beta', space: 'beta-space', label: 'v2', status: 0 }]
     });
 
-    await assert.rejects(() => client.setMilestone('ALPHA-1', 'v2'), /Milestone "v2" not found/);
+    await assert.rejects(() => client.setMilestone('ALPHA-1', 'v2'), /Milestone not found: v2/);
     assert.equal(calls.updateDoc.length, 0);
   });
 });

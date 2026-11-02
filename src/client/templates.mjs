@@ -71,8 +71,8 @@ export class TemplatesMethods {
     if (input.estimation !== undefined) data.estimation = parseHours(input.estimation, 'estimation');
     for (const [field, resolve] of [
       ['assignee', value => this._findEmployeeByName(client, value)],
-      ['component', value => this._findComponentByName(client, project._id, value)],
-      ['milestone', value => this._findMilestoneByName(client, project._id, value)]
+      ['component', async value => (await this._findComponent(client, project._id, value))._id],
+      ['milestone', async value => (await this._findMilestone(client, project._id, value))._id]
     ]) {
       if (input[field] !== undefined) data[field] = input[field].trim() === '' ? null : await resolve(input[field]);
     }

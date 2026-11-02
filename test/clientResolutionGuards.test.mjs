@@ -75,8 +75,8 @@ describe('name resolution guards', () => {
   it('reports the missing milestone and component by name', async () => {
     const sdk = harness({ milestones: [], components: [] });
     const client = stubClient(sdk);
-    await assert.rejects(() => client._findMilestoneByName(sdk, 'p1', 'v9'), /Milestone not found: v9/);
-    await assert.rejects(() => client._findComponentByName(sdk, 'p1', 'API'), /Component not found: API/);
+    await assert.rejects(() => client._findMilestone(sdk, 'p1', 'v9'), /Milestone not found: v9/);
+    await assert.rejects(() => client._findComponent(sdk, 'p1', 'API'), /Component not found: API/);
   });
 
   it('scopes milestone and component lookups to the requested project', async () => {
@@ -86,8 +86,8 @@ describe('name resolution guards', () => {
     });
     const client = stubClient(sdk);
     // Same names exist, but in a different project — they must not resolve.
-    await assert.rejects(() => client._findMilestoneByName(sdk, 'p1', 'v1'), /Milestone not found/);
-    await assert.rejects(() => client._findComponentByName(sdk, 'p1', 'API'), /Component not found/);
+    await assert.rejects(() => client._findMilestone(sdk, 'p1', 'v1'), /Milestone not found/);
+    await assert.rejects(() => client._findComponent(sdk, 'p1', 'API'), /Component not found/);
   });
 });
 

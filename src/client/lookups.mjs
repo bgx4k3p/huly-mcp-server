@@ -3,7 +3,7 @@
  *
  * Methods are composed onto HulyClient; `this` is the client instance.
  */
-import { DONE_CATEGORY, LOOKUP_CACHE_TTL_MS, nameMatch } from '../helpers.mjs';
+import { DONE_CATEGORY, nameMatch } from '../helpers.mjs';
 import { contactPlugin, tags, task, tracker } from './sdk.mjs';
 
 /**
@@ -13,6 +13,37 @@ import { contactPlugin, tags, task, tracker } from './sdk.mjs';
  */
 export function typeDisplayName(type) {
   return type.name || type._id.split(':').pop();
+}
+
+/**
+ * Find a record by name, ignoring case, or fail listing the names that exist.
+ * @param {Object[]} records - Candidate documents
+ * @param {(record: Object) => string} nameOf - Name accessor
+ * @param {string} name - Requested name
+ * @param {string} kind - Record kind for the error message, e.g. "Component"
+ * @returns {Object} Matching document
+ * @throws {Error} When no record has that name
+ */
+export function findByName(records, nameOf, name, kind) {
+  const found = records.find(record => nameMatch(nameOf(record), name));
+  if (!found) {
+    throw new Error(`${kind} not found: ${name}. Available: ${records.map(nameOf).join(', ') || 'none'}`);
+  }
+  return found;
+}
+
+/**
+ * Fail when another record already uses a name, ignoring case, so names never collide by case alone.
+ * @param {Object[]} records - Existing documents
+ * @param {(record: Object) => string} nameOf - Name accessor
+ * @param {string} name - Name about to be created or given
+ * @param {string} kind - Record kind for the error message
+ * @param {string} [exceptId] - Record being renamed, which may keep its own name
+ * @throws {Error} When the name is taken
+ */
+export function assertNameAvailable(records, nameOf, name, kind, exceptId) {
+  const taken = records.find(record => record._id !== exceptId && nameMatch(nameOf(record), name));
+  if (taken) throw new Error(`${kind} "${nameOf(taken)}" already exists`);
 }
 
 export class LookupsMethods {
@@ -177,41 +208,29 @@ export class LookupsMethods {
   }
 
   /**
-   * Find a milestone id in a project by its exact label (case-sensitive).
+   * Find a milestone in a project by name (case-insensitive).
    * @param {Object} client - Huly SDK client
-   * @param {string} projectId - Project document id
-   * @param {string} name - Milestone label
-   * @returns {Promise<string>} Milestone id
-   * @throws {Error} When the project has no milestone with that label
+   * @param {string} projectId - Project id
+   * @param {string} name - Milestone name
+   * @returns {Promise<Object>} Milestone document
+   * @throws {Error} When the project has no milestone with that name
    */
-  async _findMilestoneByName(client, projectId, name) {
-    const ms = await client.findOne(tracker.class.Milestone, {
-      space: projectId,
-      label: name
-    });
-    if (!ms) {
-      throw new Error(`Milestone not found: ${name}`);
-    }
-    return ms._id;
+  async _findMilestone(client, projectId, name) {
+    const milestones = await client.findAll(tracker.class.Milestone, { space: projectId });
+    return findByName(milestones, milestone => milestone.label, name, 'Milestone');
   }
 
   /**
-   * Find a component id in a project by its exact label (case-sensitive).
+   * Find a component in a project by name (case-insensitive).
    * @param {Object} client - Huly SDK client
-   * @param {string} projectId - Project document id
-   * @param {string} name - Component label
-   * @returns {Promise<string>} Component id
-   * @throws {Error} When the project has no component with that label
+   * @param {string} projectId - Project id
+   * @param {string} name - Component name
+   * @returns {Promise<Object>} Component document
+   * @throws {Error} When the project has no component with that name
    */
-  async _findComponentByName(client, projectId, name) {
-    const comp = await client.findOne(tracker.class.Component, {
-      space: projectId,
-      label: name
-    });
-    if (!comp) {
-      throw new Error(`Component not found: ${name}`);
-    }
-    return comp._id;
+  async _findComponent(client, projectId, name) {
+    const components = await client.findAll(tracker.class.Component, { space: projectId });
+    return findByName(components, component => component.label, name, 'Component');
   }
 
   /**
@@ -251,28 +270,22 @@ export class LookupsMethods {
   }
 
   /**
-   * Find an issue label by name (case-insensitive), caching every issue label for LOOKUP_CACHE_TTL_MS.
+   * All issue labels in the workspace, read fresh so names created or renamed elsewhere are seen at once.
+   * @param {Object} client - Huly SDK client
+   * @returns {Promise<Object[]>} TagElement documents
+   */
+  async _issueLabels(client) {
+    return await client.findAll(tags.class.TagElement, { targetClass: tracker.class.Issue });
+  }
+
+  /**
+   * Find an issue label by name (case-insensitive).
    * @param {Object} client - Huly SDK client
    * @param {string} labelName - Label title
    * @returns {Promise<Object|null>} TagElement document, or null when no label has that name
    */
   async _findLabelByName(client, labelName) {
-    const key = labelName.toLowerCase();
-    const cached = this._labelLookupCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
-
-    const tagElements = await client.findAll(tags.class.TagElement, {
-      targetClass: tracker.class.Issue
-    });
-    const expiresAt = Date.now() + LOOKUP_CACHE_TTL_MS;
-    for (const tagElement of tagElements) {
-      this._labelLookupCache.set(tagElement.title.toLowerCase(), {
-        value: tagElement,
-        expiresAt
-      });
-    }
-    const matched = tagElements.find(tagElement => nameMatch(tagElement.title, labelName)) ?? null;
-    if (matched) this._labelLookupCache.set(key, { value: matched, expiresAt });
-    return matched;
+    const labels = await this._issueLabels(client);
+    return labels.find(label => nameMatch(label.title, labelName)) ?? null;
   }
 }

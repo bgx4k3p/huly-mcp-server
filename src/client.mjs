@@ -45,7 +45,6 @@ export class HulyClient {
     this._collabClient = null;
     this._workspaceId = null;
     this._serverConfig = null;
-    this._labelLookupCache = new Map();
   }
 }
 

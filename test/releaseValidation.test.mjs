@@ -119,36 +119,4 @@ describe('release validation properties', () => {
       );
     }
   });
-
-  it('invalidates the label lookup cache after every label mutation', async () => {
-    const tag = { _id: 'tag-id', space: 'tag-space', title: 'Existing' };
-    const sdk = {
-      findOne: async (classRef, query) => {
-        if (classRef === tracker.class.Project) return { _id: 'project-id' };
-        if (query.title === 'New') return null;
-        return tag;
-      },
-      // createLabel enumerates projects so it can skip built-in model spaces.
-      findAll: async (classRef) => (classRef === tracker.class.Project ? [{ _id: 'project-id' }] : []),
-      createDoc: async () => {},
-      updateDoc: async () => {},
-      removeDoc: async () => {}
-    };
-    const client = new HulyClient({
-      url: 'https://huly.example.test', token: 'test-token', workspace: 'release-validation'
-    });
-    client._getClient = async () => sdk;
-
-    client._labelLookupCache.set('stale', { value: tag, expiresAt: Date.now() + 60_000 });
-    await client.createLabel('New');
-    assert.equal(client._labelLookupCache.size, 0);
-
-    client._labelLookupCache.set('stale', { value: tag, expiresAt: Date.now() + 60_000 });
-    await client.updateLabel('Existing', { newName: 'Renamed' });
-    assert.equal(client._labelLookupCache.size, 0);
-
-    client._labelLookupCache.set('stale', { value: tag, expiresAt: Date.now() + 60_000 });
-    await client.deleteLabel('Existing');
-    assert.equal(client._labelLookupCache.size, 0);
-  });
 });

@@ -11,6 +11,7 @@ import {
   resolveColor,
   withExtra
 } from '../helpers.mjs';
+import { assertNameAvailable, findByName } from './lookups.mjs';
 import { generateId, tags, tracker } from './sdk.mjs';
 
 export class LabelsMethods {
@@ -23,10 +24,7 @@ export class LabelsMethods {
    * @returns {Promise<{message: string}>} Added, or already attached
    */
   async _addLabelToIssue(client, issueId, space, labelName) {
-    let tagElement = await client.findOne(tags.class.TagElement, {
-      title: labelName,
-      targetClass: tracker.class.Issue
-    });
+    let tagElement = await this._findLabelByName(client, labelName);
 
     if (!tagElement) {
       const tagId = generateId();
@@ -38,7 +36,6 @@ export class LabelsMethods {
         category: DEFAULT_LABEL_CATEGORY
       }, tagId);
       tagElement = { _id: tagId, title: labelName, color: DEFAULT_LABEL_COLOR };
-      this._labelLookupCache.clear();
     }
 
     const existing = await client.findOne(tags.class.TagReference, {
@@ -146,13 +143,9 @@ export class LabelsMethods {
   async createLabel(name, color, description) {
     const client = await this._getClient();
 
-    const existing = await client.findOne(tags.class.TagElement, {
-      title: name,
-      targetClass: tracker.class.Issue
-    });
-
+    const existing = await this._findLabelByName(client, name);
     if (existing) {
-      return { message: `Label "${name}" already exists`, id: existing._id };
+      return { message: `Label "${existing.title}" already exists`, id: existing._id };
     }
 
     // A built-in project such as tracker:project:DefaultProject is a
@@ -173,7 +166,6 @@ export class LabelsMethods {
       color: resolveColor(color),
       category: DEFAULT_LABEL_CATEGORY
     }, tagId);
-    this._labelLookupCache.clear();
 
     // createDoc resolves even when the server discards the document, which is
     // how a label written to a model-level space used to report success while
@@ -205,13 +197,10 @@ export class LabelsMethods {
   async updateLabel(name, updates = {}) {
     const client = await this._getClient();
 
-    const tagElement = await client.findOne(tags.class.TagElement, {
-      title: name,
-      targetClass: tracker.class.Issue
-    });
-
-    if (!tagElement) {
-      throw new Error(`Label "${name}" not found`);
+    const labels = await this._issueLabels(client);
+    const tagElement = findByName(labels, label => label.title, name, 'Label');
+    if (updates.newName !== undefined) {
+      assertNameAvailable(labels, label => label.title, updates.newName, 'Label', tagElement._id);
     }
 
     const ops = {};
@@ -238,7 +227,6 @@ export class LabelsMethods {
         renamedReferences += 1;
       }
     }
-    this._labelLookupCache.clear();
 
     return {
       message: `Label "${name}" updated`,
@@ -256,13 +244,8 @@ export class LabelsMethods {
    */
   async deleteLabel(name) {
     const client = await this._getClient();
-    const tagElement = await client.findOne(tags.class.TagElement, {
-      title: name,
-      targetClass: tracker.class.Issue
-    });
-    if (!tagElement) throw new Error(`Label "${name}" not found`);
+    const tagElement = findByName(await this._issueLabels(client), label => label.title, name, 'Label');
     await client.removeDoc(tags.class.TagElement, tagElement.space, tagElement._id);
-    this._labelLookupCache.clear();
     return { message: `Label "${name}" deleted`, id: tagElement._id };
   }
 
@@ -275,12 +258,7 @@ export class LabelsMethods {
   async getLabel(name) {
     const client = await this._getClient();
 
-    const tagElements = await client.findAll(tags.class.TagElement, {
-      targetClass: tracker.class.Issue
-    });
-
-    const label = tagElements.find(t => nameMatch(t.title, name));
-    if (!label) throw new Error(`Label not found: ${name}`);
+    const label = findByName(await this._issueLabels(client), tag => tag.title, name, 'Label');
 
     return withExtra(label, {
       id: label._id,
