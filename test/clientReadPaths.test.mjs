@@ -684,6 +684,38 @@ describe('listStatuses scoping', () => {
     assert.equal(second.nextCursor, undefined);
   });
 
+  it('finds a status by name beyond the first page of the project\'s statuses', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      _id: `s-${i}`, name: `Stage ${i}`, category: 'task:statusCategory:Active', color: 1, createdOn: 100 + i
+    }));
+    const { client } = harness({
+      projects: projects(),
+      statuses: many,
+      taskTypes: [{ _id: 'tt-issue', name: 'Issue', statuses: many.map(s => s._id) }],
+      projectTypes: [{ _id: 'pt-classic', name: 'Classic', tasks: ['tt-issue'] }]
+    });
+
+    // Default list pages hold 50, and Stage 0 is the oldest, so it falls on the second page.
+    const status = await client.getStatus('PROJ', 'stage 0');
+    assert.equal(status.id, 's-0');
+  });
+
+  it('renders status descriptions from markup the same way whether or not the list is scoped', async () => {
+    const markup = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Work started' }] }] });
+    const statuses = [{ _id: 's-todo', name: 'Todo', category: 'task:statusCategory:ToDo', color: 1, description: markup, createdOn: 2 }];
+    const { client } = harness({
+      projects: projects(),
+      statuses,
+      taskTypes: [{ _id: 'tt-issue', name: 'Issue', statuses: ['s-todo'] }],
+      projectTypes: [{ _id: 'pt-classic', name: 'Classic', tasks: ['tt-issue'] }]
+    });
+
+    const unscoped = await client.listStatuses();
+    const scoped = await client.listStatuses('PROJ');
+    assert.equal(unscoped.items[0].description, 'Work started');
+    assert.equal(scoped.items[0].description, 'Work started');
+  });
+
   it('rejects a task type that exists elsewhere but not in the addressed project', async () => {
     const { client } = statusHarness();
 

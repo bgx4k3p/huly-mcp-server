@@ -108,28 +108,40 @@ export class WorkflowMethods {
    */
   async listStatuses(projectIdent, taskTypeName, options = {}) {
     const client = await this._getClient();
+    const rows = await this._statusRows(client, projectIdent, taskTypeName);
+    return this._cursoredFindAll(rows, {
+      ...options,
+      cursorScope: {
+        workspace: this.workspace,
+        tool: 'list_statuses',
+        project: projectIdent?.toUpperCase() ?? null,
+        taskType: taskTypeName?.toLowerCase() ?? null
+      }
+    });
+  }
 
+  /**
+   * Every status row in scope: all workspace statuses, or those of a project's task types, optionally narrowed
+   * to one task type.
+   * @param {Object} client - Huly SDK client
+   * @param {string} [projectIdent] - Project identifier to scope statuses
+   * @param {string} [taskTypeName] - Task type name to scope statuses (case-insensitive)
+   * @returns {Promise<Object[]>} Status rows
+   * @throws {Error} When the project, its project type, or the task type is not found
+   */
+  async _statusRows(client, projectIdent, taskTypeName) {
     const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
+    // withExtra carries the source doc's createdOn, which the cursor tuple sorts on. Without it these rows
+    // tuple to 0 and ordering silently degenerates to id-descending. Compact output strips extra entirely.
+    const statusRow = status => withExtra(status, {
+      id: status._id,
+      name: status.name,
+      category: STATUS_CATEGORY_NAMES[status.category] || status.category,
+      color: status.color,
+      description: fromMarkup(status.description)
+    });
+    if (!projectIdent && !taskTypeName) return allStatuses.map(statusRow);
 
-    // If no scoping requested, return all
-    if (!projectIdent && !taskTypeName) {
-      // withExtra carries the source doc's createdOn, which the cursor tuple
-      // sorts on. Without it these rows tuple to 0 and ordering silently
-      // degenerates to id-descending. Compact output strips extra entirely.
-      const enriched = allStatuses.map(s => withExtra(s, {
-        id: s._id,
-        name: s.name,
-        category: STATUS_CATEGORY_NAMES[s.category] || s.category,
-        color: s.color,
-        description: fromMarkup(s.description)
-      }));
-      return this._cursoredFindAll(enriched, {
-        ...options,
-        cursorScope: { workspace: this.workspace, tool: 'list_statuses', project: null, taskType: null }
-      });
-    }
-
-    // Get task types scoped to this project
     const allTaskTypes = await client.findAll(task.class.TaskType, {});
     let relevantTaskTypes = allTaskTypes;
 
@@ -146,8 +158,7 @@ export class WorkflowMethods {
       relevantTaskTypes = allTaskTypes.filter(tt => taskTypeIds.has(tt._id));
     }
 
-    // Further filter by task type name. An unknown name must fail rather than
-    // fall through to the unscoped status list below.
+    // An unknown task type name must fail rather than fall through to the unscoped status list.
     if (taskTypeName) {
       relevantTaskTypes = relevantTaskTypes.filter(tt => nameMatch(tt.name, taskTypeName));
       if (relevantTaskTypes.length === 0) {
@@ -155,50 +166,23 @@ export class WorkflowMethods {
       }
     }
 
-    // Collect status IDs from matching task types
-    const statusIds = new Set();
-    for (const tt of relevantTaskTypes) {
-      if (tt.statuses) {
-        for (const sid of tt.statuses) {
-          statusIds.add(sid);
-        }
-      }
-    }
-
-    // Filter statuses to only those in scope
-    const scopedStatuses = allStatuses.filter(s => statusIds.has(s._id));
-
-    const enriched = scopedStatuses.map(s => withExtra(s, {
-      id: s._id,
-      name: s.name,
-      category: STATUS_CATEGORY_NAMES[s.category] || s.category,
-      color: s.color,
-      description: s.description || ''
-    }));
-    return this._cursoredFindAll(enriched, {
-      ...options,
-      cursorScope: {
-        workspace: this.workspace,
-        tool: 'list_statuses',
-        project: projectIdent?.toUpperCase() ?? null,
-        taskType: taskTypeName?.toLowerCase() ?? null
-      }
-    });
+    const statusIds = new Set(relevantTaskTypes.flatMap(tt => tt.statuses ?? []));
+    return allStatuses.filter(status => statusIds.has(status._id)).map(statusRow);
   }
 
   /**
-   * Get a status by name within a project. Only the first page (50) of the project's statuses is searched.
+   * Get a status by name within a project, searching all of the project's statuses.
    * @param {string} projectIdent - Project identifier
    * @param {string} name - Status name (case-insensitive exact match)
    * @returns {Promise<Object>} Status row
    * @throws {Error} When the project or status is not found; the message lists available statuses
    */
   async getStatus(projectIdent, name) {
-    const result = await this.listStatuses(projectIdent);
-    const status = result.items.find(s => nameMatch(s.name, name));
+    const client = await this._getClient();
+    const rows = await this._statusRows(client, projectIdent);
+    const status = rows.find(row => nameMatch(row.name, name));
     if (!status) {
-      const names = result.items.map(s => s.name).join(', ');
-      throw new Error(`Status not found: "${name}". Available: ${names}`);
+      throw new Error(`Status not found: "${name}". Available: ${rows.map(row => row.name).join(', ')}`);
     }
     return status;
   }
