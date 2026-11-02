@@ -21,7 +21,6 @@ export class TimeReportsMethods {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
-    // Resolve employee — default to current user's Employee ref if possible
     let employeeId = null;
     if (employeeName) {
       employeeId = await this._findEmployeeByName(client, employeeName);
@@ -44,15 +43,13 @@ export class TimeReportsMethods {
       reportId
     );
 
-    const newReported = toHours(issue.reportedTime) + normalizedHours;
-    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
-      reportedTime: newReported
-    });
+    // Huly adds the report to the issue's reportedTime itself, atomically with the report.
+    const updated = await client.findOne(tracker.class.Issue, { _id: issue._id });
 
     return {
       message: `Logged ${normalizedHours}h on ${issueId}`,
       issueId,
-      reportedTime: newReported,
+      reportedTime: toHours(updated?.reportedTime),
       id: reportId
     };
   }

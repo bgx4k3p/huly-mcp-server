@@ -219,7 +219,9 @@ describe('time report writes', () => {
     const updates = [];
     const client = singleIssue(stubClient({
       addCollection: async (...args) => { calls.push(args); },
-      updateDoc: async (...args) => { updates.push(args); }
+      updateDoc: async (...args) => { updates.push(args); },
+      // Huly adds the report to the issue total itself when the report is created.
+      findOne: async () => ({ _id: 'issue-id', reportedTime: 3.5 })
     }), { issue: { reportedTime: 2 } });
 
     const result = await client.logTime('PROJ-1', 1.5, 'work');
@@ -232,8 +234,9 @@ describe('time report writes', () => {
     assert.equal(collection, 'reports', 'the wrong collection name hides the report from the UI');
     assert.equal(data.description, 'work');
     assert.equal(id, result.id);
-    assert.deepEqual(updates[0].slice(0, 3), [ISSUE_CLASS, 'project-space', 'issue-id']);
-    assert.equal(updates[0][3].reportedTime, 3.5);
+    // Writing the total here would race with Huly's own update and lose concurrent logs.
+    assert.deepEqual(updates, []);
+    assert.equal(result.reportedTime, 3.5);
   });
 
   it('resolves the employee or refuses to write an unattributed report', async () => {
@@ -241,7 +244,8 @@ describe('time report writes', () => {
     const client = singleIssue(stubClient({
       findAll: async () => [{ _id: 'emp-1', name: 'Ada Lovelace', active: true }],
       addCollection: async (...args) => { calls.push(args); },
-      updateDoc: async () => {}
+      updateDoc: async () => {},
+      findOne: async () => ({ _id: 'issue-id', reportedTime: 0 })
     }));
 
     await client.logTime('PROJ-1', 1, 'work', undefined, 'ada lovelace');
@@ -261,7 +265,8 @@ describe('time report writes', () => {
     const calls = [];
     const client = singleIssue(stubClient({
       addCollection: async (...args) => { calls.push(args); },
-      updateDoc: async () => {}
+      updateDoc: async () => {},
+      findOne: async () => ({ _id: 'issue-id', reportedTime: 0 })
     }));
 
     const before = Date.now();
