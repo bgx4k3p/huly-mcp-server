@@ -29,9 +29,14 @@ export class WorkflowMethods {
   }
 
   /**
-   * List all available task types for a project.
+   * List the task types a project offers, one cursor page at a time.
    * @param {string} projectIdent - Project identifier
-   * @returns {Promise<Object[]>}
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the project is not found, or the limit or cursor is invalid
    */
   async listTaskTypes(projectIdent, options = {}) {
     const client = await this._getClient();
@@ -58,10 +63,14 @@ export class WorkflowMethods {
   }
 
   /**
-   * List the project types configured in the workspace. These are the valid
-   * values for the `projectType` argument of createProject. Returns the names
-   * of the task types scoped to each, for convenience.
-   * @returns {Promise<Object>} { items, nextCursor? }
+   * List the project types configured in the workspace, one cursor page at a time. These are the valid
+   * values for the `projectType` argument of createProject; each row names the task types it owns.
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the limit or cursor is invalid
    */
   async listProjectTypes(options = {}) {
     const client = await this._getClient();
@@ -88,8 +97,14 @@ export class WorkflowMethods {
   /**
    * List available issue statuses, optionally scoped to a project or task type.
    * @param {string} [projectIdent] - Project identifier to scope statuses
-   * @param {string} [taskTypeName] - Task type name to scope statuses (e.g., "Task", "Epic")
-   * @returns {Promise<Object[]>}
+   * @param {string} [taskTypeName] - Task type name to scope statuses, case-insensitive (e.g., "Task", "Epic")
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the project, its project type, or the task type is not found, or the limit or cursor is
+   *   invalid
    */
   async listStatuses(projectIdent, taskTypeName, options = {}) {
     const client = await this._getClient();
@@ -172,10 +187,11 @@ export class WorkflowMethods {
   }
 
   /**
-   * Find a status by name within a project.
+   * Get a status by name within a project. Only the first page (50) of the project's statuses is searched.
    * @param {string} projectIdent - Project identifier
-   * @param {string} name - Status name (fuzzy match)
-   * @returns {Promise<Object>}
+   * @param {string} name - Status name (case-insensitive exact match)
+   * @returns {Promise<Object>} Status row
+   * @throws {Error} When the project or status is not found; the message lists available statuses
    */
   async getStatus(projectIdent, name) {
     const result = await this.listStatuses(projectIdent);
@@ -188,10 +204,11 @@ export class WorkflowMethods {
   }
 
   /**
-   * Find a task type by name in a project.
+   * Get a task type the project offers by name.
    * @param {string} projectIdent - Project identifier
-   * @param {string} name - Task type name (fuzzy match)
-   * @returns {Promise<Object>}
+   * @param {string} name - Task type name (case-insensitive exact match on the stored name)
+   * @returns {Promise<Object>} Task type row
+   * @throws {Error} When the project or task type is not found; the message lists available types
    */
   async getTaskType(projectIdent, name) {
     const client = await this._getClient();

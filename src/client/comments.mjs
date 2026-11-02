@@ -9,9 +9,11 @@ import { chunter, generateId, tracker } from './sdk.mjs';
 export class CommentsMethods {
   /**
    * Add a comment to an issue.
-   * @param {string} issueId - Issue identifier
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} text - Comment text
-   * @returns {Promise<Object>}
+   * @param {string} [format='markdown'] - Text format: markdown, html, or plain
+   * @returns {Promise<{message: string, id: string}>}
+   * @throws {Error} When the issue is not found
    */
   async addComment(issueId, text, format) {
     const client = await this._getClient();
@@ -32,9 +34,14 @@ export class CommentsMethods {
   }
 
   /**
-   * List all comments on an issue.
-   * @param {string} issueId - Issue identifier
-   * @returns {Promise<Object[]>}
+   * List comments on an issue, newest first, one cursor page at a time.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the issue is not found, or the limit or cursor is invalid
    */
   async listComments(issueId, options = {}) {
     const client = await this._getClient();
@@ -57,6 +64,15 @@ export class CommentsMethods {
     });
   }
 
+  /**
+   * Replace the text of a comment.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {string} commentId - Comment ID
+   * @param {string} text - New comment text
+   * @param {string} [format='markdown'] - Text format: markdown, html, or plain
+   * @returns {Promise<{message: string, id: string}>}
+   * @throws {Error} When the issue or comment is not found
+   */
   async updateComment(issueId, commentId, text, format) {
     const client = await this._getClient();
     const { project } = await this._parseAndFindIssue(client, issueId);
@@ -74,6 +90,13 @@ export class CommentsMethods {
     };
   }
 
+  /**
+   * Delete a comment.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {string} commentId - Comment ID
+   * @returns {Promise<{message: string, id: string}>}
+   * @throws {Error} When the issue or comment is not found
+   */
   async deleteComment(issueId, commentId) {
     const client = await this._getClient();
     await this._parseAndFindIssue(client, issueId);
@@ -90,10 +113,11 @@ export class CommentsMethods {
   }
 
   /**
-   * Get a specific comment by ID on an issue.
-   * @param {string} issueId - Issue identifier
+   * Get a comment by ID. The issue must exist; the comment is looked up by ID alone.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} commentId - Comment ID
-   * @returns {Promise<Object>}
+   * @returns {Promise<Object>} `{ id, text, createdBy, createdOn, modifiedOn, editedOn }` plus extras
+   * @throws {Error} When the issue or comment is not found
    */
   async getComment(issueId, commentId) {
     const client = await this._getClient();

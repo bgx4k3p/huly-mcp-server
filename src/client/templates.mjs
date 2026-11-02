@@ -17,12 +17,39 @@ import {
 import { contactPlugin, generateId, tags, task, tracker } from './sdk.mjs';
 
 export class TemplatesMethods {
+  /**
+   * Find an issue template by ID within a project.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @param {string} templateId - Template ID
+   * @returns {Promise<Object>} Template document
+   * @throws {Error} When the template is not in the project
+   */
   async _findIssueTemplate(client, project, templateId) {
     const template = await client.findOne(tracker.class.IssueTemplate, { _id: templateId, space: project._id });
     if (!template) throw new Error(`Issue template not found in ${project.identifier}: ${templateId}`);
     return template;
   }
 
+  /**
+   * Validate and resolve template fields (excluding children and relations) into document data.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @param {Object} input - Template fields
+   * @param {string} [input.title] - Title (required on create)
+   * @param {string} [input.description] - Description
+   * @param {string} [input.descriptionFormat='markdown'] - Description format: markdown, html, or plain
+   * @param {string} [input.priority] - Priority name: none, urgent, high, medium, low
+   * @param {number|string} [input.estimation] - Estimated hours; must be a non-negative number
+   * @param {string} [input.assignee] - Assignee name; empty clears it
+   * @param {string} [input.component] - Component name (exact); empty clears it
+   * @param {string} [input.milestone] - Milestone name (exact); empty clears it
+   * @param {string} [input.type] - Task type name; empty selects the project default
+   * @param {string[]} [input.labels] - Existing label names (case-insensitive)
+   * @param {boolean} [create=false] - Start from creation defaults and require a title
+   * @returns {Promise<Object>} Document fields; `type` is stored as `kind`
+   * @throws {Error} When a field is invalid or a referenced name is not found
+   */
   async _templateData(client, project, input, create = false) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       throw new Error('Template fields must be an object');
@@ -65,6 +92,15 @@ export class TemplatesMethods {
     return data;
   }
 
+  /**
+   * Validate and resolve template fields, children and relations into document data.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @param {Object} input - Template fields (see `_templateData`) plus `children` and `relations`
+   * @param {boolean} [create=false] - Apply creation defaults, including empty children and relations
+   * @returns {Promise<Object>} Document fields to write
+   * @throws {Error} When a field, child, or relation is invalid or not found
+   */
   async _templateUpdates(client, project, input, create = false) {
     const data = await this._templateData(client, project, input, create);
     if (create || input.children !== undefined) {
@@ -106,6 +142,13 @@ export class TemplatesMethods {
     return data;
   }
 
+  /**
+   * Build output rows for issue templates, resolving IDs to names in one batch.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @param {Object[]} templates - Template documents
+   * @returns {Promise<Object[]>} Template rows, in input order
+   */
   async _readIssueTemplates(client, project, templates) {
     if (templates.length === 0) return [];
     const [employees, components, milestones, labels, types] = await Promise.all([
@@ -134,6 +177,16 @@ export class TemplatesMethods {
     }));
   }
 
+  /**
+   * List issue templates stored in a project, one cursor page at a time.
+   * @param {string} projectIdent - Project identifier
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the project is not found, or the limit or cursor is invalid
+   */
   async listIssueTemplates(projectIdent, options = {}) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -144,6 +197,13 @@ export class TemplatesMethods {
     return listEnvelope(await this._readIssueTemplates(client, project, page.items), page.nextCursor);
   }
 
+  /**
+   * Get an issue template by ID.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} templateId - Template ID
+   * @returns {Promise<Object>} Template row with children and relations
+   * @throws {Error} When the project or template is not found
+   */
   async getIssueTemplate(projectIdent, templateId) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -151,6 +211,26 @@ export class TemplatesMethods {
     return (await this._readIssueTemplates(client, project, [template]))[0];
   }
 
+  /**
+   * Create an issue template in a project.
+   * @param {string} projectIdent - Project identifier
+   * @param {Object} input - Template fields; `title` is required
+   * @param {string} [input.title] - Title (required on create)
+   * @param {string} [input.description] - Description
+   * @param {string} [input.descriptionFormat='markdown'] - Description format: markdown, html, or plain
+   * @param {string} [input.priority] - Priority name: none, urgent, high, medium, low
+   * @param {number|string} [input.estimation] - Estimated hours; must be a non-negative number
+   * @param {string} [input.assignee] - Assignee name; empty clears it
+   * @param {string} [input.component] - Component name (exact); empty clears it
+   * @param {string} [input.milestone] - Milestone name (exact); empty clears it
+   * @param {string} [input.type] - Task type name; empty selects the project default
+   * @param {string[]} [input.labels] - Existing label names (case-insensitive)
+   * @param {Object[]} [input.children] - Child templates (at most 50): the same fields plus an optional unique `id`;
+   *   replaces the existing list
+   * @param {{id: string, objectClass: string}[]} [input.relations] - Related documents; replaces the existing list
+   * @returns {Promise<{id: string, project: string, title: string}>}
+   * @throws {Error} When the project is not found or a field is invalid
+   */
   async createIssueTemplate(projectIdent, input = {}) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -160,6 +240,27 @@ export class TemplatesMethods {
     return { id, project: project.identifier, title: data.title };
   }
 
+  /**
+   * Update an issue template. Omitted fields are left unchanged.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} templateId - Template ID
+   * @param {Object} [input] - Fields to update
+   * @param {string} [input.title] - Title (required on create)
+   * @param {string} [input.description] - Description
+   * @param {string} [input.descriptionFormat='markdown'] - Description format: markdown, html, or plain
+   * @param {string} [input.priority] - Priority name: none, urgent, high, medium, low
+   * @param {number|string} [input.estimation] - Estimated hours; must be a non-negative number
+   * @param {string} [input.assignee] - Assignee name; empty clears it
+   * @param {string} [input.component] - Component name (exact); empty clears it
+   * @param {string} [input.milestone] - Milestone name (exact); empty clears it
+   * @param {string} [input.type] - Task type name; empty selects the project default
+   * @param {string[]} [input.labels] - Existing label names (case-insensitive)
+   * @param {Object[]} [input.children] - Child templates (at most 50): the same fields plus an optional unique `id`;
+   *   replaces the existing list
+   * @param {{id: string, objectClass: string}[]} [input.relations] - Related documents; replaces the existing list
+   * @returns {Promise<{id: string, updated: string[]}>}
+   * @throws {Error} When the project or template is not found or a field is invalid
+   */
   async updateIssueTemplate(projectIdent, templateId, input = {}) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -171,6 +272,13 @@ export class TemplatesMethods {
     return { id: template._id, updated: Object.keys(data).map(key => key === 'kind' ? 'type' : key) };
   }
 
+  /**
+   * Delete an issue template.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} templateId - Template ID
+   * @returns {Promise<{id: string, message: string}>}
+   * @throws {Error} When the project or template is not found
+   */
   async deleteIssueTemplate(projectIdent, templateId) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -179,7 +287,17 @@ export class TemplatesMethods {
     return { id: template._id, message: `Issue template "${template.title}" deleted` };
   }
 
-  /** Create issues using the predefined convenience workflow generators. */
+  /**
+   * Create a set of issues from a predefined generator (feature, bug, sprint, release), linking children to
+   * their parent. Unrelated to the issue templates stored in Huly. An unknown generator name returns
+   * `{ error, availableTemplates }` instead of throwing.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} templateName - Generator name (case-insensitive)
+   * @param {Object} [params] - Substitution values
+   * @param {string} [params.title] - Title inserted into each issue title
+   * @param {string} [params.version] - Release version, used by the release generator when no title is given
+   * @returns {Promise<Object>} `{ template, description, created, errors, total }`; errors lists failed parent links
+   */
   async createIssuesFromTemplate(projectIdent, templateName, params = {}) {
     const client = await this._getClient();
     const templates = {

@@ -7,10 +7,26 @@ import { withExtra } from '../helpers.mjs';
 import { contactPlugin, core } from './sdk.mjs';
 
 export class MembersMethods {
+  /**
+   * Resolve collaborator names or account UUIDs to accounts.
+   * @param {Object} client - Huly SDK client
+   * @param {string[]} names - Member names or account UUIDs
+   * @returns {Promise<{account: string, name: string}[]>}
+   * @throws {Error} See `_resolveAccountMembers`
+   */
   async _resolveCollaboratorMembers(client, names) {
     return this._resolveAccountMembers(client, names, 'collaborators');
   }
 
+  /**
+   * Resolve active members by exact name (case-insensitive) or account UUID, dropping duplicates.
+   * @param {Object} client - Huly SDK client
+   * @param {string[]} names - Member names or account UUIDs
+   * @param {string} field - Field name used in error messages
+   * @returns {Promise<{account: string, name: string}[]>}
+   * @throws {Error} When `names` is not an array of non-empty strings, or a name is unknown, ambiguous or has
+   *   no account UUID
+   */
   async _resolveAccountMembers(client, names, field) {
     if (!Array.isArray(names)) throw new Error(`${field} must be an array`);
 
@@ -42,6 +58,12 @@ export class MembersMethods {
     return resolved;
   }
 
+  /**
+   * Load the collaborators of several objects, sorted by name (or account when the name is unknown).
+   * @param {Object} client - Huly SDK client
+   * @param {string[]} objectIds - Object ids; falsy and duplicate ids are ignored
+   * @returns {Promise<Map<string, {account: string, name: string|null}[]>>} Object id → collaborators
+   */
   async _collaboratorsByObject(client, objectIds) {
     const ids = [...new Set(objectIds.filter(Boolean))];
     const result = new Map(ids.map(id => [id, []]));
@@ -72,6 +94,14 @@ export class MembersMethods {
     return result;
   }
 
+  /**
+   * Make an object's collaborators exactly the given members, adding missing and removing extra ones.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} object - Document the collaborators are attached to
+   * @param {string[]} names - Member names or account UUIDs
+   * @returns {Promise<{account: string, name: string}[]>} The resolved collaborators
+   * @throws {Error} See `_resolveAccountMembers`
+   */
   async _syncCollaborators(client, object, names) {
     const desired = await this._resolveCollaboratorMembers(client, names);
     const desiredAccounts = new Set(desired.map(item => item.account));
@@ -106,8 +136,11 @@ export class MembersMethods {
   }
 
   /**
-   * List all active workspace members.
-   * @returns {Promise<Object[]>}
+   * List active workspace members.
+   * @param {Object} [options] - Paging options
+   * @param {number} [options.limit=50] - Page size (max 100)
+   * @param {string} [options.cursor] - Pagination cursor from a previous page
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
    */
   async listMembers(options = {}) {
     const client = await this._getClient();
@@ -126,9 +159,10 @@ export class MembersMethods {
   }
 
   /**
-   * Find a member by name.
-   * @param {string} name - Member name (fuzzy match)
-   * @returns {Promise<Object>}
+   * Find the first active member whose name contains the given text (case-insensitive).
+   * @param {string} name - Member name or part of it
+   * @returns {Promise<Object>} id, name, role and extra fields
+   * @throws {Error} When no active member matches
    */
   async getMember(name) {
     const client = await this._getClient();

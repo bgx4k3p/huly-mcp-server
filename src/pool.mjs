@@ -1,9 +1,10 @@
 /**
  * ConnectionPool - Caches HulyClient instances by workspace slug.
  *
- * Supports multiple simultaneous workspace connections.
- * Default workspace comes from HULY_WORKSPACE env var.
- * Evicts stale connections after a configurable TTL.
+ * Supports multiple simultaneous workspace connections, all using the credentials from
+ * config.mjs. The default workspace is the HULY_WORKSPACE value captured when config.mjs
+ * loaded (not the live env). Connections idle longer than POOL_TTL_MS (HULY_POOL_TTL_MS)
+ * are evicted on next use or by a periodic sweep.
  */
 
 import { HulyClient } from './client.mjs';
@@ -13,6 +14,9 @@ import {
 } from './config.mjs';
 
 export class ConnectionPool {
+  /**
+   * Create an empty pool and start the stale-connection sweep (an unref'd interval timer).
+   */
   constructor() {
     /** @type {Map<string, { client: HulyClient|null, lastUsed: number, connecting: Promise<HulyClient>|null }>} */
     this._entries = new Map();
@@ -28,6 +32,8 @@ export class ConnectionPool {
    *
    * @param {string} [workspace] - Workspace slug (optional, uses default if omitted)
    * @returns {Promise<HulyClient>}
+   * @throws {Error} When no workspace is given or configured, the connection fails, or the
+   *   workspace is cleared while the connection is being established
    */
   async getClient(workspace) {
     const ws = workspace || HULY_WORKSPACE;
@@ -62,10 +68,10 @@ export class ConnectionPool {
         workspace: ws
       });
       await client.connect();
-      // clearClient/clearAll during an in-flight connect used to be undone by
-      // this write, caching a connection the caller asked to close and — since
-      // clearAll also stops the sweep timer — leaking it for the process
-      // lifetime. Only claim the slot if it is still ours.
+      // If clearClient/clearAll ran during this connect, the slot no longer
+      // holds this promise. Writing it back would cache a connection the caller
+      // asked to close and, since clearAll also stops the sweep timer, leak it
+      // for the process lifetime. Only claim the slot if it is still ours.
       if (this._entries.get(ws)?.connecting !== connectPromise) {
         client.disconnect();
         // Returning the client here would hand the caller a disconnected
@@ -90,7 +96,8 @@ export class ConnectionPool {
   }
 
   /**
-   * Force-disconnect and remove a cached client for the given workspace.
+   * Force-disconnect and remove a cached client for the given workspace. An in-flight
+   * connection for it is discarded when it completes.
    *
    * @param {string} [workspace] - Workspace slug (optional, uses default if omitted)
    */
@@ -106,7 +113,8 @@ export class ConnectionPool {
   }
 
   /**
-   * Disconnect all cached clients.
+   * Disconnect all cached clients and stop the stale-connection sweep. In-flight connections
+   * are discarded when they complete.
    */
   clearAll() {
     clearInterval(this._cleanupTimer);

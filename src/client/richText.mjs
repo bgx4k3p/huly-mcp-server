@@ -7,15 +7,15 @@ import { fromCollaboratorMarkup, toCollaboratorMarkup } from '../helpers.mjs';
 
 export class RichTextMethods {
   /**
-   * Read a description from the collaborator service.
-   * Issue descriptions are stored in a separate Yjs-backed document store.
-   * The issue's description field holds a reference ID; this method fetches
-   * the actual content and returns it as markdown.
+   * Read a rich-text field from the collaborator service and return it as markdown.
+   * Issue descriptions live in a separate Yjs-backed document store; the issue's field holds a reference ID.
    *
    * @param {string} objectId - Internal document ID (issue._id)
    * @param {string} objectClass - Document class (e.g. tracker:class:Issue)
    * @param {string} [attr='description'] - Attribute name
+   * @param {string|null} [source=null] - Stored collaborator reference, passed to the collaborator as the source
    * @returns {Promise<string>} Markdown text
+   * @throws {Error} When the collaborator client is not initialized
    */
   async _readCollaboratorField(objectId, objectClass, attr = 'description', source = null) {
     if (!this._collabClient) {
@@ -27,17 +27,17 @@ export class RichTextMethods {
   }
 
   /**
-   * Write a description to the collaborator service.
-   * Converts the input text (markdown/html/plain) to ProseMirror JSON
-   * and pushes it to the collaborator. The issue's description field
-   * must already contain a valid collaborator reference.
+   * Write a rich-text field to the collaborator service.
+   * Converts the text to ProseMirror markup and pushes it to the live collaborative document; it does not
+   * change the reference stored on the object itself.
    *
    * @param {string} objectId - Internal document ID
    * @param {string} objectClass - Document class
-   * @param {string} text - Content to write
-   * @param {string} [format='markdown'] - Input format
+   * @param {string} text - Content to write; empty text writes an empty paragraph
+   * @param {string} [format='markdown'] - Input format: markdown, html or plain
    * @param {string} [attr='description'] - Attribute name
    * @returns {Promise<void>}
+   * @throws {Error} When the collaborator client is not initialized
    */
   async _writeCollaboratorField(objectId, objectClass, text, format = 'markdown', attr = 'description') {
     if (!this._collabClient) {

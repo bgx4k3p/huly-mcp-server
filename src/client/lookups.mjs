@@ -35,6 +35,7 @@ export class LookupsMethods {
    * @param {Object} client - Huly SDK client
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @returns {Promise<{project: Object, issue: Object}>}
+   * @throws {Error} When the identifier is missing or malformed, or the project or issue does not exist
    */
   async _parseAndFindIssue(client, issueId) {
     if (typeof issueId !== 'string' || issueId.trim() === '') {
@@ -99,8 +100,12 @@ export class LookupsMethods {
   }
 
   /**
-   * Get the default task type for a project from its project type config.
-   * Returns the first task type scoped to the project type.
+   * Default task type for a project: the scoped task type named "Task", else the first one scoped to the
+   * project type.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @returns {Promise<string>} Task type id
+   * @throws {Error} When the project type has no task types
    */
   async _getDefaultTaskType(client, project) {
     const projectType = await this._projectType(client, project);
@@ -127,6 +132,7 @@ export class LookupsMethods {
    * @param {Object} client - Huly SDK client
    * @param {string} taskTypeId - Task type id
    * @returns {Promise<Object[]>} IssueStatus documents
+   * @throws {Error} When the workspace has no statuses
    */
   async _getScopedStatuses(client, taskTypeId) {
     const taskType = await client.findOne(task.class.TaskType, { _id: taskTypeId });
@@ -143,6 +149,13 @@ export class LookupsMethods {
     return allStatuses;
   }
 
+  /**
+   * Find an active employee id by name (case-insensitive).
+   * @param {Object} client - Huly SDK client
+   * @param {string} name - Employee name
+   * @returns {Promise<string>} Employee id
+   * @throws {Error} When no active employee has that name
+   */
   async _findEmployeeByName(client, name) {
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
     const found = employees.find(e => nameMatch(e.name, name));
@@ -152,6 +165,14 @@ export class LookupsMethods {
     return found._id;
   }
 
+  /**
+   * Find a milestone id in a project by its exact label (case-sensitive).
+   * @param {Object} client - Huly SDK client
+   * @param {string} projectId - Project document id
+   * @param {string} name - Milestone label
+   * @returns {Promise<string>} Milestone id
+   * @throws {Error} When the project has no milestone with that label
+   */
   async _findMilestoneByName(client, projectId, name) {
     const ms = await client.findOne(tracker.class.Milestone, {
       space: projectId,
@@ -163,6 +184,14 @@ export class LookupsMethods {
     return ms._id;
   }
 
+  /**
+   * Find a component id in a project by its exact label (case-sensitive).
+   * @param {Object} client - Huly SDK client
+   * @param {string} projectId - Project document id
+   * @param {string} name - Component label
+   * @returns {Promise<string>} Component id
+   * @throws {Error} When the project has no component with that label
+   */
   async _findComponentByName(client, projectId, name) {
     const comp = await client.findOne(tracker.class.Component, {
       space: projectId,
@@ -174,6 +203,12 @@ export class LookupsMethods {
     return comp._id;
   }
 
+  /**
+   * Load every issue status in the workspace.
+   * @param {Object} client - Huly SDK client
+   * @returns {Promise<{statuses: Object[], statusMap: Map<string, string>, doneStatuses: Set<string>}>}
+   *   Status documents, id → name, and ids of statuses in the done category
+   */
   async _buildStatusMaps(client) {
     const statuses = await client.findAll(tracker.class.IssueStatus, {});
     const statusMap = new Map(statuses.map(s => [s._id, s.name]));
@@ -183,17 +218,33 @@ export class LookupsMethods {
     return { statuses, statusMap, doneStatuses };
   }
 
+  /**
+   * Map every task type id to its name.
+   * @param {Object} client - Huly SDK client
+   * @returns {Promise<Map<string, string>>}
+   */
   async _buildTaskTypeMap(client) {
     const taskTypes = await client.findAll(task.class.TaskType, {});
     return new Map(taskTypes.map(t => [t._id, t.name]));
   }
 
+  /**
+   * Load active employees and map their ids to names.
+   * @param {Object} client - Huly SDK client
+   * @returns {Promise<{employees: Object[], employeeMap: Map<string, string>}>}
+   */
   async _buildEmployeeMap(client) {
     const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
     const employeeMap = new Map(employees.map(e => [e._id, e.name]));
     return { employees, employeeMap };
   }
 
+  /**
+   * Find an issue label by name (case-insensitive), caching every issue label for LOOKUP_CACHE_TTL_MS.
+   * @param {Object} client - Huly SDK client
+   * @param {string} labelName - Label title
+   * @returns {Promise<Object|null>} TagElement document, or null when no label has that name
+   */
   async _findLabelByName(client, labelName) {
     const key = labelName.toLowerCase();
     const cached = this._labelLookupCache.get(key);

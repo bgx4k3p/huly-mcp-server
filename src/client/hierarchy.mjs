@@ -7,10 +7,12 @@ import { tracker } from './sdk.mjs';
 
 export class HierarchyMethods {
   /**
-   * Add a "related to" relationship between two issues.
-   * @param {string} issueId - Issue identifier
+   * Add a bidirectional "related to" relationship between two issues.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} relatedToIssueId - Related issue identifier
-   * @returns {Promise<Object>}
+   * @returns {Promise<Object>} `{ message, issueId, relatedToIssueId }`, or `{ message }` when the issue already
+   *   lists the relation
+   * @throws {Error} When either issue is not found
    */
   async addRelation(issueId, relatedToIssueId) {
     const client = await this._getClient();
@@ -52,7 +54,9 @@ export class HierarchyMethods {
    * Repairs a partially written relationship by removing whichever side exists.
    * @param {string} issueId - Issue identifier
    * @param {string} relatedToIssueId - Related issue identifier
-   * @returns {Promise<Object>}
+   * @returns {Promise<{message: string, issueId: string, relatedIssueId: string}>} Also returned, with a
+   *   not-related message, when neither side lists the relation
+   * @throws {Error} When either issue is not found
    */
   async removeRelation(issueId, relatedToIssueId) {
     const client = await this._getClient();
@@ -95,10 +99,11 @@ export class HierarchyMethods {
   }
 
   /**
-   * Add a "blocked by" dependency between two issues.
-   * @param {string} issueId - Issue that is blocked
-   * @param {string} blockedByIssueId - The blocking issue
-   * @returns {Promise<Object>}
+   * Add a "blocked by" dependency between two issues. Only the blocked issue is updated.
+   * @param {string} issueId - Identifier of the issue that is blocked
+   * @param {string} blockedByIssueId - Identifier of the blocking issue
+   * @returns {Promise<Object>} `{ message, issueId, blockedByIssueId }`, or `{ message }` when already blocked
+   * @throws {Error} When either issue is not found
    */
   async addBlockedBy(issueId, blockedByIssueId) {
     const client = await this._getClient();
@@ -128,9 +133,11 @@ export class HierarchyMethods {
 
   /**
    * Remove a "blocked by" dependency from an issue.
-   * @param {string} issueId - Issue that is blocked
-   * @param {string} blockerIssueId - The blocking issue
-   * @returns {Promise<Object>}
+   * @param {string} issueId - Identifier of the issue that is blocked
+   * @param {string} blockerIssueId - Identifier of the blocking issue
+   * @returns {Promise<{message: string, issueId: string, blockerIssueId: string}>} Also returned, with a
+   *   not-blocked message, when the dependency does not exist
+   * @throws {Error} When either issue is not found
    */
   async removeBlockedBy(issueId, blockerIssueId) {
     const client = await this._getClient();
@@ -163,6 +170,7 @@ export class HierarchyMethods {
    * Remove a sub-issue from its current parent's child list, if the parent still exists.
    * @param {Object} client - Huly SDK client
    * @param {Object} issue - Sub-issue document
+   * @returns {Promise<void>}
    */
   async _removeFromParent(client, issue) {
     const oldParent = await client.findOne(tracker.class.Issue, { _id: issue.attachedTo });
@@ -180,7 +188,7 @@ export class HierarchyMethods {
    * @param {Object} project - Project the issue belongs to
    * @param {Object} issue - Issue document
    * @param {string} issueId - Issue identifier, for the result message
-   * @returns {Promise<Object>}
+   * @returns {Promise<{message: string, issueId: string, parentId: null}>} Also returned when there is no parent
    */
   async _detachParent(client, project, issue, issueId) {
     if (issue.attachedToClass !== tracker.class.Issue || !issue.attachedTo) {
@@ -208,19 +216,19 @@ export class HierarchyMethods {
   }
 
   /**
-   * Set the parent issue for a child issue.
+   * Set or remove the parent of an issue, moving it out of any previous parent.
    * @param {string} issueId - Child issue identifier
-   * @param {string} parentIssueId - Parent issue identifier
-   * @returns {Promise<Object>}
+   * @param {string} [parentIssueId] - Parent issue identifier; empty or omitted removes the parent
+   * @returns {Promise<Object>} `{ message, issueId, parentIssueId, parentChildCount }`, or
+   *   `{ message, issueId, parentId: null }` when the parent was removed
+   * @throws {Error} When either issue is not found
    */
   async setParent(issueId, parentIssueId) {
     const client = await this._getClient();
 
     const { project, issue } = await this._parseAndFindIssue(client, issueId);
 
-    // The tool advertises an empty parentId as "remove parent". Without this
-    // branch that call reached _parseAndFindIssue and threw, leaving no way to
-    // detach a sub-issue through the advertised API.
+    // An empty parentId removes the parent.
     if (parentIssueId === undefined || parentIssueId === null || String(parentIssueId).trim() === '') {
       return await this._detachParent(client, project, issue, issueId);
     }

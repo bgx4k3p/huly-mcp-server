@@ -19,6 +19,11 @@ export class IssueWriteMethods {
    * Reserve `count` consecutive issue numbers in a project and return the first.
    * Call only after every input is validated: a reserved number is never released,
    * so a failure after this point leaves a permanent gap in the numbering.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Project document
+   * @param {number} count - How many numbers to reserve
+   * @returns {Promise<number>} First reserved issue number
+   * @throws {Error} When Huly does not return the updated sequence
    */
   async _reserveIssueNumbers(client, project, count) {
     const result = await client.updateDoc(tracker.class.Project, project.space || project._id, project._id, {
@@ -35,6 +40,9 @@ export class IssueWriteMethods {
   /**
    * Highest issue rank in a project, or undefined when it has none. New ranks are computed here
    * rather than left to the server, because only Huly servers from March 2026 on assign them.
+   * @param {Object} client - Huly SDK client
+   * @param {string} projectId - Project document id
+   * @returns {Promise<string|undefined>}
    */
   async _lastIssueRank(client, projectId) {
     const last = await client.findOne(tracker.class.Issue, { space: projectId }, { sort: { rank: -1 } });
@@ -42,16 +50,24 @@ export class IssueWriteMethods {
   }
 
   /**
-   * Create a new issue in a project.
+   * Create a new issue in a project. Status defaults to the project's default status, type to the
+   * project's default task type.
    * @param {string} projectIdent - Project identifier
    * @param {string} title - Issue title
-   * @param {string} [description] - Markdown description
-   * @param {string} [priority] - Priority level
-   * @param {string} [status] - Initial status name
+   * @param {string} [description] - Description, in `extra.descriptionFormat`
+   * @param {string} [priority] - Priority name; defaults to none
+   * @param {string} [status] - Initial status name, scoped to the task type
    * @param {string[]} [labels] - Label names to apply
    * @param {string} [type] - Task type name
-   * @param {Object} [extra] - Additional fields: assignee, component, milestone, dueDate, estimation
-   * @returns {Promise<Object>}
+   * @param {Object} [extra] - Additional fields
+   * @param {string} [extra.assignee] - Assignee name
+   * @param {string} [extra.component] - Component name
+   * @param {string} [extra.milestone] - Milestone name
+   * @param {string|number} [extra.dueDate] - Due date (ISO date or timestamp)
+   * @param {number|string} [extra.estimation] - Estimated hours
+   * @param {string} [extra.descriptionFormat='markdown'] - Description format: markdown, html or plain
+   * @returns {Promise<Object>} id, internalId, title, status, priority
+   * @throws {Error} When a status, type, priority, assignee, component, milestone or date is invalid
    */
   async createIssue(projectIdent, title, description, priority, status, labels, type, extra = {}) {
     const client = await this._getClient();
@@ -162,15 +178,22 @@ export class IssueWriteMethods {
   }
 
   /**
-   * Update fields on an existing issue.
+   * Update fields on an existing issue. Only arguments that are not undefined are changed.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} [title] - New title
-   * @param {string} [description] - New description
-   * @param {string} [priority] - New priority
-   * @param {string} [status] - New status name
+   * @param {string} [description] - New description, in `extra.descriptionFormat`
+   * @param {string} [priority] - New priority name
+   * @param {string} [status] - New status name, scoped to the (new) task type
    * @param {string} [type] - New task type name
-   * @param {Object} [extra] - Additional fields: assignee, component, milestone, dueDate, estimation
-   * @returns {Promise<Object>}
+   * @param {Object} [extra] - Additional fields
+   * @param {string} [extra.assignee] - Assignee name; empty string clears it
+   * @param {string} [extra.component] - Component name; empty string clears it
+   * @param {string} [extra.milestone] - Milestone name; empty string clears it
+   * @param {string|number|null} [extra.dueDate] - Due date (ISO date or timestamp); blank or null clears it
+   * @param {number|string} [extra.estimation] - Estimated hours
+   * @param {string} [extra.descriptionFormat='markdown'] - Description format: markdown, html or plain
+   * @returns {Promise<{id: string, updated: string[]}>} Issue id and the names of the updated fields
+   * @throws {Error} When a status, type, priority, assignee, component, milestone or date is invalid
    */
   async updateIssue(issueId, title, description, priority, status, type, extra = {}) {
     const client = await this._getClient();
@@ -260,10 +283,12 @@ export class IssueWriteMethods {
   }
 
   /**
-   * Create multiple issues in a single batch.
+   * Create multiple issues in a single batch. Invalid items are reported in `errors` and do not consume a number.
    * @param {string} projectIdent - Project identifier
-   * @param {Object[]} issues - Array of issue objects with { title, description, priority, status, labels, type }
-   * @returns {Promise<Object>}
+   * @param {Object[]} issues - Issue objects with { title, description, descriptionFormat, priority, status,
+   *   labels, type, assignee, component, milestone, estimation, dueDate }
+   * @returns {Promise<Object>} project, created, errors, total
+   * @throws {Error} When `issues` is empty, not an array, or larger than MAX_BATCH_SIZE (500)
    */
   async batchCreateIssues(projectIdent, issues) {
     const client = await this._getClient();
@@ -405,7 +430,8 @@ export class IssueWriteMethods {
   }
 
   /**
-   * Move an issue to a different project.
+   * Move an issue to a different project, giving it a new number there. The status is kept when the target
+   * workflow has one with the same name, otherwise the target project's default status is used.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} targetProject - Target project identifier
    * @returns {Promise<Object>}
@@ -461,6 +487,11 @@ export class IssueWriteMethods {
     };
   }
 
+  /**
+   * Permanently delete an issue.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @returns {Promise<{message: string, issueId: string}>}
+   */
   async deleteIssue(issueId) {
     const client = await this._getClient();
     const { project, issue } = await this._parseAndFindIssue(client, issueId);

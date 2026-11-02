@@ -16,7 +16,11 @@ import { contactPlugin, core, generateId, tags, task, tracker } from './sdk.mjs'
 
 const PROJECT_INCLUDE_FIELDS = Object.freeze(['milestones', 'components', 'labels', 'members', 'owners', 'defaults']);
 
-/** Group documents by the project space they belong to. */
+/**
+ * Group documents by the project space they belong to.
+ * @param {Object[]} values - Documents with a `space` field
+ * @returns {Map<string, Object[]>} Documents keyed by space ID
+ */
 function groupBySpace(values) {
   const grouped = new Map();
   for (const value of values) {
@@ -34,7 +38,7 @@ export class ProjectsMethods {
    * @param {Set<string>} include - Requested includes (PROJECT_INCLUDE_FIELDS)
    * @param {Object} [options]
    * @param {boolean} [options.ownerCount=false] - Report the owner count when owners are not included
-   * @returns {Promise<Object[]>}
+   * @returns {Promise<Object[]>} Project output rows, in input order
    */
   async _projectRows(client, projects, include, { ownerCount = false } = {}) {
     const projectIds = projects.map(project => project._id);
@@ -107,10 +111,13 @@ export class ProjectsMethods {
   /**
    * List projects, one cursor page at a time.
    * @param {Object} [options]
-   * @param {string[]} [options.include] - Related data to add: milestones, components, labels, members, owners, defaults
+   * @param {string[]} [options.include] - Related data to add: milestones, components, labels, members, owners,
+   *   defaults
    * @param {string} [options.cursor] - Opaque cursor from a previous page
-   * @param {number} [options.limit] - Page size
-   * @returns {Promise<{items: Object[], nextCursor?: string}>} List envelope
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the limit is out of range or the cursor is invalid
    */
   async listProjects(options = {}) {
     const client = await this._getClient();
@@ -128,10 +135,12 @@ export class ProjectsMethods {
 
   /**
    * Get a project by its identifier.
-   * @param {string} identifier - Project identifier (e.g., "PROJ")
+   * @param {string} identifier - Project identifier, case-insensitive (e.g., "PROJ")
    * @param {Object} [options]
-   * @param {string[]} [options.include] - Related data to add: milestones, components, labels, members, owners, defaults
-   * @returns {Promise<Object>}
+   * @param {string[]} [options.include] - Related data to add: milestones, components, labels, members, owners,
+   *   defaults
+   * @returns {Promise<Object>} Project row, including the owner count
+   * @throws {Error} When the project is not found
    */
   async getProject(identifier, options = {}) {
     const client = await this._getClient();
@@ -147,7 +156,7 @@ export class ProjectsMethods {
    * issues and are never candidates for a project created through this server.
    * @param {Object} client - Connected SDK client
    * @param {Object[]} projectTypes - Candidate project types
-   * @returns {Promise<Object[]>}
+   * @returns {Promise<Object[]>} The subset of `projectTypes` with a tracker task type
    */
   async _trackerProjectTypes(client, projectTypes) {
     const allTaskTypes = await client.findAll(task.class.TaskType, {});
@@ -159,6 +168,25 @@ export class ProjectsMethods {
     return projectTypes.filter(pt => (pt.tasks ?? []).some(id => trackerTaskTypeIds.has(id)));
   }
 
+  /**
+   * Create a tracker project with the caller as member and owner. The project type is resolved by name or ID;
+   * when omitted it is inferred only if exactly one (tracker) type exists. A write that cannot be read back is
+   * rolled back.
+   * @param {string} identifier - Project identifier; stored upper-cased
+   * @param {string} [name] - Display name (defaults to the identifier)
+   * @param {string} [description] - Plain-text description
+   * @param {boolean} [isPrivate=false] - Create a private project
+   * @param {string} [projectType] - Project type name (case-insensitive) or ID
+   * @param {Object} [options] - Initial defaults and access, as in `updateProject`
+   * @param {string} [options.defaultAssignee] - Default assignee name
+   * @param {string} [options.defaultIssueStatus] - Default issue status name or ID
+   * @param {string} [options.defaultTimeReportDay] - "CurrentWorkDay" or "PreviousWorkDay"
+   * @param {string[]} [options.members] - Additional member names or account UUIDs
+   * @param {string[]} [options.owners] - Additional owner names or account UUIDs
+   * @returns {Promise<{id: string, identifier: string, name: string, description: string, private: boolean}>}
+   * @throws {Error} When the identifier exists, the project type is unknown or ambiguous, a member cannot be
+   *   resolved, or the created project is not readable by the caller
+   */
   async createProject(identifier, name, description, isPrivate = false, projectType, options = {}) {
     const client = await this._getClient();
 
@@ -306,10 +334,21 @@ export class ProjectsMethods {
   }
 
   /**
-   * Update project fields, defaults, membership, or ownership.
+   * Update project fields, defaults, membership, or ownership. Members removed from the project also lose
+   * their project role assignments, in the same transaction.
    * @param {string} projectIdent - Project identifier
-   * @param {Object} updates - Fields to update
-   * @returns {Promise<Object>}
+   * @param {Object} [updates] - Fields to update; omitted keys are left unchanged
+   * @param {string} [updates.name] - New display name
+   * @param {string} [updates.description] - New plain-text description
+   * @param {boolean} [updates.isPrivate] - Make the project private or public
+   * @param {string} [updates.defaultAssignee] - Default assignee name; empty string clears it
+   * @param {string} [updates.defaultIssueStatus] - Default issue status name or ID from the project workflow
+   * @param {string} [updates.defaultTimeReportDay] - "CurrentWorkDay" or "PreviousWorkDay"
+   * @param {string[]} [updates.members] - Replacement member list (names or account UUIDs)
+   * @param {string[]} [updates.owners] - Replacement owner list (names or account UUIDs); owners are added to members
+   * @returns {Promise<Object>} `{ message, identifier, updated }`, or `{ message, identifier }` when nothing changed
+   * @throws {Error} When the project, assignee, status, or a member is not found, or the change would leave no
+   *   owner (or, for a private project, no owner who is also a member)
    */
   async updateProject(projectIdent, updates = {}) {
     const client = await this._getClient();
@@ -353,6 +392,14 @@ export class ProjectsMethods {
     };
   }
 
+  /**
+   * Resolve and validate the default, member and owner updates into project document fields.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} project - Existing project, or the draft fields of one being created
+   * @param {Object} updates - Update bag (see `updateProject`); only defaults, members, owners and isPrivate are read
+   * @returns {Promise<Object>} Document fields to write
+   * @throws {Error} When a value cannot be resolved or ownership rules would be violated
+   */
   async _projectUpdateFields(client, project, updates) {
     const ops = {};
     if (updates.defaultAssignee !== undefined) {
@@ -391,6 +438,13 @@ export class ProjectsMethods {
     return ops;
   }
 
+  /**
+   * Archive or unarchive a project. Archived projects are found too, so this also unarchives.
+   * @param {string} projectIdent - Project identifier
+   * @param {boolean} [archived=true] - True to archive, false to unarchive
+   * @returns {Promise<{message: string, identifier: string, id: string, archived: boolean}>}
+   * @throws {Error} When the project is not found
+   */
   async archiveProject(projectIdent, archived = true) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent, { showArchived: true });
@@ -407,6 +461,12 @@ export class ProjectsMethods {
     };
   }
 
+  /**
+   * Permanently delete a project.
+   * @param {string} projectIdent - Project identifier
+   * @returns {Promise<{message: string, identifier: string}>}
+   * @throws {Error} When the project is not found
+   */
   async deleteProject(projectIdent) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);

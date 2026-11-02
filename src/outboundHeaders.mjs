@@ -1,9 +1,14 @@
 /**
  * Scoped outbound header injection for protected Huly deployments.
  *
- * Outbound headers are sent ONLY to:
+ * Headers come from HULY_OUTBOUND_HEADERS_JSON (a JSON object) and HULY_OUTBOUND_HEADER_<NAME>
+ * variables (underscores in <NAME> become hyphens). They are added to fetch requests (via a
+ * wrapper installed on globalThis.fetch) and to WebSocket upgrades (via a socket factory),
+ * but ONLY for registered origins:
  *   - HULY_URL (caller-provided)
  *   - origins advertised by Huly's own /config.json response (*_URL fields)
+ *   - the transactor endpoint returned by workspace login
+ * A ws:// or wss:// origin also registers its http:// or https:// counterpart.
  *
  * This is a TRUST DELEGATION, not a guarantee of safety. If an operator's
  * /config.json advertises a *_URL pointing to a third-party origin they do
@@ -32,10 +37,21 @@ let _originalFetch = null;
 let _startupLogged = false;
 const _allowedOrigins = new Set();
 
+/**
+ * Normalize a header name for case-insensitive comparison.
+ * @param {string} name
+ * @returns {string} Lower-cased name
+ */
 function normalizeHeaderKey(name) {
   return name.toLowerCase();
 }
 
+/**
+ * Validate a header name as an RFC 9110 token that is not a banned credential header.
+ * @param {string} name - Header name
+ * @param {string} source - Env var name used in error messages
+ * @throws {Error} When the name is not a valid token or is Authorization, Cookie or Proxy-Authorization
+ */
 function validateHeaderName(name, source) {
   if (!HEADER_NAME_RE.test(name)) {
     throw new Error(`${source} contains invalid header name: ${name}`);
@@ -45,12 +61,30 @@ function validateHeaderName(name, source) {
   }
 }
 
+/**
+ * Validate that a header value contains only printable ASCII and tabs.
+ * @param {string} value - Header value
+ * @param {string} source - Env var name used in error messages
+ * @param {string} name - Header name used in error messages
+ * @throws {Error} When the value contains other characters
+ */
 function validateHeaderValue(value, source, name) {
   if (!HEADER_VALUE_RE.test(value)) {
     throw new Error(`${source} contains invalid value for outbound header: ${name}`);
   }
 }
 
+/**
+ * Validate one configured header and add it to the result map. The value is trimmed; a header
+ * repeated with the same value (case-insensitive name) is ignored.
+ * @param {Map<string, string>} map - Headers keyed by their configured name
+ * @param {Map<string, {name: string, value: string}>} seen - Entries keyed by lower-cased name
+ * @param {*} name - Header name
+ * @param {*} value - Header value
+ * @param {string} source - Env var name used in error messages
+ * @throws {Error} When the name or value is invalid, the value is empty, or the header conflicts
+ *   with an earlier value
+ */
 function addHeader(map, seen, name, value, source) {
   const headerName = String(name);
   const headerValue = String(value).trim();
@@ -74,6 +108,12 @@ function addHeader(map, seen, name, value, source) {
   map.set(headerName, headerValue);
 }
 
+/**
+ * Add headers from HULY_OUTBOUND_HEADERS_JSON; unset or empty adds nothing.
+ * @param {Map<string, string>} map - Result map
+ * @param {Map<string, {name: string, value: string}>} seen - Entries keyed by lower-cased name
+ * @throws {Error} When the value is not a JSON object or contains an invalid header
+ */
 function parseJsonHeaders(map, seen) {
   const raw = process.env.HULY_OUTBOUND_HEADERS_JSON;
   if (raw === undefined || raw === '') return;
@@ -94,6 +134,12 @@ function parseJsonHeaders(map, seen) {
   }
 }
 
+/**
+ * Add headers from HULY_OUTBOUND_HEADER_<NAME> env vars, turning underscores in <NAME> into hyphens.
+ * @param {Map<string, string>} map - Result map
+ * @param {Map<string, {name: string, value: string}>} seen - Entries keyed by lower-cased name
+ * @throws {Error} When a variable has no name suffix or defines an invalid header
+ */
 function parseDiscreteHeaders(map, seen) {
   for (const [envName, value] of Object.entries(process.env)) {
     if (!envName.startsWith(OUTBOUND_HEADER_PREFIX)) continue;
@@ -106,6 +152,11 @@ function parseDiscreteHeaders(map, seen) {
   }
 }
 
+/**
+ * Parse the configured outbound headers once and cache the result for the process.
+ * @returns {{headers: Map<string, string>, isEmpty: boolean}}
+ * @throws {Error} When the header configuration is invalid
+ */
 export function getOutboundHeaders() {
   if (_parsed) return _parsed;
 
@@ -118,10 +169,20 @@ export function getOutboundHeaders() {
   return _parsed;
 }
 
+/**
+ * Return the origin of a URL, resolved against an optional base.
+ * @param {string} url
+ * @param {string} [baseUrl]
+ * @returns {string}
+ */
 function originFor(url, baseUrl) {
   return new URL(url, baseUrl).origin;
 }
 
+/**
+ * Allow an origin; a ws:// or wss:// origin also allows its http:// or https:// counterpart.
+ * @param {string} origin
+ */
 function registerOriginPair(origin) {
   _allowedOrigins.add(origin);
   if (origin.startsWith('wss://')) {
@@ -131,11 +192,22 @@ function registerOriginPair(origin) {
   }
 }
 
+/**
+ * Allow the origin of a URL to receive outbound headers; an empty URL is ignored.
+ * @param {string} [url] - Absolute URL, or relative to baseUrl
+ * @param {string} [baseUrl] - Base for resolving a relative URL
+ * @throws {TypeError} When the URL cannot be parsed
+ */
 export function registerOutboundOrigin(url, baseUrl) {
   if (!url) return;
   registerOriginPair(originFor(url, baseUrl));
 }
 
+/**
+ * Allow every non-empty string *_URL value in a Huly /config.json response.
+ * @param {Object|null|undefined} config - Parsed server config; non-objects are ignored
+ * @param {string} hulyUrl - Base for resolving relative URLs
+ */
 export function registerOriginsFromServerConfig(config, hulyUrl) {
   if (!config || typeof config !== 'object') return;
 
@@ -145,11 +217,22 @@ export function registerOriginsFromServerConfig(config, hulyUrl) {
   }
 }
 
+/**
+ * Return the origin of a fetch input.
+ * @param {Request|string|URL} input
+ * @returns {string}
+ */
 function requestOrigin(input) {
   if (input instanceof Request) return new URL(input.url).origin;
   return new URL(input).origin;
 }
 
+/**
+ * Add the configured headers to a request without overriding headers it already has, and set
+ * Accept-Encoding: identity when the request does not specify an encoding.
+ * @param {Request} request - Mutated in place
+ * @returns {Request} The same request
+ */
 function withOutboundHeaders(request) {
   const { headers } = getOutboundHeaders();
   if (!request.headers.has('Accept-Encoding')) {
@@ -163,6 +246,11 @@ function withOutboundHeaders(request) {
   return request;
 }
 
+/**
+ * Replace globalThis.fetch with a wrapper that adds outbound headers to requests for allowed
+ * origins. Idempotent, including when another copy of this module installed the wrapper.
+ * @throws {Error} When globalThis.fetch is not a function
+ */
 function installOutboundFetchWrapper() {
   if (_wrapperInstalled) return;
   if (globalThis.fetch?.[FETCH_WRAPPER_SYMBOL]) {
@@ -194,6 +282,13 @@ function installOutboundFetchWrapper() {
   _wrapperInstalled = true;
 }
 
+/**
+ * Validate the header configuration, install the fetch wrapper and allow the Huly URL's origin.
+ * The wrapper is installed even when no headers are configured. Logs the configured header
+ * names (not values) to stderr once.
+ * @param {string} hulyUrl - Huly base URL
+ * @throws {Error} When the header configuration is invalid or fetch is unavailable
+ */
 export function ensureOutboundHeaders(hulyUrl) {
   const parsed = getOutboundHeaders();
   installOutboundFetchWrapper();
@@ -205,6 +300,13 @@ export function ensureOutboundHeaders(hulyUrl) {
   }
 }
 
+/**
+ * Create a WebSocket factory for the Huly SDK that adds outbound headers to upgrade requests for
+ * allowed origins. The returned client adapts the `ws` package to the browser-style
+ * onmessage/onclose/onopen/onerror interface the SDK expects.
+ * @returns {((url: string) => Object)|null} Factory, or null when no headers are configured
+ *   (the factory throws when the `ws` package cannot be loaded)
+ */
 export function createOutboundSocketFactory() {
   if (getOutboundHeaders().isEmpty) return null;
 
@@ -287,6 +389,10 @@ export function createOutboundSocketFactory() {
   };
 }
 
+/**
+ * Test hook: restore the original fetch and clear the cached headers, allowed origins and
+ * startup-log flag. Not for production use.
+ */
 export function __resetForTests() {
   if (_originalFetch) {
     globalThis.fetch = _originalFetch;

@@ -15,12 +15,12 @@ import { generateId, tags, tracker } from './sdk.mjs';
 
 export class LabelsMethods {
   /**
-   * Add a label to an issue, creating the tag element if it doesn't exist.
+   * Add a label to an issue, creating the label if none has exactly that name.
    * @param {Object} client - Huly SDK client
    * @param {string} issueId - Internal issue ID
    * @param {string} space - Project space ID
    * @param {string} labelName - Label name to add
-   * @returns {Promise<Object>}
+   * @returns {Promise<{message: string}>} Added, or already attached
    */
   async _addLabelToIssue(client, issueId, space, labelName) {
     let tagElement = await client.findOne(tags.class.TagElement, {
@@ -69,8 +69,9 @@ export class LabelsMethods {
   /**
    * Add a label to an issue by issue identifier.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
-   * @param {string} labelName - Label name to add
-   * @returns {Promise<Object>}
+   * @param {string} labelName - Label name to add; created if no label has exactly that name
+   * @returns {Promise<{message: string}>} Added, or already attached (not an error)
+   * @throws {Error} When the issue is not found
    */
   async addLabel(issueId, labelName) {
     const client = await this._getClient();
@@ -81,8 +82,9 @@ export class LabelsMethods {
   /**
    * Remove a label from an issue.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
-   * @param {string} labelName - Label name to remove
-   * @returns {Promise<Object>}
+   * @param {string} labelName - Label name to remove (case-insensitive)
+   * @returns {Promise<{message: string}>} Removed, or a not-found message when the issue lacks the label
+   * @throws {Error} When the issue is not found
    */
   async removeLabel(issueId, labelName) {
     const client = await this._getClient();
@@ -104,8 +106,13 @@ export class LabelsMethods {
   }
 
   /**
-   * List all available labels for issues.
-   * @returns {Promise<Object[]>}
+   * List the workspace's issue labels, one cursor page at a time.
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the limit or cursor is invalid
    */
   async listLabels(options = {}) {
     const client = await this._getClient();
@@ -128,10 +135,13 @@ export class LabelsMethods {
   }
 
   /**
-   * Create a new label for issues.
+   * Create an issue label. If a label with exactly the same name exists, returns `{ message, id }` for it
+   * instead of throwing.
    * @param {string} name - Label name
-   * @param {number} [color] - Label color as hex number
-   * @returns {Promise<Object>}
+   * @param {string|number} [color=9] - Color name, palette index, or RGB number; unrecognized values use the default
+   * @param {string} [description] - Label description
+   * @returns {Promise<{message: string, id: string, name: string, color: number}>}
+   * @throws {Error} When the workspace has no project to own the label or the label was not persisted
    */
   async createLabel(name, color, description) {
     const client = await this._getClient();
@@ -182,10 +192,15 @@ export class LabelsMethods {
   }
 
   /**
-   * Update an existing label's name, color, or description.
-   * @param {string} name - Current label name to find
-   * @param {Object} updates - Fields to update
-   * @returns {Promise<Object>}
+   * Update a label's name, color, or description. A rename is also applied to every attached reference.
+   * @param {string} name - Current label name (exact match)
+   * @param {Object} [updates] - Fields to update; omitted keys are left unchanged
+   * @param {string} [updates.newName] - New name
+   * @param {string|number} [updates.color] - Color name, palette index, or RGB number
+   * @param {string} [updates.description] - New description
+   * @returns {Promise<Object>} `{ message, id, updated, renamedReferences? }`, or `{ message, id }` when nothing
+   *   changed
+   * @throws {Error} When the label is not found
    */
   async updateLabel(name, updates = {}) {
     const client = await this._getClient();
@@ -233,6 +248,12 @@ export class LabelsMethods {
     };
   }
 
+  /**
+   * Delete an issue label.
+   * @param {string} name - Label name (exact match)
+   * @returns {Promise<{message: string, id: string}>}
+   * @throws {Error} When the label is not found
+   */
   async deleteLabel(name) {
     const client = await this._getClient();
     const tagElement = await client.findOne(tags.class.TagElement, {
@@ -246,9 +267,10 @@ export class LabelsMethods {
   }
 
   /**
-   * Find a label by name.
-   * @param {string} name - Label name (fuzzy match)
-   * @returns {Promise<Object>}
+   * Get an issue label by name.
+   * @param {string} name - Label name (case-insensitive exact match)
+   * @returns {Promise<Object>} `{ id, name, color, description }` plus extras
+   * @throws {Error} When the label is not found
    */
   async getLabel(name) {
     const client = await this._getClient();

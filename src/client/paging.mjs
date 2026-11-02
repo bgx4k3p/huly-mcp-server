@@ -21,18 +21,19 @@ import { tracker } from './sdk.mjs';
 
 export class PagingMethods {
   /**
-   * Paginated findAll — fetches results in batches to avoid data loss.
-   * The SDK's findAll has a server-side page limit. If limit exceeds
-   * the page size, this fetches multiple pages using createdOn cursor.
-   */
-  /**
-   * Paginated findAll with cursor support.
-   * Fetches from the SDK in PAGE_SIZE batches, returns { items, nextCursor? }.
-   * @param {Object} client - SDK client
+   * Cursor-paginated findAll, newest first (createdOn desc, then id). Fetches from the SDK in PAGE_SIZE batches.
+   * @param {Object} client - Huly SDK client
    * @param {string} _class - Document class
    * @param {Object} query - Query filter
-   * @param {Object} options - { limit, cursor, ...findAllOptions }
-   * @returns {{ items: Object[], nextCursor?: string }}
+   * @param {Object} [options] - Paging options; any other keys are passed to the SDK findAll
+   * @param {number} [options.limit=50] - Page size
+   * @param {number} [options.maxLimit=100] - Largest accepted page size
+   * @param {string} [options.cursor] - Cursor from a previous page
+   * @param {Object} [options.cursorScope] - Values the cursor is bound to; defaults to workspace, class and query
+   * @param {Object} [options.after] - Internal start position, used when no cursor is given
+   * @param {Object} [options.watermark] - Internal watermark, used when no cursor is given
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   * @throws {Error} When the limit or cursor is invalid, or one timestamp holds more than PAGE_SIZE records
    */
   async _paginatedFindAll(client, _class, query, options = {}) {
     const {
@@ -122,8 +123,13 @@ export class PagingMethods {
    * In-memory cursor pagination for small collections fetched via findAll.
    * Filters by cursor, sorts by createdOn desc, slices to limit.
    * @param {Object[]} allResults - Full result set from findAll
-   * @param {Object} options - { cursor?, limit? }
-   * @returns {{ items: Object[], nextCursor?: string }}
+   * @param {Object} [options] - Paging options
+   * @param {number} [options.limit=50] - Page size
+   * @param {number} [options.maxLimit=100] - Largest accepted page size
+   * @param {string} [options.cursor] - Cursor from a previous page
+   * @param {Object} [options.cursorScope] - Values the cursor is bound to; defaults to workspace and 'generic'
+   * @returns {{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}}
+   * @throws {Error} When the limit or cursor is invalid
    */
   _cursoredFindAll(allResults, options = {}) {
     const {
@@ -153,6 +159,13 @@ export class PagingMethods {
     return listEnvelope(items);
   }
 
+  /**
+   * Map items through an async mapper with at most `concurrency` calls in flight, preserving order.
+   * @param {Array} items - Input items
+   * @param {number} concurrency - Maximum concurrent mapper calls
+   * @param {(item: *, index: number) => Promise<*>} mapper - Async mapper
+   * @returns {Promise<Array>} Results in input order
+   */
   async _mapWithConcurrency(items, concurrency, mapper) {
     const results = new Array(items.length);
     let nextIndex = 0;
@@ -170,6 +183,19 @@ export class PagingMethods {
     return results;
   }
 
+  /**
+   * Cursor-paginated issue query restricted to a set of issue ids, querying the ids in FILTER_ID_BATCH_SIZE
+   * batches and merging the pages newest first.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} query - Issue query filter
+   * @param {string[]} issueIds - Issue ids to restrict to
+   * @param {Object} options - Paging options
+   * @param {number} options.limit - Page size (already normalized by the caller)
+   * @param {string} [options.cursor] - Cursor from a previous page
+   * @param {Object} [options.cursorScope] - Values the cursor is bound to; defaults to workspace, class, query
+   *   and ids
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   */
   async _paginatedIssuesByIds(client, query, issueIds, options) {
     const cursorScope = options.cursorScope ?? {
       workspace: this.workspace,

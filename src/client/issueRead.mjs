@@ -46,7 +46,11 @@ const MY_ISSUE_FIELDS = new Set([...SEARCH_ISSUE_FIELDS, 'labels', 'estimation',
 const isSubIssue = issue => Boolean(issue.attachedTo) && issue.attachedToClass === tracker.class.Issue;
 const unique = values => [...new Set(values)];
 
-/** Group documents by the issue they are attached to. */
+/**
+ * Group documents by the issue they are attached to.
+ * @param {Object[]} values - Documents with an `attachedTo` field
+ * @returns {Map<string, Object[]>} Issue id → attached documents
+ */
 function groupByAttachedTo(values) {
   const grouped = new Map();
   for (const value of values) {
@@ -59,6 +63,11 @@ function groupByAttachedTo(values) {
 /**
  * Store a bounded collection on an issue entry, adding count/truncated metadata when the projection asks
  * for it or the collection was cut.
+ * @param {Object} entry - Row being built
+ * @param {string} key - Property name for the collection
+ * @param {Object[]} values - Full collection
+ * @param {number} maximum - Maximum items to keep
+ * @param {Object} projection - Normalized read options
  */
 function assignBounded(entry, key, values, maximum, projection) {
   const bounded = boundedCollection(values, maximum);
@@ -310,10 +319,20 @@ export class IssueReadMethods {
       : fromMarkup(rawDesc);
   }
 
+  /**
+   * Estimation and reported time of an issue, in hours.
+   * @param {Object} issue - Issue document
+   * @returns {Object} Output of `issueTimeFields`
+   */
   _issueTimeFields(issue) {
     return issueTimeFields(issue);
   }
 
+  /**
+   * Group tag references by the issue they are attached to.
+   * @param {Object[]} allLabels - TagReference documents
+   * @returns {Map<string, Object[]>} Issue id → tag references
+   */
   _groupLabelsByIssue(allLabels) {
     const labelsByIssue = new Map();
     for (const label of allLabels) {
@@ -325,6 +344,13 @@ export class IssueReadMethods {
     return labelsByIssue;
   }
 
+  /**
+   * Ids of all issues carrying a label.
+   * @param {Object} client - Huly SDK client
+   * @param {string} tagId - TagElement id
+   * @returns {Promise<string[]>} Unique issue ids
+   * @throws {Error} When the label is on more than MAX_LABEL_FILTER_ISSUES (5000) issues
+   */
   async _findIssueIdsForLabel(client, tagId) {
     const references = await this._paginatedFindAll(
       client,
@@ -346,6 +372,12 @@ export class IssueReadMethods {
       .filter(Boolean))];
   }
 
+  /**
+   * Resolve every issue referenced by the relations and blockers of a batch of issues.
+   * @param {Object} client - Huly SDK client
+   * @param {Object[]} issues - Issue documents
+   * @returns {Promise<Map<string, {id: string, title: string}>>} Related issue id → identifier and title
+   */
   async _buildRelatedIssueMap(client, issues) {
     const allRelIds = [...new Set(issues.flatMap(issue => [
       ...(issue.relations || []).map(r => r._id),
@@ -362,6 +394,13 @@ export class IssueReadMethods {
     }]));
   }
 
+  /**
+   * Bounded relations and blockers of one issue, with count/truncated metadata for each.
+   * @param {Object} issue - Issue document
+   * @param {Map} relIssueMap - Result of `_buildRelatedIssueMap`
+   * @param {number} limit - Maximum items per collection
+   * @returns {Object} relations, relationsCount, relationsTruncated, blockedBy, blockedByCount, blockedByTruncated
+   */
   _projectRelations(issue, relIssueMap, limit) {
     const relationRefs = issue.relations || [];
     const blockedByRefs = issue.blockedBy || [];
@@ -380,14 +419,26 @@ export class IssueReadMethods {
   }
 
   /**
-   * List issues in a project with optional filtering.
+   * List issues in a project with optional filtering. Status, label and milestone match names case-insensitively.
    * @param {string} project - Project identifier
    * @param {string} [status] - Filter by status name
    * @param {string} [priority] - Filter by priority level
    * @param {string} [label] - Filter by label name
    * @param {string} [milestone] - Filter by milestone name
-   * @param {number} [limit=500] - Maximum number of issues
-   * @returns {Promise<Object[]>}
+   * @param {number} [limit] - Page size; defaults to 50 (max 100), or 20 (max 50) when expansions are requested
+   * @param {string} [cursor] - Pagination cursor from a previous page
+   * @param {Object} [readOptions] - Field projection and expansions
+   * @param {string[]} [readOptions.fields] - Row fields to return (defaults depend on responseMode)
+   * @param {string[]} [readOptions.include] - Expansions to add (description, comments, activity, ...)
+   * @param {string} [readOptions.responseMode='compact'] - compact or raw
+   * @param {number} [readOptions.descriptionPreviewChars=500] - Description preview length (0 = full, or 100-5000)
+   * @param {number} [readOptions.commentsLimit] - Maximum comments per issue
+   * @param {number} [readOptions.activityLimit] - Maximum activity entries per issue
+   * @param {number} [readOptions.timeReportsLimit] - Maximum time reports per issue
+   * @param {number} [readOptions.relationsLimit] - Maximum relations/blockers per issue
+   * @param {number} [readOptions.childrenLimit] - Maximum children per issue
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   * @throws {Error} When the priority, status, milestone or label is not found
    */
   async listIssues(project, status, priority, label, milestone, limit, cursor, readOptions = {}) {
     const projection = normalizeIssueReadOptions(readOptions, 'list');
@@ -504,8 +555,18 @@ export class IssueReadMethods {
   }
 
   /**
-   * Get a specific issue by its identifier with full details.
+   * Get a specific issue by its identifier. The description is included unless `include` says otherwise.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {Object} [options] - Field projection and expansions
+   * @param {string[]} [options.fields] - Row fields to return (defaults to all)
+   * @param {string[]} [options.include] - Expansions to add (description, comments, activity, ...)
+   * @param {string} [options.responseMode='compact'] - compact or raw
+   * @param {number} [options.descriptionPreviewChars=0] - Description preview length (0 = full, or 100-5000)
+   * @param {number} [options.commentsLimit] - Maximum comments per issue
+   * @param {number} [options.activityLimit] - Maximum activity entries per issue
+   * @param {number} [options.timeReportsLimit] - Maximum time reports per issue
+   * @param {number} [options.relationsLimit] - Maximum relations/blockers per issue
+   * @param {number} [options.childrenLimit] - Maximum children per issue
    * @returns {Promise<Object>}
    */
   async getIssue(issueId, options = {}) {
@@ -541,8 +602,9 @@ export class IssueReadMethods {
    * Search issues by text across all projects.
    * @param {string} query - Search text
    * @param {string} [projectIdent] - Optional project to limit search
-   * @param {number} [limit=200] - Maximum results
-   * @returns {Promise<Object[]>}
+   * @param {number} [limit=20] - Page size (max 100)
+   * @param {string} [cursor] - Pagination cursor from a previous page
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
    */
   async searchIssues(query, projectIdent, limit = 20, cursor) {
     const client = await this._getClient();
@@ -576,8 +638,10 @@ export class IssueReadMethods {
    * Get issues assigned to the currently authenticated user.
    * @param {string} [projectIdent] - Optional project filter
    * @param {string} [status] - Optional status filter
-   * @param {number} [limit=500] - Maximum results
-   * @returns {Promise<Object[]>}
+   * @param {number} [limit=50] - Page size (max 100)
+   * @param {string} [cursor] - Pagination cursor from a previous page
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   * @throws {Error} When the current user or the status cannot be found
    */
   async getMyIssues(projectIdent, status, limit = DEFAULT_PAGE_SIZE, cursor) {
     const client = await this._getClient();
@@ -733,7 +797,7 @@ export class IssueReadMethods {
   }
 
   /**
-   * Get the modification history / activity for an issue.
+   * Get an issue's comment and time-log activity timeline, sub-issues and labels.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @returns {Promise<Object>}
    */

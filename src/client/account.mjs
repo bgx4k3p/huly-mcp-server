@@ -1,7 +1,8 @@
 /**
- * Account-level operations that need no workspace connection: authentication, workspaces, profile, invites, integrations, mailboxes and social identities. Exposed as static methods.
+ * Account-level operations that need no workspace connection: authentication, workspaces, profile,
+ * invites, integrations, mailboxes and social identities.
  *
- * Methods are composed onto HulyClient; `this` is the client instance class (static methods).
+ * Exposed as static methods on HulyClient; `this` is the HulyClient class.
  */
 import { AUTH_CACHE_TTL_MS } from '../helpers.mjs';
 import { ensureOutboundHeaders, registerOriginsFromServerConfig } from '../outboundHeaders.mjs';
@@ -9,12 +10,11 @@ import { getAccountClient, loadConfig } from './sdk.mjs';
 
 export class AccountMethods {
   /**
-   * List all workspaces accessible to the authenticated user.
-   * This is an account-level operation, not workspace-specific.
-   *
+   * List the workspaces accessible to the authenticated account.
    * @param {string} url - Huly server URL
-   * @param {Object} creds - Credentials: { email, password } or { token }
-   * @returns {Promise<Object[]>}
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @returns {Promise<{slug: string, name: string, mode: string, createdOn: ?string}[]>}
+   * @throws {Error} When authentication fails
    */
   static async listWorkspaces(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -29,13 +29,18 @@ export class AccountMethods {
   }
 
   /**
-   * Helper: get an authenticated account client.
-   * @param {string} url - Huly server URL
-   * @param {Object} creds - Credentials: { email, password } or { token }
-   * @returns {Promise<{ authClient: Object, token: string, accountsUrl: string }>}
+   * Process-wide cache of the last account token, keyed by server URL and credential.
+   * @type {{token: ?string, accountId: ?string, accountsUrl: ?string, expiresAt: number}}
    */
   static _authCache = { token: null, accountId: null, accountsUrl: null, expiresAt: 0 };
 
+  /**
+   * Get an authenticated account client, reusing a cached token for the same URL and credential for 10 minutes.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @returns {Promise<{authClient: Object, token: string, accountId: string, accountsUrl: string}>}
+   * @throws {Error} When login fails or a token has no account claim
+   */
   static async _getAuthClient(url, creds) {
     const cacheKey = creds.token || creds.email;
     const now = Date.now();
@@ -92,7 +97,12 @@ export class AccountMethods {
   }
 
   /**
-   * Helper: get a workspace-scoped account client.
+   * Get an account client scoped to a workspace the account can access.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @returns {Promise<{wsClient: Object, wsInfo: Object}>} Workspace-scoped client and the selection result
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async _getWorkspaceAuthClient(url, creds, workspaceSlug) {
     const { authClient, accountsUrl } = await this._getAuthClient(url, creds);
@@ -112,7 +122,12 @@ export class AccountMethods {
   }
 
   /**
-   * Get detailed info about a specific workspace.
+   * Get details about a workspace.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @returns {Promise<Object>} `{ slug, name, uuid, mode, version, createdOn, lastVisit, isDisabled }`
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async getWorkspaceInfo(url, creds, workspaceSlug) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -130,14 +145,18 @@ export class AccountMethods {
   }
 
   /**
-   * Create a new workspace.
+   * Create a workspace.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} name - Workspace display name
+   * @returns {Promise<{message: string, slug: string, uuid: string}>}
+   * @throws {Error} When authentication fails
    */
   static async createWorkspace(url, creds, name) {
     const { authClient } = await this._getAuthClient(url, creds);
     const result = await authClient.createWorkspace(name);
     // WorkspaceLoginInfo carries the slug as workspaceUrl and the uuid as
-    // workspace. Reading result.url returned the uuid as the slug and left
-    // uuid undefined, so the reported slug could not address the workspace.
+    // workspace.
     return {
       message: `Workspace "${name}" created`,
       slug: result.workspaceUrl ?? result.url ?? result.workspace,
@@ -146,7 +165,13 @@ export class AccountMethods {
   }
 
   /**
-   * Rename an existing workspace.
+   * Rename a workspace.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @param {string} newName - New display name
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async updateWorkspaceName(url, creds, workspaceSlug, newName) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -156,6 +181,11 @@ export class AccountMethods {
 
   /**
    * Permanently delete a workspace.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async deleteWorkspace(url, creds, workspaceSlug) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -164,7 +194,12 @@ export class AccountMethods {
   }
 
   /**
-   * Get workspace members with roles.
+   * List workspace members with their roles.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @returns {Promise<{id: string, role: string, email: ?string, name: ?string}[]>}
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async getWorkspaceMembers(url, creds, workspaceSlug) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -178,7 +213,14 @@ export class AccountMethods {
   }
 
   /**
-   * Update a member's role in a workspace.
+   * Change a member's role in a workspace.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @param {string} memberEmail - Member identifier passed to the account service
+   * @param {string} role - New role (e.g., "MEMBER", "OWNER")
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async updateWorkspaceRole(url, creds, workspaceSlug, memberEmail, role) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -187,7 +229,11 @@ export class AccountMethods {
   }
 
   /**
-   * Get the current user's account info.
+   * Get the authenticated account's info from the account service.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @returns {Promise<Object>} Account info as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async getAccountInfo(url, creds) {
     const { authClient, accountId } = await this._getAuthClient(url, creds);
@@ -195,7 +241,11 @@ export class AccountMethods {
   }
 
   /**
-   * Get the current user's profile.
+   * Get the authenticated user's profile.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @returns {Promise<Object>} Profile as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async getUserProfile(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -203,7 +253,14 @@ export class AccountMethods {
   }
 
   /**
-   * Update the current user's profile.
+   * Update the authenticated user's profile. Only the arguments that are not undefined are sent.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} [name] - Display name
+   * @param {string} [city] - City
+   * @param {string} [country] - Country
+   * @returns {Promise<{message: string, updated: string[]}>}
+   * @throws {Error} When authentication fails
    */
   static async setMyProfile(url, creds, name, city, country) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -216,7 +273,12 @@ export class AccountMethods {
   }
 
   /**
-   * Change the current user's password.
+   * Change the authenticated user's password. Requires email/password credentials.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} newPassword - New password
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails or the credentials are a token
    */
   static async changePassword(url, creds, newPassword) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -228,7 +290,13 @@ export class AccountMethods {
   }
 
   /**
-   * Change the current user's username.
+   * Change the authenticated user's name.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} firstName - First name
+   * @param {string} [lastName] - Last name
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails
    */
   static async changeUsername(url, creds, firstName, lastName) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -237,7 +305,14 @@ export class AccountMethods {
   }
 
   /**
-   * Send an invite to join a workspace.
+   * Send an email invite to join a workspace.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @param {string} inviteEmail - Invitee email address
+   * @param {string} [role='MEMBER'] - Role granted on joining
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async sendInvite(url, creds, workspaceSlug, inviteEmail, role) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -246,7 +321,14 @@ export class AccountMethods {
   }
 
   /**
-   * Resend a pending invite.
+   * Resend a pending workspace invite.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @param {string} inviteEmail - Invitee email address
+   * @param {string} [role='MEMBER'] - Role granted on joining
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async resendInvite(url, creds, workspaceSlug, inviteEmail, role) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -256,6 +338,16 @@ export class AccountMethods {
 
   /**
    * Create an invite link for a workspace.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} workspaceSlug - Workspace slug (URL name)
+   * @param {string} [email] - Restrict the link to this email address
+   * @param {string} [role='MEMBER'] - Role granted on joining
+   * @param {string} [firstName] - Invitee first name
+   * @param {string} [lastName] - Invitee last name
+   * @param {number} [expireHours=48] - Hours until the link expires
+   * @returns {Promise<{link: string, workspace: string, role: string}>}
+   * @throws {Error} When authentication fails or the workspace is not accessible
    */
   static async createInviteLink(url, creds, workspaceSlug, email, role, firstName, lastName, expireHours) {
     const { wsClient } = await this._getWorkspaceAuthClient(url, creds, workspaceSlug);
@@ -272,7 +364,12 @@ export class AccountMethods {
   }
 
   /**
-   * List all integrations.
+   * List the account's integrations.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {Object} [filter] - Account-service filter (e.g., `{ socialId, kind, workspaceUuid }`)
+   * @returns {Promise<Object[]>} Integrations as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async listIntegrations(url, creds, filter) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -280,7 +377,12 @@ export class AccountMethods {
   }
 
   /**
-   * Get a specific integration by key (socialId + kind + workspaceUuid).
+   * Get an integration by key.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {{socialId: string, kind: string, workspaceUuid: ?string}} integrationKey - Integration key
+   * @returns {Promise<?Object>} Integration as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async getIntegration(url, creds, integrationKey) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -288,8 +390,12 @@ export class AccountMethods {
   }
 
   /**
-   * Create a new integration.
-   * @param {object} integration - { socialId, kind, workspaceUuid, data?, disabled? }
+   * Create an integration.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {Object} integration - `{ socialId, kind, workspaceUuid, data?, disabled? }`
+   * @returns {Promise<*>} Account service result
+   * @throws {Error} When authentication fails
    */
   static async createIntegration(url, creds, integration) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -297,8 +403,12 @@ export class AccountMethods {
   }
 
   /**
-   * Update an existing integration.
-   * @param {object} integration - Full Integration object { socialId, kind, workspaceUuid, data?, disabled? }
+   * Update an integration.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {Object} integration - Full integration `{ socialId, kind, workspaceUuid, data?, disabled? }`
+   * @returns {Promise<*>} Account service result
+   * @throws {Error} When authentication fails
    */
   static async updateIntegration(url, creds, integration) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -307,7 +417,11 @@ export class AccountMethods {
 
   /**
    * Delete an integration by key.
-   * @param {object} integrationKey - { socialId, kind, workspaceUuid }
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {{socialId: string, kind: string, workspaceUuid: ?string}} integrationKey - Integration key
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails
    */
   static async deleteIntegration(url, creds, integrationKey) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -316,7 +430,11 @@ export class AccountMethods {
   }
 
   /**
-   * List all mailboxes.
+   * List the account's mailboxes.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @returns {Promise<Object[]>} Mailboxes as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async getMailboxes(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -324,7 +442,13 @@ export class AccountMethods {
   }
 
   /**
-   * Create a new mailbox.
+   * Create a mailbox.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} name - Mailbox local part
+   * @param {string} domain - Mailbox domain
+   * @returns {Promise<*>} Account service result
+   * @throws {Error} When authentication fails
    */
   static async createMailbox(url, creds, name, domain) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -333,6 +457,11 @@ export class AccountMethods {
 
   /**
    * Delete a mailbox.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} mailboxId - Mailbox ID
+   * @returns {Promise<{message: string}>}
+   * @throws {Error} When authentication fails
    */
   static async deleteMailbox(url, creds, mailboxId) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -342,6 +471,11 @@ export class AccountMethods {
 
   /**
    * Find a person by social key.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} socialKey - Social key (e.g., "email:user@example.com")
+   * @returns {Promise<*>} Person UUID or null, as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async findPersonBySocialKey(url, creds, socialKey) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -349,7 +483,11 @@ export class AccountMethods {
   }
 
   /**
-   * Get social IDs for the current user.
+   * Get the authenticated account's social IDs.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @returns {Promise<Object[]>} Social IDs as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async getSocialIds(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -357,7 +495,12 @@ export class AccountMethods {
   }
 
   /**
-   * Add an email social ID to a person.
+   * Add an email social ID to the authenticated account.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @param {string} targetEmail - Email address to add
+   * @returns {Promise<*>} Account service result
+   * @throws {Error} When authentication fails
    */
   static async addEmailSocialId(url, creds, targetEmail) {
     const { authClient } = await this._getAuthClient(url, creds);
@@ -365,7 +508,11 @@ export class AccountMethods {
   }
 
   /**
-   * Get all subscriptions for the current account.
+   * List the authenticated account's subscriptions, excluding inactive ones.
+   * @param {string} url - Huly server URL
+   * @param {{email: string, password: string}|{token: string}} creds - Credentials
+   * @returns {Promise<Object[]>} Subscriptions as returned by the account service
+   * @throws {Error} When authentication fails
    */
   static async getSubscriptions(url, creds) {
     const { authClient } = await this._getAuthClient(url, creds);

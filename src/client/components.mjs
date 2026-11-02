@@ -9,7 +9,7 @@ import { generateId, tracker } from './sdk.mjs';
 /**
  * Output row for a component.
  * @param {Object} component - Component document
- * @returns {Object}
+ * @returns {Object} Component output row; `lead` is the lead's employee ID or null
  */
 function componentRow(component) {
   return withExtra(component, {
@@ -21,6 +21,16 @@ function componentRow(component) {
 }
 
 export class ComponentsMethods {
+  /**
+   * List components in a project, one cursor page at a time.
+   * @param {string} projectIdent - Project identifier
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the project is not found, or the limit or cursor is invalid
+   */
   async listComponents(projectIdent, options = {}) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -33,6 +43,17 @@ export class ComponentsMethods {
     });
   }
 
+  /**
+   * Create a component in a project. If a component with exactly the same name exists, returns
+   * `{ message, id }` for it instead of throwing.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} name - Component name
+   * @param {string} [description] - Component description
+   * @param {string} [lead] - Lead employee name (case-insensitive)
+   * @param {string} [format='markdown'] - Description format: markdown, html, or plain
+   * @returns {Promise<Object>} `{ message, id, name, description, lead }`; lead is the employee ID or null
+   * @throws {Error} When the project or lead is not found
+   */
   async createComponent(projectIdent, name, description, lead, format) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -69,6 +90,18 @@ export class ComponentsMethods {
     };
   }
 
+  /**
+   * Update a component found by name (case-insensitive).
+   * @param {string} projectIdent - Project identifier
+   * @param {string} name - Current component name
+   * @param {Object} [updates] - Fields to update; omitted keys are left unchanged
+   * @param {string} [updates.name] - New name
+   * @param {string} [updates.description] - New description
+   * @param {string} [updates.descriptionFormat='markdown'] - Description format: markdown, html, or plain
+   * @param {string} [updates.lead] - Lead employee name; empty clears it
+   * @returns {Promise<{id: string, name: string, updated: string[]}>}
+   * @throws {Error} When the project, component, or lead is not found
+   */
   async updateComponent(projectIdent, name, updates = {}) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -108,6 +141,13 @@ export class ComponentsMethods {
     };
   }
 
+  /**
+   * Delete a component found by name (case-insensitive).
+   * @param {string} projectIdent - Project identifier
+   * @param {string} name - Component name
+   * @returns {Promise<{message: string, id: string}>}
+   * @throws {Error} When the project or component is not found
+   */
   async deleteComponent(projectIdent, name) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -125,10 +165,11 @@ export class ComponentsMethods {
   }
 
   /**
-   * Find a component by name in a project.
+   * Get a component by name in a project.
    * @param {string} projectIdent - Project identifier
-   * @param {string} name - Component name (fuzzy match)
-   * @returns {Promise<Object>}
+   * @param {string} name - Component name (case-insensitive exact match)
+   * @returns {Promise<Object>} Component row
+   * @throws {Error} When the project or component is not found; the message lists available components
    */
   async getComponent(projectIdent, name) {
     const client = await this._getClient();

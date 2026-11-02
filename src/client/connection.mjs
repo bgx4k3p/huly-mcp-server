@@ -20,8 +20,9 @@ import {
 export class ConnectionMethods {
   /**
    * Establish a client connection to Huly.
-   * Transport is chosen via HULY_TRANSPORT env var: 'ws' (default) or 'rest'.
+   * Transport is chosen via HULY_TRANSPORT env var: 'ws' (default) or 'rest'. Concurrent calls share one attempt.
    * @returns {Promise<void>}
+   * @throws {Error} When the workspace or credentials are missing, or the connection fails
    */
   async connect() {
     if (this._client) return;
@@ -101,7 +102,8 @@ export class ConnectionMethods {
   }
 
   /**
-   * Disconnect and clear the cached client.
+   * Disconnect and clear the cached client, collaborator client and workspace token.
+   * @returns {void}
    */
   disconnect() {
     if (this._platformClient) {
@@ -128,9 +130,10 @@ export class ConnectionMethods {
   }
 
   /**
-   * Execute an operation with automatic reconnect on connection failure.
+   * Execute an operation, disconnecting and retrying up to twice when it fails with a connection error.
    * @param {Function} operation - Async function to execute
-   * @returns {Promise<*>}
+   * @returns {Promise<*>} The operation's result
+   * @throws {Error} The operation's error when it is not a connection error or retries are exhausted
    */
   async withReconnect(operation) {
     const maxRetries = 2;

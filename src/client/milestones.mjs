@@ -25,10 +25,10 @@ const MILESTONE_INCLUDE_FIELDS = Object.freeze(['issues']);
  * Output row for a milestone, optionally with a bounded list of its issues.
  * @param {Object} milestone - Milestone document
  * @param {Object} details
- * @param {string[]} details.collaborators - Collaborator names
+ * @param {{account: string, name: ?string}[]} details.collaborators - Collaborators
  * @param {number} [details.issueCount] - Total issue count, reported by single reads
  * @param {Object} [details.issues] - Issue expansion: `{ issues, project, statusMap, taskTypeMap, limit }`
- * @returns {Object}
+ * @returns {Object} Milestone output row
  */
 function milestoneRow(milestone, { collaborators, issueCount, issues }) {
   const row = {
@@ -58,10 +58,17 @@ function milestoneRow(milestone, { collaborators, issueCount, issues }) {
 
 export class MilestonesMethods {
   /**
-   * List all milestones in a project with optional status filtering.
+   * List milestones in a project, one cursor page at a time, optionally filtered by status.
    * @param {string} projectIdent - Project identifier
-   * @param {string} [status] - Filter by status
-   * @returns {Promise<Object[]>}
+   * @param {string} [status] - Status filter: planned, in progress, completed, canceled (case-insensitive)
+   * @param {Object} [options]
+   * @param {string[]} [options.include] - Related data to add: issues
+   * @param {number} [options.issuesLimit=20] - Maximum issues listed per milestone (1-100)
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the project or status is not found, or a limit or cursor is invalid
    */
   async listMilestones(projectIdent, status, options = {}) {
     const client = await this._getClient();
@@ -132,10 +139,14 @@ export class MilestonesMethods {
   }
 
   /**
-   * Get a specific milestone by name with issue count.
+   * Get a milestone by name (case-insensitive exact match), with its issue count.
    * @param {string} projectIdent - Project identifier
    * @param {string} name - Milestone name
-   * @returns {Promise<Object>}
+   * @param {Object} [options]
+   * @param {string[]} [options.include] - Related data to add: issues
+   * @param {number} [options.issuesLimit=20] - Maximum issues listed (1-100)
+   * @returns {Promise<Object>} Milestone row
+   * @throws {Error} When the project or milestone is not found
    */
   async getMilestone(projectIdent, name, options = {}) {
     const client = await this._getClient();
@@ -178,13 +189,17 @@ export class MilestonesMethods {
   }
 
   /**
-   * Create a new milestone in a project.
+   * Create a milestone in a project. If a milestone with the same name (case-insensitive) exists, returns
+   * `{ message, id, name }` for it instead of throwing.
    * @param {string} projectIdent - Project identifier
    * @param {string} name - Milestone name
    * @param {string} [description] - Milestone description
-   * @param {string} [targetDate] - Target date ISO 8601
-   * @param {string} [status] - Initial status
-   * @returns {Promise<Object>}
+   * @param {string} [targetDate] - Target date, ISO 8601 (defaults to 30 days from now)
+   * @param {string} [status] - Initial status name (defaults to Planned)
+   * @param {string} [format='markdown'] - Description format: markdown, html, or plain
+   * @param {string[]} [collaborators=[]] - Collaborator names or account UUIDs
+   * @returns {Promise<Object>} `{ message, id, name, description, status, targetDate, collaborators }`
+   * @throws {Error} When the project, status, or a collaborator is not found, or the date is invalid
    */
   async createMilestone(projectIdent, name, description, targetDate, status, format, collaborators = []) {
     const client = await this._getClient();
@@ -254,10 +269,11 @@ export class MilestonesMethods {
   }
 
   /**
-   * Set or clear the milestone for an issue.
-   * @param {string} issueId - Issue identifier
-   * @param {string} [milestoneName] - Milestone name or empty to clear
-   * @returns {Promise<Object>}
+   * Set or clear the milestone for an issue. The milestone is matched by name, case-insensitively.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {string} [milestoneName] - Milestone name; empty or omitted clears it
+   * @returns {Promise<Object>} `{ message, issueId, milestone }` where milestone is `{ id, name }` or null
+   * @throws {Error} When the issue or milestone is not found
    */
   async setMilestone(issueId, milestoneName) {
     const client = await this._getClient();
@@ -299,6 +315,20 @@ export class MilestonesMethods {
     };
   }
 
+  /**
+   * Update a milestone found by name (case-insensitive). Collaborators are validated before any field is written.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} name - Current milestone name
+   * @param {Object} [updates] - Fields to update; omitted keys are left unchanged
+   * @param {string} [updates.name] - New name
+   * @param {string} [updates.description] - New description
+   * @param {string} [updates.descriptionFormat='markdown'] - Description format: markdown, html, or plain
+   * @param {string} [updates.status] - New status name
+   * @param {string} [updates.targetDate] - New target date, ISO 8601; empty clears it
+   * @param {string[]} [updates.collaborators] - Replacement collaborator list (names or account UUIDs)
+   * @returns {Promise<Object>} `{ id, name, updated, collaborators? }`
+   * @throws {Error} When the project, milestone, status, or a collaborator is not found, or the date is invalid
+   */
   async updateMilestone(projectIdent, name, updates = {}) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);
@@ -355,6 +385,14 @@ export class MilestonesMethods {
     };
   }
 
+  /**
+   * Delete a milestone found by name (case-insensitive), clearing it from its issues or moving them to another.
+   * @param {string} projectIdent - Project identifier
+   * @param {string} name - Milestone name
+   * @param {string} [moveIssuesTo] - Name of the milestone to move issues to; empty or omitted clears them
+   * @returns {Promise<{message: string, id: string, issuesMoved: number, movedTo: ?string}>}
+   * @throws {Error} When the project, milestone, or target milestone is not found
+   */
   async deleteMilestone(projectIdent, name, moveIssuesTo) {
     const client = await this._getClient();
     const project = await this._findProject(client, projectIdent);

@@ -8,11 +8,14 @@ import { contactPlugin, generateId, tracker } from './sdk.mjs';
 
 export class TimeReportsMethods {
   /**
-   * Log time spent on an issue.
-   * @param {string} issueId - Issue identifier
-   * @param {number} hours - Hours spent
+   * Log time spent on an issue and add it to the issue's reported time.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {number|string} hours - Hours spent; must be a non-negative number
    * @param {string} [description] - Description of work done
-   * @returns {Promise<Object>}
+   * @param {string} [date] - Report date, ISO 8601 (defaults to now)
+   * @param {string} [employeeName] - Employee name (case-insensitive); omitted leaves the report unassigned
+   * @returns {Promise<{message: string, issueId: string, reportedTime: number, id: string}>}
+   * @throws {Error} When the issue or employee is not found, or hours or date is invalid
    */
   async logTime(issueId, hours, description, date, employeeName) {
     const client = await this._getClient();
@@ -54,6 +57,16 @@ export class TimeReportsMethods {
     };
   }
 
+  /**
+   * List time reports on an issue, one cursor page at a time.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
+   * @param {Object} [options]
+   * @param {string} [options.cursor] - Opaque cursor from a previous page
+   * @param {number} [options.limit=50] - Page size (1-100)
+   * @returns {Promise<{items: Object[], count: number, hasMore: boolean, truncated: boolean, nextCursor?: string}>}
+   *   List envelope
+   * @throws {Error} When the issue is not found, or the limit or cursor is invalid
+   */
   async listTimeReports(issueId, options = {}) {
     const client = await this._getClient();
     const { issue } = await this._parseAndFindIssue(client, issueId);
@@ -77,6 +90,12 @@ export class TimeReportsMethods {
     });
   }
 
+  /**
+   * Delete a time report by ID. The server reduces the issue's reported time.
+   * @param {string} reportId - Time report ID
+   * @returns {Promise<{message: string, id: string, hours: number}>}
+   * @throws {Error} When the report is not found
+   */
   async deleteTimeReport(reportId) {
     const client = await this._getClient();
 
@@ -95,6 +114,18 @@ export class TimeReportsMethods {
     };
   }
 
+  /**
+   * Update a time report on an issue.
+   * @param {string} issueId - Issue identifier the report belongs to
+   * @param {string} reportId - Time report ID
+   * @param {Object} [updates] - Fields to update; omitted keys are left unchanged
+   * @param {number|string} [updates.hours] - Hours spent; must be a non-negative number
+   * @param {string} [updates.description] - Description of work done
+   * @param {string} [updates.date] - Report date, ISO 8601; empty sets it to now
+   * @param {string} [updates.employee] - Employee name; empty clears it
+   * @returns {Promise<{id: string, issueId: string, updated: string[]}>}
+   * @throws {Error} When the issue, report (on that issue), or employee is not found, or a value is invalid
+   */
   async updateTimeReport(issueId, reportId, updates = {}) {
     const client = await this._getClient();
     const { issue } = await this._parseAndFindIssue(client, issueId);
@@ -140,10 +171,11 @@ export class TimeReportsMethods {
   }
 
   /**
-   * Get a specific time report by ID on an issue.
+   * Get a time report by ID on an issue.
    * @param {string} issueId - Issue identifier
    * @param {string} reportId - Time report ID
-   * @returns {Promise<Object>}
+   * @returns {Promise<Object>} `{ id, hours, description, date, employee }` plus extras
+   * @throws {Error} When the issue is not found or the report is not attached to it
    */
   async getTimeReport(issueId, reportId) {
     const client = await this._getClient();
