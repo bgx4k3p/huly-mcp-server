@@ -1140,7 +1140,7 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
 
     it('deletes a time report', async () => {
-      const result = await client.deleteTimeReport(reportId);
+      const result = await client.deleteTimeReport(testIssueId, reportId);
       assert.ok(result.message.includes('deleted'));
       assert.equal(result.hours, 2.5);
     });

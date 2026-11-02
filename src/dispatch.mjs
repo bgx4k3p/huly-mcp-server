@@ -221,7 +221,7 @@ export const workspaceTools = {
   update_time_report: (a, c) => c.updateTimeReport(a.issueId, a.reportId, {
     hours: a.hours, description: a.description, date: a.date, employee: a.employee
   }),
-  delete_time_report: (a, c) => c.deleteTimeReport(a.reportId),
+  delete_time_report: (a, c) => c.deleteTimeReport(a.issueId, a.reportId),
 
   // Projects
   create_project: (a, c) =>

@@ -296,13 +296,14 @@ describe('time report writes', () => {
       collection: 'reports',
       value: '1.5'
     };
-    const client = stubClient({
-      findOne: async (_class, query) => (query._id === 'report-id' ? report : null),
+    const matches = query => Object.entries(query).every(([key, value]) => report[key] === value);
+    const client = singleIssue(stubClient({
+      findOne: async (_class, query) => (matches(query) ? report : null),
       removeCollection: async (...args) => { removals.push(args); },
       updateDoc: async (...args) => { updates.push(args); }
-    });
+    }));
 
-    const result = await client.deleteTimeReport('report-id');
+    const result = await client.deleteTimeReport('PROJ-1', 'report-id');
     assert.deepEqual(removals[0], [
       TIME_REPORT_CLASS, 'report-space', 'report-id', 'issue-id', ISSUE_CLASS, 'reports'
     ]);
@@ -310,7 +311,20 @@ describe('time report writes', () => {
     assert.equal(updates.length, 0);
     assert.equal(result.hours, 1.5);
 
-    await assert.rejects(() => client.deleteTimeReport('ghost'), /Time report not found: ghost/);
+    await assert.rejects(() => client.deleteTimeReport('PROJ-1', 'ghost'), /Time report not found on PROJ-1: ghost/);
+  });
+
+  it('refuses to delete a time report that belongs to another issue', async () => {
+    const removals = [];
+    const report = { _id: 'report-id', space: 'report-space', attachedTo: 'other-issue', value: 2 };
+    const matches = query => Object.entries(query).every(([key, value]) => report[key] === value);
+    const client = singleIssue(stubClient({
+      findOne: async (_class, query) => (matches(query) ? report : null),
+      removeCollection: async (...args) => { removals.push(args); }
+    }));
+
+    await assert.rejects(() => client.deleteTimeReport('PROJ-1', 'report-id'), /Time report not found on PROJ-1/);
+    assert.deepEqual(removals, []);
   });
 
   it('normalizes hours and dates on both report read paths', async () => {

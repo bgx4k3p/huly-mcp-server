@@ -559,7 +559,7 @@ describe('Live CRUD', { timeout: 300_000 }, () => {
       const issue = await client.createIssue(PROJECT, 'Time host', '');
       const logged = await client.logTime(issue.id, 3, 'temp work', '2026-06-02');
       assert.equal((await client.getTimeReport(issue.id, logged.id)).hours, 3);
-      await client.deleteTimeReport(logged.id);
+      await client.deleteTimeReport(issue.id, logged.id);
       const reports = (await client.listTimeReports(issue.id)).items;
       assert.ok(!reports.some(r => r.id === logged.id), 'deleted report must not be listed');
     });

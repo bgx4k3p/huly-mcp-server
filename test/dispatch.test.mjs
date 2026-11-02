@@ -542,9 +542,9 @@ describe('Workspace tool dispatch — param forwarding', () => {
     },
     {
       name: 'delete_time_report',
-      args: { reportId: 'r1' },
+      args: { issueId: 'PROJ-1', reportId: 'r1' },
       expectMethod: 'deleteTimeReport',
-      validate: (call) => assert.equal(call.args[0], 'r1')
+      validate: (call) => assert.deepEqual(call.args, ['PROJ-1', 'r1'])
     },
     // Projects
     {

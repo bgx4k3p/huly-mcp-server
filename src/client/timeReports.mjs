@@ -8,6 +8,22 @@ import { contactPlugin, generateId, tracker } from './sdk.mjs';
 
 export class TimeReportsMethods {
   /**
+   * Find a time report that belongs to the given issue. A report on any other issue is reported as not found,
+   * so a report can only be read or changed through its own issue.
+   * @param {Object} client - Huly SDK client
+   * @param {Object} issue - Issue document
+   * @param {string} issueId - Issue identifier, for the error message
+   * @param {string} reportId - Time report ID
+   * @returns {Promise<Object>} TimeSpendReport document
+   * @throws {Error} When the issue has no report with that ID
+   */
+  async _findReportOnIssue(client, issue, issueId, reportId) {
+    const report = await client.findOne(tracker.class.TimeSpendReport, { _id: reportId, attachedTo: issue._id });
+    if (!report) throw new Error(`Time report not found on ${issueId}: ${reportId}`);
+    return report;
+  }
+
+  /**
    * Log time spent on an issue and add it to the issue's reported time.
    * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {number|string} hours - Hours spent; must be a non-negative number
@@ -88,16 +104,16 @@ export class TimeReportsMethods {
   }
 
   /**
-   * Delete a time report by ID. The server reduces the issue's reported time.
+   * Delete a time report from an issue. The server reduces the issue's reported time.
+   * @param {string} issueId - Issue identifier (e.g., "PROJ-42")
    * @param {string} reportId - Time report ID
    * @returns {Promise<{message: string, id: string, hours: number}>}
-   * @throws {Error} When the report is not found
+   * @throws {Error} When the issue is not found or the report is not on it
    */
-  async deleteTimeReport(reportId) {
+  async deleteTimeReport(issueId, reportId) {
     const client = await this._getClient();
-
-    const report = await client.findOne(tracker.class.TimeSpendReport, { _id: reportId });
-    if (!report) throw new Error(`Time report not found: ${reportId}`);
+    const { issue } = await this._parseAndFindIssue(client, issueId);
+    const report = await this._findReportOnIssue(client, issue, issueId, reportId);
 
     // The transactor automatically decrements reportedTime on the issue
     // when a TimeSpendReport is removed via removeCollection — do NOT
@@ -126,10 +142,7 @@ export class TimeReportsMethods {
   async updateTimeReport(issueId, reportId, updates = {}) {
     const client = await this._getClient();
     const { issue } = await this._parseAndFindIssue(client, issueId);
-    const report = await client.findOne(tracker.class.TimeSpendReport, { _id: reportId });
-    if (!report || report.attachedTo !== issue._id) {
-      throw new Error(`Time report not found on ${issueId}: ${reportId}`);
-    }
+    const report = await this._findReportOnIssue(client, issue, issueId, reportId);
     const docUpdates = {};
     const updatedFields = [];
     if (updates.hours !== undefined) {
@@ -178,10 +191,7 @@ export class TimeReportsMethods {
     const client = await this._getClient();
     const { issue } = await this._parseAndFindIssue(client, issueId);
 
-    const report = await client.findOne(tracker.class.TimeSpendReport, { _id: reportId });
-    if (!report || report.attachedTo !== issue._id) {
-      throw new Error(`Time report not found on ${issueId}: ${reportId}`);
-    }
+    const report = await this._findReportOnIssue(client, issue, issueId, reportId);
 
     let employee = null;
     if (report.employee) {

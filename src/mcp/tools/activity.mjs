@@ -81,6 +81,6 @@ export const activityTools = [
     {
       name: 'delete_time_report',
       description: 'Delete a time report.',
-      inputSchema: { type: 'object', properties: { reportId: { type: 'string', description: 'Time report ID' }, ...workspaceProp }, required: ['reportId'] }
+      inputSchema: { type: 'object', properties: { issueId: { type: 'string', description: 'Issue identifier' }, reportId: { type: 'string', description: 'Time report ID' }, ...workspaceProp }, required: ['issueId', 'reportId'] }
     },
 ];
