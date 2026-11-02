@@ -36,7 +36,7 @@ export const MILESTONE_STATUS_MAP = {
 
 export const MILESTONE_STATUS_NAMES = ['Planned', 'In Progress', 'Completed', 'Canceled'];
 
-export const COLOR_PALETTE = {
+const COLOR_PALETTE = {
   red: 0, salmon: 1, pink: 2, hotpink: 3, magenta: 4,
   purple: 5, indigo: 6, violet: 7, navy: 8, blue: 9,
   sky: 10, cyan: 11, teal: 12, ocean: 13, mint: 14,
@@ -68,7 +68,6 @@ export const MAX_LABEL_FILTER_ISSUES = 5000;
 export const LOOKUP_CACHE_TTL_MS = 60000;
 export const MAX_PAGE_SIZE = 100;
 export const MAX_DETAIL_PAGE_SIZE = 50;
-export const MAX_COMPACT_ARRAY_ITEMS = 100;
 export const CURSOR_TTL_MS = 24 * 60 * 60 * 1000;
 
 const processCursorSecret = randomBytes(32);
@@ -262,8 +261,10 @@ export function listEnvelope(items, nextCursor) {
 }
 
 /**
- * Resolve an optional due date. setDueDate already validated; createIssue,
- * updateIssue, and batchCreateIssues did not, and stored NaN instead.
+ * Format a stored timestamp or date string as an ISO 8601 string for output.
+ * Unparseable values become null, so one bad stored value cannot fail a whole read.
+ * @param {number|string|null|undefined} value
+ * @returns {string|null}
  */
 export function toIsoDate(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -273,6 +274,12 @@ export function toIsoDate(value) {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
+/**
+ * Parse an optional due date for storage. Blank or missing means no due date.
+ * @param {string|number|null|undefined} value - ISO date or timestamp
+ * @returns {number|null} Millisecond timestamp, or null to clear
+ * @throws {Error} When the value is not a parseable date
+ */
 export function normalizeDueDate(value) {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = new Date(value).getTime();
@@ -283,9 +290,12 @@ export function normalizeDueDate(value) {
 }
 
 /**
- * Map a priority name to its numeric code. An unrecognised name must fail:
- * silently storing "none" while echoing the requested value back misreports
- * the write. listIssues already rejects; the write paths did not.
+ * Map a priority name to its numeric code. An unrecognised name fails rather than silently storing
+ * "none" while echoing the requested value back.
+ * @param {string|null|undefined} value - Priority name (case-insensitive)
+ * @param {number} [fallback=0] - Code used when no priority is given
+ * @returns {number}
+ * @throws {Error} When the name is not a known priority
  */
 export function resolvePriority(value, fallback = 0) {
   if (value === undefined || value === null || value === '') return fallback;

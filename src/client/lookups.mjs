@@ -109,10 +109,13 @@ export class LookupsMethods {
   }
 
   /**
-   * Get statuses scoped to a specific task type within a project.
-   * Falls back to all statuses if task type has no scoped list.
+   * Statuses in a task type's workflow, in workflow order. Falls back to every workspace status when the
+   * task type has no scoped list.
+   * @param {Object} client - Huly SDK client
+   * @param {string} taskTypeId - Task type id
+   * @returns {Promise<Object[]>} IssueStatus documents
    */
-  async _getScopedStatuses(client, _project, taskTypeId) {
+  async _getScopedStatuses(client, taskTypeId) {
     const allStatuses = await client.findAll(tracker.class.IssueStatus, {});
     if (!allStatuses.length) throw new Error('No statuses found in workspace');
 

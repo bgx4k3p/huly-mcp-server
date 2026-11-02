@@ -341,6 +341,28 @@ describe('updateIssue payload', () => {
     return harness;
   }
 
+  it('clears the assignee on a blank name without scanning members', async () => {
+    const { client, select } = updateHarness();
+
+    await client.updateIssue('PROJ-1', undefined, undefined, undefined, undefined, undefined, { assignee: '   ' });
+
+    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: null }]);
+    assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 0);
+  });
+
+  it('stores the member id and refuses an unknown member without writing', async () => {
+    const { client, select } = updateHarness();
+
+    await client.updateIssue('PROJ-1', undefined, undefined, undefined, undefined, undefined, { assignee: 'ada lovelace' });
+    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: 'emp-1' }]);
+
+    await assert.rejects(
+      () => client.updateIssue('PROJ-1', undefined, undefined, undefined, undefined, undefined, { assignee: 'Nobody' }),
+      /Employee not found: Nobody/
+    );
+    assert.equal(select('updateDoc', tracker.class.Issue).length, 1);
+  });
+
   it('sends a single update carrying only the supplied fields', async () => {
     const { client, select } = updateHarness();
 
@@ -397,37 +419,6 @@ describe('updateIssue payload', () => {
 
     const [update] = select('updateDoc', tracker.class.Issue);
     assert.deepEqual(update.data, { kind: 'bug-type', status: 'status-triage' });
-  });
-});
-
-describe('assignIssue writes', () => {
-  function assignHarness() {
-    const harness = createHarness({ issues: [baseIssue({ assignee: 'emp-2' })] });
-    harness.client._parseAndFindIssue = async () => ({
-      project: harness.state.projects[0],
-      issue: harness.state.issues[0]
-    });
-    return harness;
-  }
-
-  it('clears the assignee without scanning members', async () => {
-    const { client, select } = assignHarness();
-
-    await client.assignIssue('PROJ-1', '   ');
-
-    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: null }]);
-    assert.equal(select('findAll', contactPlugin.mixin.Employee).length, 0);
-  });
-
-  it('stores the member id and refuses an unknown member without writing', async () => {
-    const { client, select } = assignHarness();
-
-    const result = await client.assignIssue('PROJ-1', 'ada lovelace');
-    assert.deepEqual(select('updateDoc', tracker.class.Issue).map(call => call.data), [{ assignee: 'emp-1' }]);
-    assert.equal(result.assignee, 'Ada Lovelace');
-
-    await assert.rejects(() => client.assignIssue('PROJ-1', 'Nobody'), /Member "Nobody" not found/);
-    assert.equal(select('updateDoc', tracker.class.Issue).length, 1);
   });
 });
 

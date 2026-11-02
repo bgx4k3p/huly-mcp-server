@@ -2,11 +2,7 @@ const RESPONSE_MODES = new Set(['compact', 'raw']);
 const RESPONSE_MODE_META_KEY = 'com.huly/responseMode';
 const MAX_ERROR_MESSAGE_LENGTH = 500;
 const MAX_COMPACT_ARRAY_ITEMS = 100;
-
-// Deliberately empty for now. Add a key only after reviewing its stability,
-// sensitivity, and usefulness to MCP clients.
-export const COMPACT_EXTRA_ALLOWLIST = new Set();
-export const DEFAULT_RESPONSE_MODE = 'compact';
+const DEFAULT_RESPONSE_MODE = 'compact';
 export const SUPPORTED_RESPONSE_MODES = Object.freeze([...RESPONSE_MODES]);
 
 function parseMode(value, source) {
@@ -25,8 +21,10 @@ function isPlainObject(value) {
 }
 
 /**
- * Remove unreviewed SDK passthrough fields without dropping documented nulls,
- * empty arrays, empty objects, or other contract values.
+ * Compact projection: drop the unreviewed SDK passthrough (`extra`) and cap long arrays, without dropping
+ * documented nulls, empty arrays, empty objects or other contract values.
+ * @param {*} value - Tool result or any nested value
+ * @returns {*}
  */
 export function projectCompact(value) {
   if (Array.isArray(value)) return value.map(projectCompact);
@@ -35,15 +33,7 @@ export function projectCompact(value) {
   const entries = [];
   const collectionMetadata = [];
   for (const [key, child] of Object.entries(value)) {
-    if (key === 'extra') {
-      if (isPlainObject(child)) {
-        const allowed = Object.entries(child)
-          .filter(([extraKey]) => COMPACT_EXTRA_ALLOWLIST.has(extraKey))
-          .map(([extraKey, extraValue]) => [extraKey, projectCompact(extraValue)]);
-        if (allowed.length > 0) entries.push(['extra', Object.fromEntries(allowed)]);
-      }
-      continue;
-    }
+    if (key === 'extra') continue;
     if (Array.isArray(child) && child.length > MAX_COMPACT_ARRAY_ITEMS) {
       entries.push([key, child.slice(0, MAX_COMPACT_ARRAY_ITEMS).map(projectCompact)]);
       collectionMetadata.push([`${key}Count`, child.length]);

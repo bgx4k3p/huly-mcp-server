@@ -417,7 +417,7 @@ export class ProjectsMethods {
     }
     if (updates.defaultIssueStatus !== undefined) {
       const kind = await this._getDefaultTaskType(client, project);
-      const statuses = await this._getScopedStatuses(client, project, kind);
+      const statuses = await this._getScopedStatuses(client, kind);
       const status = statuses.find(s => s._id === updates.defaultIssueStatus || nameMatch(s.name, updates.defaultIssueStatus));
       if (!status) throw new Error(`Default issue status not found in project workflow: ${updates.defaultIssueStatus}`);
       ops.defaultIssueStatus = status._id;

@@ -73,7 +73,7 @@ export class IssueWriteMethods {
     }
 
     // Resolve status scoped to the task type
-    const statuses = await this._getScopedStatuses(client, project, taskTypeId);
+    const statuses = await this._getScopedStatuses(client, taskTypeId);
     let statusId;
     if (status) {
       const found = statuses.find(s => nameMatch(s.name, status));
@@ -205,7 +205,7 @@ export class IssueWriteMethods {
 
     if (status !== undefined) {
       const taskTypeId = resolvedTaskTypeId || await this._getDefaultTaskType(client, project);
-      const statuses = await this._getScopedStatuses(client, project, taskTypeId);
+      const statuses = await this._getScopedStatuses(client, taskTypeId);
       const found = statuses.find(s => nameMatch(s.name, status));
       if (!found) {
         const available = statuses.map(s => s.name).join(', ');
@@ -266,80 +266,6 @@ export class IssueWriteMethods {
   }
 
   /**
-   * Assign an issue to a workspace member or unassign it.
-   * @param {string} issueId - Issue identifier
-   * @param {string} assigneeName - Member name or email, empty to unassign
-   * @returns {Promise<Object>}
-   */
-  async assignIssue(issueId, assigneeName) {
-    const client = await this._getClient();
-    const { project, issue } = await this._parseAndFindIssue(client, issueId);
-
-    if (!assigneeName || assigneeName.trim() === '') {
-      await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
-        assignee: null
-      });
-      return { message: `Unassigned ${issueId}`, issueId };
-    }
-
-    const employees = await client.findAll(contactPlugin.mixin.Employee, { active: true });
-    const found = employees.find(e => nameMatch(e.name, assigneeName));
-
-    if (!found) {
-      const names = employees.map(e => e.name).join(', ');
-      throw new Error(`Member "${assigneeName}" not found. Available: ${names}`);
-    }
-
-    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
-      assignee: found._id
-    });
-
-    return { message: `Assigned ${issueId} to ${found.name}`, issueId, assignee: found.name };
-  }
-
-  /**
-   * Set or clear the due date on an issue.
-   * @param {string} issueId - Issue identifier
-   * @param {string} [dueDate] - Due date ISO 8601, or empty to clear
-   * @returns {Promise<Object>}
-   */
-  async setDueDate(issueId, dueDate) {
-    const client = await this._getClient();
-    const { project, issue } = await this._parseAndFindIssue(client, issueId);
-
-    const timestamp = normalizeDueDate(dueDate);
-
-    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
-      dueDate: timestamp
-    });
-
-    return {
-      message: timestamp ? `Due date set to ${dueDate} on ${issueId}` : `Due date cleared on ${issueId}`,
-      issueId,
-      dueDate: dueDate || null
-    };
-  }
-
-  /**
-   * Set the time estimation on an issue.
-   * @param {string} issueId - Issue identifier
-   * @param {number} hours - Estimated hours
-   * @returns {Promise<Object>}
-   */
-  async setEstimation(issueId, hours) {
-    const client = await this._getClient();
-    const { project, issue } = await this._parseAndFindIssue(client, issueId);
-
-    const normalizedHours = parseHours(hours, 'estimation');
-
-    await client.updateDoc(tracker.class.Issue, project._id, issue._id, {
-      estimation: normalizedHours
-    });
-
-    return { message: `Estimation set to ${normalizedHours}h on ${issueId}`, issueId, estimation: normalizedHours };
-  }
-
-  /**
    * Create multiple issues in a single batch.
    * @param {string} projectIdent - Project identifier
    * @param {Object[]} issues - Array of issue objects with { title, description, priority, status, labels, type }
@@ -396,7 +322,7 @@ export class IssueWriteMethods {
           taskTypeId = taskTypeIdsByName.get(key);
         }
         if (!statusesByTaskType.has(taskTypeId)) {
-          statusesByTaskType.set(taskTypeId, await this._getScopedStatuses(client, project, taskTypeId));
+          statusesByTaskType.set(taskTypeId, await this._getScopedStatuses(client, taskTypeId));
         }
         const scopedStatuses = statusesByTaskType.get(taskTypeId);
 
@@ -515,8 +441,8 @@ export class IssueWriteMethods {
 
     // Remap the status when the destination workflow lacks the current one
     const destTaskTypeId = issue.kind ?? await this._getDefaultTaskType(client, destProject);
-    const destStatuses = await this._getScopedStatuses(client, destProject, destTaskTypeId);
-    const srcStatusMap = await this._buildStatusMaps(client, sourceProject);
+    const destStatuses = await this._getScopedStatuses(client, destTaskTypeId);
+    const srcStatusMap = await this._buildStatusMaps(client);
     const currentStatusName = srcStatusMap.statusMap.get(issue.status);
     let destStatusId;
     if (currentStatusName) {

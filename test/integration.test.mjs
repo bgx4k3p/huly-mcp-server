@@ -670,7 +670,8 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     it('sets a due date', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const result = await client.setDueDate(lifecycleIssueId, '2026-12-31');
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { dueDate: '2026-12-31' });
       assert.ok(result, 'Should return a result');
       const issue = await client.getIssue(lifecycleIssueId);
       const due = new Date(issue.dueDate);
@@ -681,7 +682,8 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
 
     it('sets an estimation', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const result = await client.setEstimation(lifecycleIssueId, 4);
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { estimation: 4 });
       assert.ok(result, 'Should return a result');
       const issue = await client.getIssue(lifecycleIssueId);
       assert.equal(issue.estimation, 4);
@@ -833,23 +835,25 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
     });
   });
 
-  // ── assign_issue ──────────────────────────────────────────
+  // ── update_issue: assignee ────────────────────────────────
 
-  describe('assign_issue', () => {
+  describe('update_issue assignee', () => {
     it('assigns the lifecycle issue to a member', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
       const members = (await client.listMembers()).items;
       assert.ok(members.length > 0, 'Need at least one member');
-      const result = await client.assignIssue(lifecycleIssueId, members[0].name);
-      assert.ok(result);
-      assert.ok(result.message.includes('Assigned'));
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { assignee: members[0].name });
+      assert.deepEqual(result.updated, ['assignee']);
+      assert.equal((await client.getIssue(lifecycleIssueId)).assignee, members[0].name);
     });
 
     it('unassigns the issue', async () => {
       assert.ok(lifecycleIssueId, 'Lifecycle issue must exist');
-      const result = await client.assignIssue(lifecycleIssueId, '');
-      assert.ok(result);
-      assert.ok(result.message.includes('Unassigned'));
+      const result = await client.updateIssue(lifecycleIssueId, undefined, undefined, undefined, undefined, undefined,
+        { assignee: '' });
+      assert.deepEqual(result.updated, ['assignee']);
+      assert.equal((await client.getIssue(lifecycleIssueId)).assignee, null);
     });
   });
 
@@ -1583,7 +1587,7 @@ describe('Regression Audit Tests', { timeout: 120_000 }, () => {
       );
     });
 
-    it('assignIssue does not substring-match employee names', async () => {
+    it('update_issue does not substring-match assignee names', async () => {
       // Create an issue first
       const issue = await client.createIssue(AUDIT_PROJECT, 'Assign test');
       // Get actual members to construct a partial name
@@ -1593,7 +1597,7 @@ describe('Regression Audit Tests', { timeout: 120_000 }, () => {
         const partial = fullName.slice(0, 2); // First 2 chars — should NOT match
         if (partial !== fullName) {
           await assert.rejects(
-            () => client.assignIssue(issue.id, partial),
+            () => client.updateIssue(issue.id, undefined, undefined, undefined, undefined, undefined, { assignee: partial }),
             (err) => {
               assert.ok(err.message.includes('not found'), `Expected "not found" in: ${err.message}`);
               return true;
