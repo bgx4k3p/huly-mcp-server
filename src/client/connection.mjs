@@ -19,92 +19,109 @@ import {
 
 export class ConnectionMethods {
   /**
-   * Establish a client connection to Huly.
-   * Transport is chosen via HULY_TRANSPORT env var: 'ws' (default) or 'rest'. Concurrent calls share one attempt.
+   * Establish a client connection to Huly. Transport is chosen via the HULY_TRANSPORT env var: 'ws' (default) or
+   * 'rest'. Concurrent callers share one attempt. An attempt that `disconnect()` supersedes closes what it opened
+   * and rejects instead of installing a connection nothing would track or close.
    * @returns {Promise<void>}
-   * @throws {Error} When the workspace or credentials are missing, or the connection fails
+   * @throws {Error} When config or auth is missing, the connection fails, or it is closed while being opened
    */
   async connect() {
     if (this._client) return;
-
-    if (this._connectionPromise) {
-      await this._connectionPromise;
-      return;
-    }
-
-    this._connectionPromise = (async () => {
-      if (!this.workspace) {
-        throw new Error('Missing required config: workspace');
-      }
-      if (!this.token && (!this.email || !this.password)) {
-        throw new Error('Missing required auth: set HULY_TOKEN or HULY_EMAIL + HULY_PASSWORD');
-      }
-
-      const transport = (process.env.HULY_TRANSPORT || 'ws').toLowerCase();
-      const authOpts = this.token
-        ? { token: this.token, workspace: this.workspace }
-        : { email: this.email, password: this.password, workspace: this.workspace };
-
-      ensureOutboundHeaders(this.url);
-      this._serverConfig = await loadConfig(this.url);
-      registerOriginsFromServerConfig(this._serverConfig, this.url);
-
-      if (transport === 'ws') {
-        // Resolve and register the transactor endpoint before connectWs opens
-        // the socket; the SDK resolves it internally too, but too late for us
-        // to update the outbound header allowlist.
-        const { workspaceId, token, endpoint } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
-        registerOutboundOrigin(endpoint, this.url);
-
-        // WebSocket transport — full SDK support including Space creation
-        const socketFactory = createOutboundSocketFactory();
-        const wsOpts = socketFactory ? { ...authOpts, socketFactory } : authOpts;
-        const platformClient = await connectWs(this.url, wsOpts);
-        this._client = platformClient.client;
-        this._platformClient = platformClient;
-
-        // Extract account UUID from the platform client
-        const account = await platformClient.getAccount();
-        this._accountUuid = account.uuid;
-
-        this._workspaceId = workspaceId;
-        this._wsToken = token;
-      } else {
-        // REST transport — lightweight, no WebSocket dependency
-        const { endpoint, token, workspaceId } = await getWorkspaceToken(this.url, authOpts, this._serverConfig);
-        registerOutboundOrigin(endpoint, this.url);
-        this._workspaceId = workspaceId;
-        this._wsToken = token;
-
-        // Extract authenticated account UUID from JWT for ownership
-        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-        this._accountUuid = payload.account;
-        if (!this._accountUuid) {
-          throw new Error('Workspace token missing account field');
+    if (!this._connectionPromise) {
+      const attempt = this._openConnection().then(connection => {
+        if (this._connectionPromise !== attempt) {
+          connection.platformClient?.close().catch(() => {});
+          throw new Error('Connection was closed while it was being opened');
         }
-
-        this._client = await createRestTxOperations(endpoint, workspaceId, token);
-      }
-
-      // Initialize collaborator client for rich text (issue descriptions)
-      const collabUrl = (this._serverConfig.COLLABORATOR_URL || '')
-        .replace('wss://', 'https://').replace('ws://', 'http://');
-      if (collabUrl) {
-        this._collabClient = getCollaboratorClient(this._workspaceId, this._wsToken, collabUrl);
-      }
-    })();
-
-    try {
-      await this._connectionPromise;
-    } finally {
-      this._connectionPromise = null;
+        this._client = connection.client;
+        this._platformClient = connection.platformClient;
+        this._accountUuid = connection.accountUuid;
+        this._workspaceId = connection.workspaceId;
+        this._wsToken = connection.wsToken;
+        this._serverConfig = connection.serverConfig;
+        this._collabClient = connection.collabClient;
+      }).finally(() => {
+        if (this._connectionPromise === attempt) this._connectionPromise = null;
+      });
+      this._connectionPromise = attempt;
     }
+    await this._connectionPromise;
   }
 
   /**
-   * Disconnect and clear the cached client, collaborator client and workspace token.
-   * @returns {void}
+   * Open a connection without touching this client's state; `connect()` decides whether to install it.
+   * @returns {Promise<Object>} client, platformClient, accountUuid, workspaceId, wsToken, serverConfig, collabClient
+   * @throws {Error} When config or auth is missing or the connection fails
    */
+  async _openConnection() {
+    if (!this.workspace) {
+      throw new Error('Missing required config: workspace');
+    }
+    if (!this.token && (!this.email || !this.password)) {
+      throw new Error('Missing required auth: set HULY_TOKEN or HULY_EMAIL + HULY_PASSWORD');
+    }
+
+    const transport = (process.env.HULY_TRANSPORT || 'ws').toLowerCase();
+    let client;
+    let platformClient = null;
+    let accountUuid;
+    let connectionWorkspaceId;
+    let wsToken;
+    const authOpts = this.token
+      ? { token: this.token, workspace: this.workspace }
+      : { email: this.email, password: this.password, workspace: this.workspace };
+
+    ensureOutboundHeaders(this.url);
+    const serverConfig = await loadConfig(this.url);
+    registerOriginsFromServerConfig(serverConfig, this.url);
+
+    if (transport === 'ws') {
+      // Resolve and register the transactor endpoint before connectWs opens
+      // the socket; the SDK resolves it internally too, but too late for us
+      // to update the outbound header allowlist.
+      const { workspaceId, token, endpoint } = await getWorkspaceToken(this.url, authOpts, serverConfig);
+      registerOutboundOrigin(endpoint, this.url);
+
+      // WebSocket transport — full SDK support including Space creation
+      const socketFactory = createOutboundSocketFactory();
+      const wsOpts = socketFactory ? { ...authOpts, socketFactory } : authOpts;
+      platformClient = await connectWs(this.url, wsOpts);
+      client = platformClient.client;
+      try {
+        accountUuid = (await platformClient.getAccount()).uuid;
+      } catch (error) {
+        platformClient.close().catch(() => {});
+        throw error;
+      }
+      connectionWorkspaceId = workspaceId;
+      wsToken = token;
+    } else {
+      // REST transport — lightweight, no WebSocket dependency
+      const { endpoint, token, workspaceId } = await getWorkspaceToken(this.url, authOpts, serverConfig);
+      registerOutboundOrigin(endpoint, this.url);
+      connectionWorkspaceId = workspaceId;
+      wsToken = token;
+
+      // Extract authenticated account UUID from JWT for ownership
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      accountUuid = payload.account;
+      if (!accountUuid) {
+        throw new Error('Workspace token missing account field');
+      }
+
+      client = await createRestTxOperations(endpoint, workspaceId, token);
+    }
+
+    // Initialize collaborator client for rich text (issue descriptions)
+    const collabUrl = (serverConfig.COLLABORATOR_URL || '')
+      .replace('wss://', 'https://').replace('ws://', 'http://');
+    const collabClient = collabUrl ? getCollaboratorClient(connectionWorkspaceId, wsToken, collabUrl) : null;
+
+    return {
+      client, platformClient, accountUuid, workspaceId: connectionWorkspaceId, wsToken, serverConfig, collabClient
+    };
+  }
+
   disconnect() {
     if (this._platformClient) {
       this._platformClient.close().catch(() => {});
@@ -112,6 +129,7 @@ export class ConnectionMethods {
     }
     this._client = null;
     this._connectionPromise = null;
+    this._accountUuid = null;
     this._collabClient = null;
     this._workspaceId = null;
     this._serverConfig = null;

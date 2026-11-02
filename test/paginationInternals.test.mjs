@@ -631,6 +631,48 @@ describe('connection resilience', () => {
     assert.equal(instance._client, null, 'the dead connection is dropped so the next call reconnects');
   });
 
+  it('discards a connection that finishes opening after disconnect was called', async () => {
+    const instance = newClient();
+    let release;
+    const closed = [];
+    instance._openConnection = () => new Promise(resolve => {
+      release = () => resolve({
+        client: { marker: 'late' },
+        platformClient: { close: async () => { closed.push('late'); } },
+        accountUuid: 'acc', workspaceId: 'ws', wsToken: 't', serverConfig: {}, collabClient: null
+      });
+    });
+
+    const connecting = instance.connect();
+    instance.disconnect();
+    release();
+
+    await assert.rejects(connecting, /closed while it was being opened/);
+    assert.equal(instance._client, null, 'a cancelled attempt must not install its connection');
+    assert.deepEqual(closed, ['late'], 'and must close what it opened');
+  });
+
+  it('keeps a newer connection attempt when an older one settles', async () => {
+    const instance = newClient();
+    const releases = [];
+    instance._openConnection = () => new Promise(resolve => {
+      releases.push(marker => resolve({
+        client: { marker }, platformClient: { close: async () => {} },
+        accountUuid: 'acc', workspaceId: 'ws', wsToken: 't', serverConfig: {}, collabClient: null
+      }));
+    });
+
+    const first = instance.connect();
+    instance.disconnect();
+    const second = instance.connect();
+    releases[0]('first');
+    await assert.rejects(first, /closed while it was being opened/);
+    releases[1]('second');
+    await second;
+
+    assert.equal(instance._client.marker, 'second');
+  });
+
   it('disconnect clears every cached connection field and swallows a failing close', async () => {
     const instance = newClient();
     const closes = [];
