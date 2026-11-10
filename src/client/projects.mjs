@@ -117,6 +117,7 @@ export class ProjectsMethods {
   /**
    * List projects, one cursor page at a time.
    * @param {Object} [options]
+   * @param {boolean} [options.includeArchived=false] - Also list archived projects (each row's `archived` says which)
    * @param {string[]} [options.include] - Related data to add: milestones, components, labels, members, owners,
    *   defaults
    * @param {string} [options.cursor] - Opaque cursor from a previous page
@@ -127,13 +128,18 @@ export class ProjectsMethods {
    */
   async listProjects(options = {}) {
     const client = await this._getClient();
-    const projects = await client.findAll(tracker.class.Project, {});
+    // The SDK hides archived projects unless asked; they still own their identifiers and can be restored or deleted.
+    const includeArchived = options.includeArchived === true;
+    const projects = includeArchived
+      ? await client.findAll(tracker.class.Project, {}, { showArchived: true })
+      : await client.findAll(tracker.class.Project, {});
 
     const include = normalizeIncludeSet(options.include, PROJECT_INCLUDE_FIELDS);
     const cursorScope = {
       workspace: this.workspace,
       tool: 'list_projects',
-      include: [...include].sort()
+      include: [...include].sort(),
+      includeArchived
     };
     const page = this._cursoredFindAll(projects, { ...options, cursorScope });
     return listEnvelope(await this._projectRows(client, page.items, include), page.nextCursor);

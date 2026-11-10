@@ -16,7 +16,7 @@ export const projectsAndIssuesTools = [
     {
       name: 'list_projects',
       description: 'List projects with stable pagination and optional granular expansions. Returns each project\'s identifier, display name, and issue count. Use this first to discover projects.',
-      inputSchema: { type: 'object', properties: { ...projectIncludeProp, ...paginationProps, ...workspaceProp }, required: [] }
+      inputSchema: { type: 'object', properties: { includeArchived: { type: 'boolean', description: 'Also list archived projects' }, ...projectIncludeProp, ...paginationProps, ...workspaceProp }, required: [] }
     },
     {
       name: 'get_project',

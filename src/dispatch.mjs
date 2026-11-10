@@ -121,7 +121,7 @@ export const workspaceTools = {
   }),
   delete_issue_template: (a, c) => c.deleteIssueTemplate(a.project, a.templateId),
   list_projects: (a, c) =>
-    c.listProjects({ include: a.include, cursor: a.cursor, limit: a.limit }),
+    c.listProjects({ include: a.include, cursor: a.cursor, limit: a.limit, includeArchived: a.includeArchived }),
   get_project: (a, c) =>
     c.getProject(a.project, { include: a.include }),
   list_issues: (a, c) =>

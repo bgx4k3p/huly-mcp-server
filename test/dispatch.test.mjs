@@ -111,7 +111,7 @@ describe('Workspace tool dispatch — param forwarding', () => {
       args: { include: ['members'] },
       expectMethod: 'listProjects',
       validate: (call) => {
-        assert.deepEqual(call.args[0], { include: ['members'], cursor: undefined, limit: undefined });
+        assert.deepEqual(call.args[0], { include: ['members'], cursor: undefined, limit: undefined, includeArchived: undefined });
       }
     },
     {

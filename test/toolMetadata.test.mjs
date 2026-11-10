@@ -78,7 +78,8 @@ describe('MCP tool metadata', () => {
   it('keeps every tool profile within its discovery-byte budget', () => {
     // CRUD-completeness additions are allowed only a narrow margin over the
     // measured catalog. Treat any further increase as a bloat regression.
-    const budgets = { full: 53_750, project: 43_600, read: 20_000 };
+    // Each +100 for list_projects includeArchived, the only way to find an archived project to restore or delete.
+    const budgets = { full: 53_850, project: 43_700, read: 20_100 };
     for (const [profile, maximum] of Object.entries(budgets)) {
       const tools = createMcpServer({ toolProfile: profile }).TOOLS;
       const bytes = Buffer.byteLength(JSON.stringify(tools));

@@ -1006,6 +1006,9 @@ describe('Integration Tests', { timeout: 120_000 }, () => {
       const result = await client.deleteProject(tempProj);
       assert.ok(result.message.includes('deleted'));
       await assert.rejects(() => client.getProject(tempProj), /Project not found/);
+      // getProject hides archived projects; only a listing that includes them proves nothing is left behind.
+      const left = (await client.listProjects({ includeArchived: true, limit: 100 })).items;
+      assert.equal(left.some(project => project.identifier === tempProj), false);
     });
 
     it('creates a private project that the creator can list, read, and write', async () => {
